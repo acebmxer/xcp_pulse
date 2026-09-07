@@ -10,6 +10,8 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-06
+
 ### Added
 
 - **The dashboard lists the pools and hosts the connection can see.** Each pool
@@ -38,6 +40,9 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
   unreleased.** Every row added for the Xen Orchestra connection work still
   carried `unreleased` in its "Since" column after 0.2.0 shipped, so the index
   understated what was in the last release.
+
+- **The README test-count badge was out of date**, reading 27 against a
+  suite of 76.
 
 ## [0.2.0] - 2026-09-06
 
@@ -199,6 +204,7 @@ must extract from a locally cached bundle rather than making a smaller request;
 and real bundles contain internal addresses and session tokens, which is why
 redaction is scheduled before the first downloadable bundle rather than after.
 
-[Unreleased]: https://github.com/acebmxer/xcp_pulse/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/acebmxer/xcp_pulse/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/acebmxer/xcp_pulse/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/acebmxer/xcp_pulse/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/acebmxer/xcp_pulse/releases/tag/v0.1.0
