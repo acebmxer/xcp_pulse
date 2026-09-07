@@ -3,7 +3,8 @@
 [← back to the README](../README.md)
 
 How the pieces fit together, and why. This page grows with each stage; today it
-describes v0.4.0 and the redaction work in progress, and states the decisions already taken about what follows.
+describes v0.5.3 — background jobs and redaction — and states the decisions
+already taken about what follows.
 
 ## Shape
 

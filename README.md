@@ -8,10 +8,10 @@
 [![Stars](https://img.shields.io/github/stars/acebmxer/xcp_pulse)](https://github.com/acebmxer/xcp_pulse/stargazers)
 [![Forks](https://img.shields.io/github/forks/acebmxer/xcp_pulse)](https://github.com/acebmxer/xcp_pulse/forks)
 [![Unique cloners](https://img.shields.io/badge/unique%20cloners-0-lightgrey)](https://github.com/acebmxer/xcp_pulse/graphs/traffic)
-[![Python](https://img.shields.io/badge/python-3.13-3776AB?logo=python&logoColor=white)](pyproject.toml)
+[![Python](https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white)](pyproject.toml)
 [![Docker](https://img.shields.io/badge/docker-compose-2496ED?logo=docker&logoColor=white)](docker-compose.yml.example)
 [![Platform: Linux](https://img.shields.io/badge/platform-linux-333333?logo=linux&logoColor=white)](#requirements)
-[![Tests](https://img.shields.io/badge/tests-192%20unit-informational)](https://github.com/acebmxer/xcp_pulse/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-236%20unit-informational)](https://github.com/acebmxer/xcp_pulse/actions/workflows/ci.yml)
 [![Ruff](https://img.shields.io/badge/ruff-clean-brightgreen)](https://github.com/acebmxer/xcp_pulse/actions/workflows/ci.yml)
 
 Collects XCP-ng and Xen Orchestra logs, bundles them for download, analyses
@@ -19,7 +19,7 @@ them, and reports findings — for your own troubleshooting or to attach to a
 Vates support ticket.
 
 > [!NOTE]
-> XCP Pulse is being built in stages. **v0.5.2 masks addresses, tokens and
+> XCP Pulse is being built in stages. **v0.5.3 masks addresses, tokens and
 > credentials out of log text, with a preview page, a switch for each rule, and
 > a report of what was masked in a whole file.** Self-update from the UI comes
 > next, then log collection. See [the roadmap](docs/roadmap.md) for what is
@@ -63,7 +63,7 @@ Then open `http://<server>:8080` and sign in. To build from source instead, see
 ## Requirements
 
 - Docker with Compose v2
-- A Xen Orchestra instance reachable over HTTP(S) — once the XO connection ships
+- A Xen Orchestra instance reachable over HTTP(S), and an API token for it
 - Disk for collected bundles — roughly **450 MB per host per collection**, once
   log collection ships
 

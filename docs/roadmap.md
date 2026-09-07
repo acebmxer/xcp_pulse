@@ -119,6 +119,18 @@ hundred bytes now and a 433 MB bundle once collection lands. The masking is the
 same `active_rules` and `Rule.apply` the preview page uses, in the same order,
 so the two cannot diverge.
 
+### v0.5.3 — Deployment fixes
+
+No new capability; the quick start works as written on a server.
+
+- The compose sample publishes on all interfaces, so a deployment on a remote
+  machine is reachable rather than answering only on the Docker host
+- It pulls `:latest`, so a fresh install runs the current release without an
+  edit first
+- Building from a clone uses a `docker-compose.dev.yml` overlay, leaving the
+  deployment's own compose file untouched
+- The sample is named `docker-compose.yml.example`
+
 ---
 
 ## Next

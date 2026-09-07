@@ -46,6 +46,13 @@ will not start without one:
 docker compose run --rm xcp-pulse python -m app.hashpw
 ```
 
+From a clone, add the overlay here too — without it, compose pulls the
+published image rather than running your build:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm xcp-pulse python -m app.hashpw
+```
+
 It prompts for a password twice, then prints a line beginning
 `XCP_PULSE_ADMIN_PASSWORD_HASH=$argon2id$...`. Paste that into `xcp-pulse.env`, replacing
 the empty entry already there.
