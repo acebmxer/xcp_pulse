@@ -1,0 +1,30 @@
+# Working notes and agent config — not part of the project.
+CLAUDE.md
+.claude/
+
+# Runtime configuration. xcp-pulse.env holds the admin password hash and, from
+# v0.2.0, the encryption key protecting the stored Xen Orchestra token. It must
+# never be committed; xcp-pulse.env.example is the committed template.
+#
+# It is not called .env because Compose auto-loads a file of that name to
+# interpolate compose.yaml, which mangles the $ characters in an Argon2 hash.
+xcp-pulse.env
+
+# Ignored too, so a file left over from an older layout cannot be committed.
+.env
+
+# The data volume: SQLite database, sessions, and collected log bundles.
+# Bundles contain real internal IPs and session tokens — never commit one.
+data/
+*.db
+*.db-journal
+*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/

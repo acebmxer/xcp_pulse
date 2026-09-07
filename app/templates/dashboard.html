@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — XCP Pulse{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Dashboard</h1>
+
+<div class="card empty-state">
+  <span class="empty-mark">◇</span>
+  <h2>No Xen Orchestra connection configured</h2>
+  <p>
+    XCP Pulse is running, but it has nothing to collect from yet. Connecting to
+    a Xen Orchestra instance arrives in <strong>v0.2.0</strong>; from there it
+    will list your pools and hosts, and collect their logs.
+  </p>
+</div>
+
+{#
+  "What is coming" is a KEEPER, not scaffolding.
+
+  Nick asked for this to stay on the dashboard until he decides it is no longer
+  needed or no longer appropriate. It is not a placeholder to be quietly
+  removed once there is real content to show — as stages ship, update the rows
+  and their state, and keep the section.
+
+  Do not delete it without asking him first.
+#}
+<section class="roadmap">
+  <h2>What is coming</h2>
+
+  <ol class="stages">
+    <li class="stage stage-done">
+      <span class="stage-tag">v0.1.0</span>
+      <span class="stage-name">Log in</span>
+      <span class="stage-state">shipped</span>
+    </li>
+    <li class="stage stage-next">
+      <span class="stage-tag">next</span>
+      <span class="stage-name">Connect to Xen Orchestra, list pools and hosts</span>
+      <span class="stage-state">in progress</span>
+    </li>
+  </ol>
+
+  <h3 class="stages-group">Planned — any order</h3>
+  <ol class="stages">
+    <li class="stage">
+      <span class="stage-name">Documentation in the web UI</span>
+    </li>
+    <li class="stage">
+      <span class="stage-name">Multiple users, roles and activity log</span>
+    </li>
+    <li class="stage">
+      <span class="stage-name">Date ranges when collecting and downloading</span>
+    </li>
+  </ol>
+
+  <h3 class="stages-group">Planned — in this order</h3>
+  <ol class="stages">
+    <li class="stage">
+      <span class="stage-name">Redaction of IPs, tokens and credentials</span>
+      <span class="stage-note">before any download</span>
+    </li>
+    <li class="stage">
+      <span class="stage-name">Collect a host's full log bundle</span>
+      <span class="stage-note">needs redaction</span>
+    </li>
+    <li class="stage">
+      <span class="stage-name">Collect individual log categories</span>
+      <span class="stage-note">needs the full bundle</span>
+    </li>
+    <li class="stage">
+      <span class="stage-name">Findings and suggestions</span>
+      <span class="stage-note">needs a connection</span>
+    </li>
+    <li class="stage">
+      <span class="stage-name">Vates support package</span>
+      <span class="stage-note">needs findings</span>
+    </li>
+    <li class="stage">
+      <span class="stage-name">Self-update from the UI</span>
+      <span class="stage-note">needs published images</span>
+    </li>
+  </ol>
+
+  <p class="note">
+    The full plan lives in <code>docs/roadmap.md</code>.
+  </p>
+</section>
+{% endblock %}

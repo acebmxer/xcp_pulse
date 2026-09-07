@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Xen Orchestra or XCP-ng itself
+    url: https://xcp-ng.org/forum/
+    about: XCP Pulse only reads through the XO API. Problems with XO or XCP-ng belong on the Vates forum.
+  - name: Security vulnerability
+    url: https://github.com/acebmxer/xcp_pulse/security
+    about: Report privately through the Security tab, not as a public issue.

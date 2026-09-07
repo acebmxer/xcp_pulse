@@ -1,0 +1,15 @@
+.git/
+.venv/
+venv/
+data/
+.env
+xcp-pulse.env
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+tests/
+docs/
+.github/
+CLAUDE.md
+.claude/

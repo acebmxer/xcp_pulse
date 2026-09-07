@@ -1,0 +1,33 @@
+services:
+  xcp-pulse:
+    build: .
+    image: xcp-pulse:0.1.0
+    container_name: xcp-pulse
+    restart: unless-stopped
+    env_file:
+      # Deliberately NOT named .env, and deliberately long-form.
+      #
+      # An Argon2 hash is full of $ ($argon2id$v=19$m=65536,...). Compose treats
+      # $ as variable interpolation in two separate places, and both have to be
+      # dealt with or the container receives a mangled hash and refuses to start:
+      #
+      #   1. Values loaded from env_file      -> fixed by "format: raw"
+      #   2. Compose auto-loads ./.env as its OWN variable source for
+      #      interpolating this file, whatever env_file says -> fixed by not
+      #      calling the file .env
+      #
+      # Together these give a correct hash and no "variable is not set" warnings.
+      - path: xcp-pulse.env
+        required: true
+        format: raw
+    ports:
+      # Bound to localhost by default. Change to "8080:8080" only behind a
+      # reverse proxy — this app holds credentials that read every log on the pool.
+      - "127.0.0.1:8080:8080"
+    volumes:
+      # Holds the SQLite database, the session signing key, and (from v0.4.0)
+      # collected log bundles. Bundles contain real internal addresses.
+      - xcp-pulse-data:/data
+
+volumes:
+  xcp-pulse-data:

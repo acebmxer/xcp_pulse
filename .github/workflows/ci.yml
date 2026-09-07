@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  lint:
+    name: Ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: pip install ruff
+      - run: ruff check .
+      - run: ruff format --check .
+
+  tests:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e ".[dev]"
+      - run: python -m pytest -ra
+
+  docker:
+    name: Docker build and smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build the image
+        run: docker build -t xcp-pulse:ci .
+
+      # A hash for a throwaway password. The container must start with it and
+      # must refuse to start without it — both are asserted below.
+      - name: Refuse to start without a password hash
+        run: |
+          if docker run --rm xcp-pulse:ci python -c "from app.config import load_settings; load_settings()" 2>/dev/null; then
+            echo "::error::the app started with no XCP_PULSE_ADMIN_PASSWORD_HASH set"
+            exit 1
+          fi
+          echo "correctly refused to start"
+
+      - name: Start the container
+        run: |
+          HASH=$(printf 'ci-test-password' | docker run --rm -i xcp-pulse:ci python -m app.hashpw | grep -oP '(?<=HASH=).*')
+          docker run -d --name pulse -p 8080:8080 \
+            -e XCP_PULSE_ADMIN_PASSWORD_HASH="$HASH" \
+            xcp-pulse:ci
+
+      - name: Wait for it to become healthy
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8080/healthz > /dev/null; then
+              echo "healthy after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::container never became healthy"
+          docker logs pulse
+          exit 1
+
+      - name: The dashboard requires a login
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/)
+          test "$code" = "303" || { echo "::error::expected 303, got $code"; exit 1; }
+          location=$(curl -s -o /dev/null -w '%{redirect_url}' http://localhost:8080/)
+          case "$location" in
+            */login*) echo "anonymous callers are sent to $location" ;;
+            *) echo "::error::expected a redirect to /login, got $location"; exit 1 ;;
+          esac
+
+      - name: Show logs on failure
+        if: failure()
+        run: docker logs pulse

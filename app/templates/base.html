@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}XCP Pulse{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+</head>
+<body>
+  {% if username %}
+  <header class="topbar">
+    <a class="brand" href="/">
+      <span class="brand-mark">◈</span> XCP Pulse
+    </a>
+    <nav class="topnav">
+      <span class="who">{{ username }}</span>
+      <form method="post" action="/logout" class="inline">
+        <button type="submit" class="btn btn-quiet">Log out</button>
+      </form>
+    </nav>
+  </header>
+  {% endif %}
+
+  <main class="{% block main_class %}wrap{% endblock %}">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="footer">
+    <span>XCP Pulse v{{ app_version }}</span>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,289 @@
+/* XCP Pulse — hand-written CSS. No build step, no CDN, no framework.
+   Light and dark both defined via tokens so the UI follows the viewer's OS. */
+
+:root {
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --border: #d8dee6;
+  --text: #1b2733;
+  --text-dim: #5c6b7a;
+  --accent: #1f7a8c;
+  --accent-text: #ffffff;
+  --danger-bg: #fdecec;
+  --danger-border: #f0b4b4;
+  --danger-text: #9b1c1c;
+  --ok: #2f7d4f;
+  --shadow: 0 1px 3px rgba(16, 24, 32, 0.08), 0 4px 16px rgba(16, 24, 32, 0.06);
+  --radius: 10px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #12171c;
+    --surface: #1a2128;
+    --border: #2b353f;
+    --text: #e6edf3;
+    --text-dim: #8b9aa8;
+    --accent: #3aa8bf;
+    --accent-text: #06181d;
+    --danger-bg: #3a1d1d;
+    --danger-border: #6b2f2f;
+    --danger-text: #f5a9a9;
+    --ok: #5fbe86;
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 4px 16px rgba(0, 0, 0, 0.3);
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+}
+
+/* ---- top bar ---- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 1.5rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 650;
+  font-size: 1.05rem;
+  color: var(--text);
+  text-decoration: none;
+  letter-spacing: -0.01em;
+}
+
+.brand-mark { color: var(--accent); font-size: 1.1em; }
+.brand-mark-lg { font-size: 2rem; display: block; }
+
+.topnav {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.who { color: var(--text-dim); font-size: 0.9rem; }
+.inline { display: inline; margin: 0; }
+
+/* ---- layout ---- */
+
+.wrap {
+  flex: 1;
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem;
+}
+
+.wrap-centred {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  max-width: 440px;
+}
+
+.page-title {
+  margin: 0 0 1.25rem;
+  font-size: 1.5rem;
+  letter-spacing: -0.02em;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 1.75rem;
+}
+
+.card-login { width: 100%; }
+
+.login-head { text-align: center; margin-bottom: 1.5rem; }
+.login-head h1 { margin: 0.5rem 0 0.25rem; font-size: 1.4rem; letter-spacing: -0.02em; }
+.login-head .sub { margin: 0; color: var(--text-dim); font-size: 0.88rem; }
+
+/* ---- forms ---- */
+
+.stack { display: flex; flex-direction: column; gap: 0.4rem; }
+.stack label { font-size: 0.85rem; font-weight: 600; color: var(--text-dim); }
+.stack label:not(:first-of-type) { margin-top: 0.75rem; }
+
+input[type="text"],
+input[type="password"] {
+  padding: 0.6rem 0.7rem;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+
+input:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.btn {
+  padding: 0.6rem 0.9rem;
+  font: inherit;
+  font-weight: 600;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  cursor: pointer;
+}
+
+.btn-primary {
+  margin-top: 1.25rem;
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.btn-primary:hover { filter: brightness(1.08); }
+
+.btn-quiet {
+  padding: 0.35rem 0.7rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  background: transparent;
+  color: var(--text-dim);
+  border-color: var(--border);
+}
+
+.btn-quiet:hover { color: var(--text); border-color: var(--text-dim); }
+
+/* ---- alerts ---- */
+
+.alert {
+  margin: 0 0 1rem;
+  padding: 0.65rem 0.8rem;
+  border-radius: 7px;
+  font-size: 0.9rem;
+}
+
+.alert-error {
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-border);
+  color: var(--danger-text);
+}
+
+/* ---- empty state ---- */
+
+.empty-state { text-align: center; padding: 2.5rem 1.75rem; }
+.empty-mark { font-size: 2rem; color: var(--text-dim); display: block; }
+.empty-state h2 { margin: 0.75rem 0 0.5rem; font-size: 1.1rem; }
+.empty-state p {
+  margin: 0 auto;
+  max-width: 46ch;
+  color: var(--text-dim);
+  font-size: 0.92rem;
+}
+
+/* ---- roadmap ---- */
+
+.roadmap { margin-top: 2rem; }
+.roadmap h2 { font-size: 1rem; color: var(--text-dim); margin: 0 0 0.75rem; }
+
+.stages { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.35rem; }
+
+/* A stage row is three slots: tag, name, state. Planned rows carry no version
+   tag (see docs/roadmap.md — numbers are assigned when work starts), so the
+   first column collapses for them rather than leaving a gap. */
+.stage {
+  display: grid;
+  grid-template-columns: 4.5rem 1fr auto;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.6rem 0.85rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: 0.9rem;
+}
+
+.stage:not(:has(.stage-tag)) {
+  grid-template-columns: 1fr auto;
+}
+
+.stages-group {
+  margin: 1.5rem 0 0.5rem;
+  font-size: 0.78rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+}
+
+.stage-note {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  font-style: italic;
+  white-space: nowrap;
+}
+
+.stage-next { border-color: var(--accent); }
+.stage-next .stage-tag,
+.stage-next .stage-state { color: var(--accent); }
+
+.stage-tag {
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  color: var(--text-dim);
+  font-size: 0.82rem;
+}
+
+.stage-state {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+
+.stage-done { border-color: var(--ok); }
+.stage-done .stage-tag,
+.stage-done .stage-state { color: var(--ok); }
+
+.note { color: var(--text-dim); font-size: 0.85rem; margin-top: 1rem; }
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+}
+
+/* ---- footer ---- */
+
+.footer {
+  padding: 1rem 1.5rem;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+}
+
+@media (max-width: 560px) {
+  .stage { grid-template-columns: 4.5rem 1fr; }
+  .stage:not(:has(.stage-tag)) { grid-template-columns: 1fr; }
+  .stage-state { grid-column: 2; font-size: 0.7rem; }
+  .stage:not(:has(.stage-tag)) .stage-state,
+  .stage:not(:has(.stage-tag)) .stage-note { grid-column: 1; }
+  .stage-note { white-space: normal; }
+}

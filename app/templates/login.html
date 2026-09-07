@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Sign in — XCP Pulse{% endblock %}
+{% block main_class %}wrap wrap-centred{% endblock %}
+
+{% block content %}
+<div class="card card-login">
+  <div class="login-head">
+    <span class="brand-mark brand-mark-lg">◈</span>
+    <h1>XCP Pulse</h1>
+    <p class="sub">XCP-ng and Xen Orchestra log collection</p>
+  </div>
+
+  {% if error %}
+  <p class="alert alert-error" role="alert">{{ error }}</p>
+  {% endif %}
+
+  <form method="post" action="/login" class="stack">
+    <input type="hidden" name="next" value="{{ next_url|default('/') }}">
+
+    <label for="username">Username</label>
+    <input id="username" name="username" type="text" autocomplete="username"
+           required autofocus spellcheck="false">
+
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password"
+           autocomplete="current-password" required>
+
+    <button type="submit" class="btn btn-primary">Sign in</button>
+  </form>
+</div>
+{% endblock %}
