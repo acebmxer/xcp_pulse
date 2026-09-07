@@ -54,6 +54,54 @@ _MIGRATIONS: list[str] = [
         last_test_message   TEXT
     );
     """,
+    # 2 -> 3: background jobs and the artifacts they produce.
+    #
+    # The queue lives in the database, not in the worker's memory. That is what
+    # lets a job survive a restart, lets the UI read progress written by another
+    # thread without sharing objects, and lets a separate worker process become
+    # a second consumer later without the schema changing. A worker claims a job
+    # with a conditional UPDATE on state, which SQLite applies atomically, so
+    # two consumers cannot take the same row.
+    #
+    # state is one of queued/running/succeeded/failed/cancelled — see
+    # app/jobs.py, which is the only module that writes it.
+    """
+    CREATE TABLE jobs (
+        id              TEXT PRIMARY KEY,
+        kind            TEXT NOT NULL,
+        state           TEXT NOT NULL,
+        params          TEXT NOT NULL DEFAULT '{}',
+        progress        INTEGER NOT NULL DEFAULT 0,
+        step            TEXT NOT NULL DEFAULT '',
+        error           TEXT,
+        created_at      REAL NOT NULL,
+        started_at      REAL,
+        finished_at     REAL,
+        cancel_requested INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX idx_jobs_state ON jobs (state, created_at);
+    CREATE INDEX idx_jobs_kind_created ON jobs (kind, created_at DESC);
+
+    -- Artifact bodies are files on the data volume; only their metadata is
+    -- here. A collected log bundle is measured at 433 MB, which is not
+    -- something to put in a database row, and using one path for both the
+    -- small JSON written today and that bundle later means no second store
+    -- has to be built.
+    --
+    -- ON DELETE CASCADE keeps the metadata honest when a job row goes; the
+    -- files are removed by the same code path, which is the only thing that
+    -- can do it.
+    CREATE TABLE artifacts (
+        id          TEXT PRIMARY KEY,
+        job_id      TEXT NOT NULL REFERENCES jobs (id) ON DELETE CASCADE,
+        name        TEXT NOT NULL,
+        media_type  TEXT NOT NULL,
+        size_bytes  INTEGER NOT NULL,
+        sha256      TEXT NOT NULL,
+        created_at  REAL NOT NULL
+    );
+    CREATE INDEX idx_artifacts_job ON artifacts (job_id);
+    """,
 ]
 
 

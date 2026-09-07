@@ -11,7 +11,7 @@
 [![Python](https://img.shields.io/badge/python-3.13-3776AB?logo=python&logoColor=white)](pyproject.toml)
 [![Docker](https://img.shields.io/badge/docker-compose-2496ED?logo=docker&logoColor=white)](compose.yaml)
 [![Platform: Linux](https://img.shields.io/badge/platform-linux-333333?logo=linux&logoColor=white)](#requirements)
-[![Tests](https://img.shields.io/badge/tests-76%20unit-informational)](https://github.com/acebmxer/xcp_pulse/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-137%20unit-informational)](https://github.com/acebmxer/xcp_pulse/actions/workflows/ci.yml)
 [![Ruff](https://img.shields.io/badge/ruff-clean-brightgreen)](https://github.com/acebmxer/xcp_pulse/actions/workflows/ci.yml)
 
 Collects XCP-ng and Xen Orchestra logs, bundles them for download, analyses
@@ -19,8 +19,9 @@ them, and reports findings — for your own troubleshooting or to attach to a
 Vates support ticket.
 
 > [!NOTE]
-> XCP Pulse is being built in stages. **v0.1.0 ships the container and the login
-> screen.** Connecting to Xen Orchestra is next, then log collection. See
+> XCP Pulse is being built in stages. **v0.3.0 connects to Xen Orchestra and
+> lists your pools and hosts.** Background jobs with stored results are in
+> progress, then redaction, then log collection. See
 > [the roadmap](docs/roadmap.md) for what is planned and what is done.
 
 ## Read next

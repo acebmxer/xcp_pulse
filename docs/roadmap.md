@@ -65,65 +65,26 @@ See the inventory on the dashboard.
 
 Work that takes time runs in the background, and what it produced is kept.
 
-- A job system: queued, running, finished and failed, with progress
-- An artifact store for what a job produced
-- Exercised by a **Refresh inventory** job, replacing today's read-on-page-load
+- A job system: queued, running, succeeded, failed and cancelled, with progress
+- An artifact store — bodies on the data volume, metadata in the database, so
+  the same store holds a few hundred bytes of JSON and a 433 MB bundle later
+- A **Refresh inventory** job, replacing the read-on-page-load in v0.3.0
+- A jobs page: history, live progress, and cancelling what is running
+
+The queue is a database table rather than an in-memory structure. That is what
+lets a job survive a restart, and what lets a separate worker process be added
+later without changing the schema or any job body.
 
 > [!NOTE]
 > The job system is built here, against endpoints that answer in milliseconds,
 > so that the 100-second collection job later lands on a system already proven.
 
-#### Which Xen Orchestra account to use
+### Redaction
 
-**An admin account, for now.** Measured against XO CE with
-`@xen-orchestra/rest-api` **0.39.0**, a restricted account cannot be granted the
-privilege the log download requires.
+See exactly what will be masked before anything can be downloaded.
 
-The REST API checks each route against the account's privileges, and downloading
-a host's logs requires `export:logs` on host — a **separate privilege from
-read**. Its own API specification documents this:
-
-```
-/hosts/{id}/logs.tgz   Required privilege: resource: host, action: export:logs
-/hosts/{id}/audit.txt  Required privilege: resource: host, action: export:logs
-```
-
-The catch is that `export:logs` may not appear in the privilege catalogue that
-roles are built from. Xen Orchestra defines it in its source, but the catalogue
-is stored per instance, and on the instance measured it offered only three host
-privileges — `read`, `allow-vm` and `*` — against the eighteen host actions the
-API requires. Where that is the case, the only grantable privilege satisfying
-the log download is `host:*`, which is full host administration.
-
-Checked against all eight built-in roles on that instance: only
-**Administrator** carries it. **Read only** grants `host:read` and `pool:read`,
-and is refused the log download with `403 not enough privileges`.
-
-**So this is a property of the connected instance, not a fixed rule.** XCP Pulse
-reads the catalogue from Xen Orchestra and reports what that instance can
-actually grant, rather than assuming either answer.
-
-| What XCP Pulse does | Privilege | Grantable to a restricted account |
-| --- | --- | --- |
-| List pools and hosts | `read` on pool and host | Yes — the **Read only** role |
-| Read alarms, messages, tasks, patches | `read` on those resources | Yes |
-| Download logs and audit trail | `export:logs` on host | **No — needs `host:*`** |
-
-So a restricted account works for inventory and API-based findings, and cannot
-collect logs. XCP Pulse asks which account type it has been given so it can say
-this plainly, rather than surfacing a bare `403`.
-
-> [!NOTE]
-> The version string does not tell you which set you have — the instance
-> measured reported the same `0.39.0` as the source defining all eighteen
-> actions, and served a catalogue seeded before they were added. Read
-> `/rest/v0/acl-privileges` to find out, which is what XCP Pulse does.
-
-> [!IMPORTANT]
-> **On XOA, restricted accounts additionally need Essential+, Pro or
-> Enterprise.** Role-based access control is not available on the lower XOA
-> tiers. Installations from the sources are not restricted.
-
+This is next because it has to come **before** the first downloadable bundle,
+not after — see [Redaction](#redaction-1) below for what it covers and why.
 
 ---
 
@@ -193,9 +154,7 @@ The order inside this group is forced. Each item says what must come first.
 
 ### Redaction
 
-*Prerequisite for: any downloadable bundle.*
-
-See exactly what will be masked before anything can be downloaded.
+*Prerequisite for: any downloadable bundle. Has none of its own.*
 
 - Rules for IPv4/IPv6, `trackid=` session tokens, password, secret and
   session_id assignments, MAC addresses, UUIDs, hostnames, email addresses
@@ -226,6 +185,58 @@ Collect a host's logs and download them, redacted.
   cleanup will delete
 
 Expect **about 433 MB and 100 seconds per host** — measured on XCP-ng 8.3.
+
+#### Which Xen Orchestra account to use
+
+**An admin account, for now.** Measured against XO CE with
+`@xen-orchestra/rest-api` **0.39.0**, a restricted account cannot be granted the
+privilege the log download requires.
+
+The REST API checks each route against the account's privileges, and downloading
+a host's logs requires `export:logs` on host — a **separate privilege from
+read**. Its own API specification documents this:
+
+```
+/hosts/{id}/logs.tgz   Required privilege: resource: host, action: export:logs
+/hosts/{id}/audit.txt  Required privilege: resource: host, action: export:logs
+```
+
+The catch is that `export:logs` may not appear in the privilege catalogue that
+roles are built from. Xen Orchestra defines it in its source, but the catalogue
+is stored per instance, and on the instance measured it offered only three host
+privileges — `read`, `allow-vm` and `*` — against the eighteen host actions the
+API requires. Where that is the case, the only grantable privilege satisfying
+the log download is `host:*`, which is full host administration.
+
+Checked against all eight built-in roles on that instance: only
+**Administrator** carries it. **Read only** grants `host:read` and `pool:read`,
+and is refused the log download with `403 not enough privileges`.
+
+**So this is a property of the connected instance, not a fixed rule.** XCP Pulse
+reads the catalogue from Xen Orchestra and reports what that instance can
+actually grant, rather than assuming either answer.
+
+| What XCP Pulse does | Privilege | Grantable to a restricted account |
+| --- | --- | --- |
+| List pools and hosts | `read` on pool and host | Yes — the **Read only** role |
+| Read alarms, messages, tasks, patches | `read` on those resources | Yes |
+| Download logs and audit trail | `export:logs` on host | **No — needs `host:*`** |
+
+So a restricted account works for inventory and API-based findings, and cannot
+collect logs. XCP Pulse asks which account type it has been given so it can say
+this plainly, rather than surfacing a bare `403`.
+
+> [!NOTE]
+> The version string does not tell you which set you have — the instance
+> measured reported the same `0.39.0` as the source defining all eighteen
+> actions, and served a catalogue seeded before they were added. Read
+> `/rest/v0/acl-privileges` to find out, which is what XCP Pulse does.
+
+> [!IMPORTANT]
+> **On XOA, restricted accounts additionally need Essential+, Pro or
+> Enterprise.** Role-based access control is not available on the lower XOA
+> tiers. Installations from the sources are not restricted.
+
 
 ### Collect individual categories
 

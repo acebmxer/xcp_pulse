@@ -3,20 +3,25 @@
 [← back to the README](../README.md)
 
 How the pieces fit together, and why. This page grows with each stage; today it
-describes v0.1.0 and states the decisions already taken about what follows.
+describes v0.3.0 plus the background job work in progress, and states the
+decisions already taken about what follows.
 
 ## Shape
 
 One container. A FastAPI application serving server-rendered Jinja templates,
-with SQLite on a mounted volume. No JavaScript build step, no CDN, no separate
-worker or broker.
+with SQLite on a mounted volume. No JavaScript build step, no CDN, no broker —
+the job queue is a table in the same database.
 
 ```
 browser ──▶ uvicorn ──▶ FastAPI ──▶ SQLite  (/data/xcp-pulse.db)
-                          │
-                          └──▶ Xen Orchestra REST API   (planned)
-                                        │
-                                        └──▶ artifact store  (planned)
+                          │            ▲
+                          │            │ queue + progress + metadata
+                          │            │
+                          └──▶ job worker thread
+                                       │
+                                       ├──▶ Xen Orchestra REST API
+                                       │
+                                       └──▶ artifact store  (/data/artifacts/)
 ```
 
 ## Why Python
@@ -35,6 +40,10 @@ streaming download.
 | --- | --- |
 | `app/config.py` | Reads and validates the environment. The **only** module that touches `os.environ`. |
 | `app/db.py` | SQLite connections and schema migrations. |
+| `app/jobs.py` | The job queue: states, claiming, progress, cancellation. Owns the `jobs` table. |
+| `app/job_runner.py` | The worker that runs queued jobs, and the registry of job kinds. |
+| `app/job_inventory.py` | The **Refresh inventory** job — the worked example of a job. |
+| `app/artifacts.py` | What a job produced: files on the volume, metadata in the database. |
 | `app/security.py` | Password hashing, sessions, login throttling. |
 | `app/dependencies.py` | Shared route plumbing: the template environment, `login_required`. |
 | `app/routes/` | HTTP endpoints, one module per area. |
@@ -42,6 +51,61 @@ streaming download.
 
 Every public function is listed in [the function index](functions.md). Read it
 before writing a new one.
+
+## Background jobs
+
+Work that takes time runs on a worker thread, and what it produced is kept.
+
+**The queue is a database table, not an in-memory structure.** That one decision
+is what buys everything else:
+
+- a job survives a restart, and one interrupted by a restart is marked failed at
+  the next start rather than showing as running for ever;
+- the web request rendering progress reads rows, sharing no objects with the
+  thread writing them;
+- claiming a job is a conditional `UPDATE ... WHERE state = 'queued'`, which
+  SQLite applies atomically — so a **separate worker process** can be added
+  later as a second consumer of the same table, with no change to the schema,
+  the queue module, or any job body.
+
+**A thread rather than an asyncio task**, because the Xen Orchestra client is
+synchronous `httpx` and the collection job later runs for 100 seconds. Awaiting
+that on the event loop would freeze every other request; a thread leaves the UI
+responsive without rewriting a client that works. The worker opens its own
+SQLite connection — connections are not thread-safe to share — which WAL mode
+makes concurrent with the request path.
+
+**One worker.** Two concurrent 433 MB downloads would compete for the same disk
+and the same XO instance for no gain, and a single worker makes "is a job of
+this kind already running?" a question with an obvious answer.
+
+**A running job is asked to stop, never killed.** A thread terminated mid-
+download leaves a half-written file and an open connection. Cancellation is
+recorded on the row, and the body notices it at its next progress report —
+which is why reporting progress and checking for cancellation are the same
+call.
+
+## The artifact store
+
+A job's output is a **file on the data volume**; only its metadata — name, media
+type, size, SHA-256 — is a database row. The same store therefore holds the few
+hundred bytes of JSON an inventory refresh writes and the 433 MB tarball
+collection will write later, so no second mechanism has to be built for the
+large case, and SQLite never carries a blob.
+
+Bodies live at `/data/artifacts/<job-id>/<artifact-id>`. Both ids are generated
+here, and the operator-facing name lives in the row rather than in the path, so
+a name coming from Xen Orchestra can never choose where a file is written.
+
+## Why the inventory is stored rather than read per page
+
+v0.3.0 read Xen Orchestra on every dashboard load. The page now shows what the
+last successful **Refresh inventory** job stored.
+
+The gain is not speed — those routes answer in milliseconds. It is that the
+inventory becomes a *result with a time on it*: the page says how old it is, and
+an XO that has gone away leaves the last known pools and hosts on screen with
+the failure reported above them, instead of an error where the hosts were.
 
 ## Authentication
 
@@ -89,9 +153,9 @@ transform during repacking, so a 56 MB log is never held in memory. This is why
 redaction is scheduled before the first downloadable bundle.
 
 **Jobs before they are needed.** A 101-second download needs background
-execution, progress and cancellation. That machinery is introduced with the XO
-connection, against endpoints that answer in milliseconds, so collection later
-adds a slow job type to a proven system rather than inventing it under load.
+execution, progress and cancellation. That machinery is built against endpoints
+answering in milliseconds, so collection later adds a slow job kind to a proven
+system rather than inventing one under load.
 
 **Compression is not worth it on the whole bundle.** Measured: 418 MB of the
 433 MB is already-gzipped rotated logs, so repacking gains about 4%. The real
