@@ -206,21 +206,62 @@ this plainly, rather than surfacing a bare `403`.
 
 ---
 
-## Next
+## Planned — free to pick up in any order
+
+Nothing below blocks anything else. Order is a choice about what is most
+useful.
+
+### Findings from the API
+
+*Prerequisite met: an XO connection, shipped in v0.2.0. Does not need a
+collected bundle.*
+
+A findings report without collecting anything.
+
+- Failed tasks with stack traces, alarms, XAPI messages, missing patches,
+  backup and restore results, pool dashboard
+- Each finding: severity, title, evidence, suggested action, source
+
+### Findings from the logs
+
+*Prerequisite met: full-bundle collection shipped in v0.6.0.*
+
+- Storage repository failures, multipath flapping, XAPI exceptions,
+  out-of-memory events, HA fencing, clock skew — with counts and first/last seen
+- Correlation between log events and XAPI messages on one timeline
 
 ### Self-update from the UI
 
-*Needs: published container images — done, `ghcr.io/acebmxer/xcp_pulse`.*
+*Prerequisite met: releases publish to `ghcr.io/acebmxer/xcp_pulse`.*
 
-Tells you when a new version is out, and applies it from the UI, so anyone
-testing along does not have to pull and recreate by hand each time.
+Tells you when a new version is out, and applies it from the UI.
 
-The design is in [Self-update](#self-update--up-next) below, where the details
-worth copying from `beacon_pxe` are recorded.
+Modelled on the mechanism in the sibling project
+[beacon_pxe](https://github.com/acebmxer/beacon_pxe), whose hard-won details are
+worth copying rather than rediscovering:
 
-## Planned — free to pick up in any order
+- **Compare image digests, not version strings.** What is deployed is read from
+  the running container through the Docker socket, not remembered in the
+  database — bookkeeping desyncs the moment someone updates by hand with
+  `docker compose pull && up -d`, and then advertises an update already installed.
+- **Hand the recreation to a throwaway container outside the compose project.**
+  A container cannot reliably replace itself; it gets killed partway and the
+  update appears to succeed while nothing was replaced.
+- **Confirm success from the replacement, not the initiator.** The process that
+  starts an update does not survive to see it finish, so the new container
+  records the outcome at startup. A stall is reaped on a timeout with an error
+  saying what to run by hand.
+- An update channel — `latest` following main, `stable` following releases —
+  where the tag the checker watches is the tag the compose file pulls.
 
-Nothing below blocks anything else. Order is a choice about what is most useful.
+Two things to settle before building it:
+
+- ~~**It needs a published image.**~~ Settled: releases publish to
+  `ghcr.io/acebmxer/xcp_pulse`, which is what the compose file already pulls.
+- **It needs the Docker socket, which is effectively host root** — directly
+  against this project's own threat model. The intended answer is that
+  self-update is **opt-in**, with update *checking* (outbound HTTPS only)
+  separable from update *applying*.
 
 ### Documentation in the web UI
 
@@ -272,13 +313,9 @@ More than one person can use XCP Pulse, with their own credentials.
 Migration is automatic: the existing environment-configured admin becomes the
 first row in the user table and continues to work.
 
-## Planned — has prerequisites
-
-The order inside this group is forced. Each item says what must come first.
-
 ### Date ranges
 
-*Needs: full-bundle collection — shipped in v0.6.0.*
+*Prerequisite met: full-bundle collection shipped in v0.6.0.*
 
 Ask for the window you care about instead of everything on the host.
 
@@ -303,7 +340,7 @@ large saving on what you keep and send.
 
 ### Collect individual categories
 
-*Needs: full-bundle collection — shipped in v0.6.0.*
+*Prerequisite met: full-bundle collection shipped in v0.6.0.*
 
 Download only the log families you want, without collecting again.
 
@@ -318,67 +355,20 @@ Download only the log families you want, without collecting again.
 > server-side filtering, so a request for one category cannot be made smaller —
 > it has to extract from a bundle already on disk.
 
-### Findings from the API
+---
 
-*Needs: an XO connection. Does not need a collected bundle.*
+## Planned — has prerequisites
 
-A findings report without collecting anything.
-
-- Failed tasks with stack traces, alarms, XAPI messages, missing patches,
-  backup and restore results, pool dashboard
-- Each finding: severity, title, evidence, suggested action, source
-
-### Findings from the logs
-
-*Needs: full-bundle collection — shipped in v0.6.0.*
-
-- Storage repository failures, multipath flapping, XAPI exceptions,
-  out-of-memory events, HA fencing, clock skew — with counts and first/last seen
-- Correlation between log events and XAPI messages on one timeline
+One item is still waiting on something that does not exist yet.
 
 ### Vates support package
 
-*Needs: redaction (shipped), collection (shipped), and findings.*
+*Still waiting on: findings. Redaction and collection have shipped.*
 
 One file to attach to a support ticket.
 
 - Redacted bundle, findings in Markdown and JSON, redaction report, inventory
 - A manifest saying what is included and what was masked
-
-### Self-update — up next
-
-*Needed published container images; those now exist at
-`ghcr.io/acebmxer/xcp_pulse`, so this is ready to start. Listed under
-[Next](#next).*
-
-Tells you when a new version is out, and applies it from the UI.
-
-Modelled on the mechanism in the sibling project
-[beacon_pxe](https://github.com/acebmxer/beacon_pxe), whose hard-won details are
-worth copying rather than rediscovering:
-
-- **Compare image digests, not version strings.** What is deployed is read from
-  the running container through the Docker socket, not remembered in the
-  database — bookkeeping desyncs the moment someone updates by hand with
-  `docker compose pull && up -d`, and then advertises an update already installed.
-- **Hand the recreation to a throwaway container outside the compose project.**
-  A container cannot reliably replace itself; it gets killed partway and the
-  update appears to succeed while nothing was replaced.
-- **Confirm success from the replacement, not the initiator.** The process that
-  starts an update does not survive to see it finish, so the new container
-  records the outcome at startup. A stall is reaped on a timeout with an error
-  saying what to run by hand.
-- An update channel — `latest` following main, `stable` following releases —
-  where the tag the checker watches is the tag the compose file pulls.
-
-Two things to settle before building it:
-
-- ~~**It needs a published image.**~~ Settled: releases publish to
-  `ghcr.io/acebmxer/xcp_pulse`, which is what the compose file already pulls.
-- **It needs the Docker socket, which is effectively host root** — directly
-  against this project's own threat model. The intended answer is that
-  self-update is **opt-in**, with update *checking* (outbound HTTPS only)
-  separable from update *applying*.
 
 ---
 

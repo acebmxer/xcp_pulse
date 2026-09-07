@@ -10,6 +10,19 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+### Changed
+
+- **The dashboard's "What is coming" section listed eight shipped releases
+  under a heading about future work.** The shipped stages have been removed
+  from it; it now shows only what is planned, with the two findings items
+  first because the Vates support package waits on them. The ordered group was
+  re-checked against what has actually shipped: date ranges, individual log
+  categories and findings from the API all had their prerequisite met by
+  v0.2.0 and v0.6.0, so only the support package is still ordered.
+  `docs/roadmap.md` was restructured to match — its "Next" section is gone,
+  and findings-from-the-logs, which the dashboard had omitted entirely, is now
+  listed.
+
 ### Fixed
 
 - **The restricted-account warning on the Collect page showed for every
