@@ -406,40 +406,69 @@ class XoClient:
         )
 
 
+def _raise_for_collection(response: httpx.Response) -> None:
+    """Raise XoError unless this collection response is a usable 200.
+
+    Deliberately shared by both readers below, because the distinction they
+    depend on is the same one and must not drift: ``200 []`` is a real answer
+    meaning the account sees nothing, while any other status is a failure that
+    has to travel rather than be flattened into an empty collection.
+
+    Flattening is what makes an outage indistinguishable from a privilege
+    problem: a refused, rate-limited or proxied-away request would otherwise
+    produce an empty inventory, be stored as a successful result, and be shown
+    to the operator as "this account can see nothing".
+    """
+    if response.status_code == 200:
+        return
+    if response.status_code in (401, 403):
+        raise XoError(
+            "Xen Orchestra refused the token when reading "
+            f"{response.request.url.path}. Check it has not been revoked."
+        )
+    raise XoError(
+        f"Xen Orchestra returned HTTP {response.status_code} for {response.request.url.path}."
+    )
+
+
 def _href_list(response: httpx.Response) -> list[str]:
     """Read a collection response into a list of hrefs.
 
     XO returns collections as an array of href strings by default. A restricted
     account gets 200 and an empty array, which is a real answer and not an
-    error, so a non-200 is the only thing treated as failure.
+    error; anything else raises.
     """
-    if response.status_code != 200:
-        return []
+    _raise_for_collection(response)
     try:
         payload = response.json()
     except ValueError:
-        return []
+        raise XoError(
+            f"Xen Orchestra did not return JSON for {response.request.url.path}."
+        ) from None
     if not isinstance(payload, list):
-        return []
+        raise XoError(
+            f"Xen Orchestra returned an unexpected shape for {response.request.url.path}."
+        )
     return [item for item in payload if isinstance(item, str)]
 
 
 def _record_list(response: httpx.Response) -> list[dict[str, object]]:
     """Read a collection response into a list of objects.
 
-    Mirrors _href_list for the ``fields`` form of the same routes: a non-200 or
-    an unexpected shape yields nothing, because an account being refused is not
-    distinguishable here from one seeing an empty installation, and neither is
-    an error the caller can act on.
+    Mirrors _href_list for the ``fields`` form of the same routes, and fails
+    the same way: only ``200 []`` is an empty inventory.
     """
-    if response.status_code != 200:
-        return []
+    _raise_for_collection(response)
     try:
         payload = response.json()
     except ValueError:
-        return []
+        raise XoError(
+            f"Xen Orchestra did not return JSON for {response.request.url.path}."
+        ) from None
     if not isinstance(payload, list):
-        return []
+        raise XoError(
+            f"Xen Orchestra returned an unexpected shape for {response.request.url.path}."
+        )
     return [item for item in payload if isinstance(item, dict)]
 
 

@@ -13,6 +13,12 @@ xcp-pulse.env
 # Ignored too, so a file left over from an older layout cannot be committed.
 .env
 
+# The working compose file. It is a deployment's own — it carries the image tag,
+# the port binding and any local overrides the operator has made, and editing it
+# is how a deployment is configured. compose.yaml.example is the committed
+# template; a real one is never committed.
+compose.yaml
+
 # The data volume: SQLite database, sessions, and collected log bundles.
 # Bundles contain real internal IPs and session tokens — never commit one.
 data/
