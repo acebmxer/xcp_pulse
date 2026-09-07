@@ -11,7 +11,7 @@
 [![Python](https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white)](pyproject.toml)
 [![Docker](https://img.shields.io/badge/docker-compose-2496ED?logo=docker&logoColor=white)](docker-compose.yml.example)
 [![Platform: Linux](https://img.shields.io/badge/platform-linux-333333?logo=linux&logoColor=white)](#requirements)
-[![Tests](https://img.shields.io/badge/tests-313%20unit-informational)](https://github.com/acebmxer/xcp_pulse/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-314%20unit-informational)](https://github.com/acebmxer/xcp_pulse/actions/workflows/ci.yml)
 [![Ruff](https://img.shields.io/badge/ruff-clean-brightgreen)](https://github.com/acebmxer/xcp_pulse/actions/workflows/ci.yml)
 
 Collects XCP-ng and Xen Orchestra logs, bundles them for download, analyses
@@ -72,9 +72,11 @@ Measured against a real XCP-ng 8.3 pool, so the numbers below are observed
 rather than estimated:
 
 - **Collect a host's full log bundle** via Xen Orchestra's REST API, alongside
-  the XAPI audit trail. A real bundle is **433 MB and takes about 100 seconds** —
-  603 files, all of `/var/log`. Collection runs as a cancellable background job
-  with progress and an ETA.
+  the XAPI audit trail. A real bundle is **433 MB** — 603 files, all of
+  `/var/log` — and downloads in about 100 seconds. A whole collection, which
+  also fetches the audit trail and redacts a copy of each, takes about **three
+  minutes**: measured runs took 166 and 203 seconds. Collection runs as a
+  cancellable background job with progress and an ETA.
 - **Redact** internal addresses, session tokens and credentials before anything
   leaves the machine. A single real `xensource.log` contained 8,359 lines
   matching password, secret or session patterns. The raw bundle is kept too, and

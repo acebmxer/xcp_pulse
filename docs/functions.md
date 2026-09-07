@@ -274,8 +274,9 @@ without losing counts the run recorded.
 ## `app/job_collect.py` — the Collect logs job
 
 Downloads one host's log bundle and audit trail, keeps the raw copies, and
-writes a redacted copy of each. Expect about **433 MB** and **100 seconds** per
-host, measured on XCP-ng 8.3.
+writes a redacted copy of each. Expect about **433 MB** and **three minutes**
+per host, measured on XCP-ng 8.3 — runs took 166 and 203 seconds end to end. The
+100-second figure quoted for the transfer is the `logs.tgz` download alone.
 
 The masking is `app/redact.py`'s — `active_rules` and `Rule.apply`, in the same
 order as `redact_text` and `job_redact` — so the preview page, a redaction job
