@@ -38,22 +38,36 @@ Run the container and log in.
 - `/healthz` for the container healthcheck
 - Dashboard placeholder, function index, documentation
 
----
+### v0.2.0 — Connect to Xen Orchestra
 
-## Next
-
-### Connect to Xen Orchestra
-
-Save an XO URL and API token, and see the pools and hosts it can reach.
+Save an XO URL and API token, and check what the account can reach.
 
 - Settings page; the token is encrypted at rest and never rendered back
 - The account type is chosen alongside the token — **admin** or **restricted** —
   so XCP Pulse knows which endpoints to expect a `403` from, and says which
   privilege is missing rather than reporting a generic failure
 - "Test connection" with a clear error when it fails
-- Inventory from `/rest/v0/pools` and `/rest/v0/hosts`
-- **Background job system and artifact store**, exercised by a "Refresh
-  inventory" job
+
+### v0.3.0 — List pools and hosts
+
+See the inventory on the dashboard.
+
+- Pools and hosts from `/rest/v0/pools` and `/rest/v0/hosts`, grouped by pool
+- Host address, version, cores and memory in use; pool master and disabled
+  hosts marked
+- An account that can see nothing is told why, rather than shown an empty list
+
+---
+
+## Next
+
+### Background jobs and stored results
+
+Work that takes time runs in the background, and what it produced is kept.
+
+- A job system: queued, running, finished and failed, with progress
+- An artifact store for what a job produced
+- Exercised by a **Refresh inventory** job, replacing today's read-on-page-load
 
 > [!NOTE]
 > The job system is built here, against endpoints that answer in milliseconds,

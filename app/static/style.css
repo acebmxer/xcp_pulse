@@ -195,6 +195,104 @@ button:focus-visible {
   font-size: 0.92rem;
 }
 
+/* ---- inventory ---- */
+
+.inventory-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.9rem;
+}
+
+.inventory-head h2 { margin: 0; font-size: 1.05rem; }
+.inventory-source { margin: 0; color: var(--text-dim); font-size: 0.85rem; }
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85em;
+}
+
+.pool { padding: 1.15rem 1.35rem; }
+.pool + .pool { margin-top: 1rem; }
+
+.pool-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding-bottom: 0.7rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.pool-name { margin: 0; font-size: 1rem; }
+.pool-id { color: var(--text-dim); }
+
+.hosts { list-style: none; margin: 0; padding: 0; }
+
+/* Six columns on a wide screen; the media query below stacks them rather than
+   letting addresses and versions crush together on a phone. */
+.host {
+  display: grid;
+  grid-template-columns: auto minmax(8rem, 1.4fr) minmax(7rem, 1fr) minmax(7rem, 1fr) auto auto;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  padding: 0.7rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.host:last-child { border-bottom: none; }
+
+.host-state {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+
+.host-state.is-running { background: var(--ok); }
+.host-state.is-halted { background: var(--danger-text); }
+
+.host-name { font-weight: 600; }
+.host-address, .host-version { color: var(--text-dim); font-size: 0.88rem; }
+.host-metric {
+  color: var(--text-dim);
+  font-size: 0.82rem;
+  white-space: nowrap;
+  text-align: right;
+}
+
+.tag {
+  margin-left: 0.4rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--accent);
+  color: var(--accent-text);
+  vertical-align: 1px;
+}
+
+.tag-warn {
+  background: var(--danger-bg);
+  color: var(--danger-text);
+  border: 1px solid var(--danger-border);
+}
+
+@media (max-width: 700px) {
+  .host {
+    grid-template-columns: auto 1fr;
+  }
+  .host-address, .host-version, .host-metric {
+    grid-column: 2;
+    text-align: left;
+  }
+}
+
 /* ---- roadmap ---- */
 
 .roadmap { margin-top: 2rem; }

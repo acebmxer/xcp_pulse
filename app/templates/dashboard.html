@@ -2,17 +2,103 @@
 {% block title %}Dashboard — XCP Pulse{% endblock %}
 
 {% block content %}
+{#
+  One host row, used for hosts inside a pool and for hosts whose pool this
+  account cannot see. Defined once so the two lists cannot drift apart.
+#}
+{% macro host_row(host, master_id) -%}
+<li class="host">
+  <span class="host-state {{ 'is-running' if host.running else 'is-halted' }}"
+        title="{{ host.power_state or 'unknown power state' }}"></span>
+  <span class="host-name">
+    {{ host.name }}
+    {% if master_id and host.id == master_id %}<span class="tag">master</span>{% endif %}
+    {% if not host.enabled %}<span class="tag tag-warn">disabled</span>{% endif %}
+  </span>
+  <span class="host-address mono">{{ host.address or '—' }}</span>
+  <span class="host-version">{{ (host.product ~ ' ' ~ host.version) | trim or '—' }}</span>
+  <span class="host-metric">
+    {% if host.cpu_cores %}{{ host.cpu_cores }} cores{% else %}—{% endif %}
+  </span>
+  <span class="host-metric">
+    {% if host.memory_percent is not none %}{{ host.memory_percent }}% memory{% else %}—{% endif %}
+  </span>
+</li>
+{%- endmacro %}
+
 <h1 class="page-title">Dashboard</h1>
 
+{% if error %}
+<div class="alert alert-error">{{ error }}</div>
+{% endif %}
+
+{% if not connection %}
 <div class="card empty-state">
   <span class="empty-mark">◇</span>
   <h2>No Xen Orchestra connection configured</h2>
   <p>
-    XCP Pulse is running, but it has nothing to collect from yet. Connecting to
-    a Xen Orchestra instance is the next piece of work; from there it will list
-    your pools and hosts, and collect their logs.
+    XCP Pulse is running, but it has nothing to collect from yet. Add a Xen
+    Orchestra address and API token in <a href="/settings">Settings</a>, and
+    your pools and hosts will be listed here.
   </p>
 </div>
+
+{% elif inventory and not inventory.is_empty %}
+<section class="inventory">
+  <div class="inventory-head">
+    <h2>Inventory</h2>
+    <p class="inventory-source">
+      {{ inventory.pools | length }} pool{{ '' if inventory.pools | length == 1 else 's' }},
+      {{ inventory.hosts | length }} host{{ '' if inventory.hosts | length == 1 else 's' }}
+      from <span class="mono">{{ connection.url }}</span>
+    </p>
+  </div>
+
+  {% for pool in inventory.pools %}
+  <div class="card pool">
+    <div class="pool-head">
+      <h3 class="pool-name">{{ pool.name }}</h3>
+      <span class="pool-id mono">{{ pool.id }}</span>
+    </div>
+
+    {% set hosts = inventory.hosts_in(pool.id) %}
+    {% if hosts %}
+    <ul class="hosts">
+      {% for host in hosts %}
+      {{ host_row(host, pool.master_id) }}
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="note">No hosts visible in this pool.</p>
+    {% endif %}
+  </div>
+  {% endfor %}
+
+  {% if inventory.orphan_hosts %}
+  <div class="card pool">
+    <div class="pool-head">
+      <h3 class="pool-name">Hosts outside a visible pool</h3>
+    </div>
+    <p class="note">
+      These hosts are readable but their pool is not, which happens when pool
+      and host privileges differ.
+    </p>
+    <ul class="hosts">
+      {% for host in inventory.orphan_hosts %}
+      {{ host_row(host, '') }}
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+</section>
+
+{% else %}
+<div class="card empty-state">
+  <span class="empty-mark">◇</span>
+  <h2>Nothing visible to this account</h2>
+  <p>{{ empty_help }}</p>
+</div>
+{% endif %}
 
 {#
   "What is coming" is a KEEPER, not scaffolding.
@@ -33,9 +119,19 @@
       <span class="stage-name">Log in</span>
       <span class="stage-state">shipped</span>
     </li>
+    <li class="stage stage-done">
+      <span class="stage-tag">v0.2.0</span>
+      <span class="stage-name">Connect to Xen Orchestra</span>
+      <span class="stage-state">shipped</span>
+    </li>
+    <li class="stage stage-done">
+      <span class="stage-tag">v0.3.0</span>
+      <span class="stage-name">List pools and hosts</span>
+      <span class="stage-state">shipped</span>
+    </li>
     <li class="stage stage-next">
       <span class="stage-tag">next</span>
-      <span class="stage-name">Connect to Xen Orchestra, list pools and hosts</span>
+      <span class="stage-name">Background jobs and stored results</span>
       <span class="stage-state">in progress</span>
     </li>
   </ol>

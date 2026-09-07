@@ -10,6 +10,35 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+### Added
+
+- **The dashboard lists the pools and hosts the connection can see.** Each pool
+  is shown with its hosts beneath it — name, address, XCP-ng version, cores and
+  memory in use — with the pool master and any disabled host marked. The
+  inventory is read from Xen Orchestra on each page load rather than cached,
+  which these routes answer fast enough to allow; the background job system
+  arriving next is what makes caching worth having.
+
+  **An empty inventory is explained rather than shown as an empty list.** Xen
+  Orchestra answers an account without read privileges with `200` and an empty
+  array, not a refusal, so a page showing no hosts would otherwise be
+  indistinguishable from a healthy connection to an empty installation. Hosts
+  whose pool is not visible are listed separately instead of being dropped,
+  since pool and host read privileges are granted independently and an account
+  can hold one without the other.
+
+  `XoClient.inventory()` requests XO's `fields` parameter, which is what makes
+  the collection routes return objects; without it they return href strings
+  alone. The existing `list_pools`/`list_hosts` keep returning hrefs and are
+  still what "Test connection" counts.
+
+### Fixed
+
+- **The function index recorded the 0.2.0 connection functions as
+  unreleased.** Every row added for the Xen Orchestra connection work still
+  carried `unreleased` in its "Since" column after 0.2.0 shipped, so the index
+  understated what was in the last release.
+
 ## [0.2.0] - 2026-09-06
 
 ### Added

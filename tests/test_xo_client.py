@@ -185,3 +185,153 @@ def test_timeout_raises_xo_error() -> None:
 def test_list_hosts_returns_hrefs() -> None:
     client = _client(lambda r: httpx.Response(200, json=[HOST_HREF]))
     assert client.list_hosts() == [HOST_HREF]
+
+
+# -- inventory -----------------------------------------------------------
+#
+# The records below are trimmed copies of real responses from a live XO CE
+# instance (@xen-orchestra/rest-api 0.39.0), so the field names and nesting
+# here are the ones actually served, not ones inferred from documentation.
+
+POOL_ID = "751d40fa-60b5-82cf-e735-6ed42d0e03f8"
+MASTER_ID = "c1372ec6-3651-4481-808b-34293e53e144"
+SECOND_HOST_ID = "35233210-4e37-4703-9bf6-9e8a9c24df9f"
+
+POOL_RECORD = {"id": POOL_ID, "name_label": "xcp-ng-Pool1", "master": MASTER_ID}
+
+HOST_RECORDS = [
+    {
+        "id": SECOND_HOST_ID,
+        "name_label": "xcp-ng-host2",
+        "address": "10.100.2.11",
+        "version": "8.3.0",
+        "productBrand": "XCP-ng",
+        "power_state": "Running",
+        "enabled": True,
+        "$pool": POOL_ID,
+        "cpus": {"cores": 24, "sockets": 1},
+        "memory": {"usage": 32056504320, "size": 103079215104},
+    },
+    {
+        "id": MASTER_ID,
+        "name_label": "xcp-ng-host1",
+        "address": "10.100.2.10",
+        "version": "8.3.0",
+        "productBrand": "XCP-ng",
+        "power_state": "Running",
+        "enabled": True,
+        "$pool": POOL_ID,
+        "cpus": {"cores": 28, "sockets": 1},
+        "memory": {"usage": 38540980224, "size": 103079215104},
+    },
+]
+
+
+def _inventory_handler(
+    pools: list[dict[str, object]],
+    hosts: list[dict[str, object]],
+) -> object:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/pools"):
+            return httpx.Response(200, json=pools)
+        if request.url.path.endswith("/hosts"):
+            return httpx.Response(200, json=hosts)
+        return httpx.Response(404)
+
+    return handler
+
+
+def test_inventory_reads_pools_and_hosts() -> None:
+    inventory = _client(_inventory_handler([POOL_RECORD], HOST_RECORDS)).inventory()
+
+    assert [pool.name for pool in inventory.pools] == ["xcp-ng-Pool1"]
+    assert len(inventory.hosts) == 2
+    assert inventory.is_empty is False
+
+    host = next(host for host in inventory.hosts if host.id == MASTER_ID)
+    assert host.name == "xcp-ng-host1"
+    assert host.address == "10.100.2.10"
+    assert host.product == "XCP-ng"
+    assert host.version == "8.3.0"
+    assert host.cpu_cores == 28
+    assert host.running is True
+    assert host.memory_percent == 37
+
+
+def test_inventory_requests_fields_so_records_are_objects() -> None:
+    """Without ``fields`` XO answers with href strings, which cannot be shown.
+
+    Regression guard: the count-only helpers deliberately omit ``fields``, so
+    it would be easy for the inventory to lose it and silently render nothing.
+    """
+    seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return httpx.Response(200, json=[])
+
+    _client(handler).inventory()
+    assert all("fields=" in url for url in seen), seen
+
+
+def test_inventory_groups_hosts_under_their_pool() -> None:
+    inventory = _client(_inventory_handler([POOL_RECORD], HOST_RECORDS)).inventory()
+
+    names = [host.name for host in inventory.hosts_in(POOL_ID)]
+    assert names == ["xcp-ng-host1", "xcp-ng-host2"], "hosts should be sorted by name"
+    assert inventory.orphan_hosts == []
+
+
+def test_inventory_keeps_hosts_whose_pool_is_not_visible() -> None:
+    """Pool and host read privileges are granted separately in XO.
+
+    An account can be allowed a host while refused the pool containing it, and
+    dropping that host would under-report what XCP Pulse can reach.
+    """
+    inventory = _client(_inventory_handler([], HOST_RECORDS)).inventory()
+
+    assert inventory.pools == []
+    assert [host.name for host in inventory.orphan_hosts] == [
+        "xcp-ng-host1",
+        "xcp-ng-host2",
+    ]
+
+
+def test_inventory_is_empty_for_an_account_without_privileges() -> None:
+    """Measured: a restricted account gets 200 and [], not 403."""
+    inventory = _client(_inventory_handler([], [])).inventory()
+
+    assert inventory.is_empty is True
+    assert inventory.pools == []
+    assert inventory.hosts == []
+
+
+def test_inventory_tolerates_missing_and_malformed_fields() -> None:
+    """An older instance may not serve every field asked for.
+
+    Absent fields must render as unknown rather than raising, because a single
+    unusual host would otherwise take out the whole dashboard.
+    """
+    records = [
+        {"id": "bare-host", "$pool": POOL_ID},
+        {"id": "odd-host", "name_label": "", "memory": "not-a-dict", "cpus": None},
+    ]
+    inventory = _client(_inventory_handler([{"id": POOL_ID}], records)).inventory()
+
+    bare = inventory.hosts[0]
+    assert bare.name == "bare-host", "an unnamed host falls back to its id"
+    assert bare.memory_percent is None
+    assert bare.address == ""
+
+    odd = inventory.hosts[1]
+    assert odd.name == "odd-host"
+    assert odd.cpu_cores == 0
+    assert inventory.pools[0].name == POOL_ID
+
+
+def test_inventory_surfaces_transport_failure() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused", request=request)
+
+    with pytest.raises(XoError):
+        _client(handler).inventory()

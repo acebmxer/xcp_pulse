@@ -114,8 +114,8 @@ This is XCP Pulse's own diagnostics, not the XCP-ng logs it collects.
 
 | Function | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
-| `decrypt` | `(stored: str, secret_key: str) -> str` | Recovers a stored secret; raises on a wrong key | `xo_connection.build_client` | unreleased |
-| `encrypt` | `(plaintext: str, secret_key: str) -> str` | Encrypts a secret for storage, base64 out | `xo_connection.save_connection` | unreleased |
+| `decrypt` | `(stored: str, secret_key: str) -> str` | Recovers a stored secret; raises on a wrong key | `xo_connection.build_client` | v0.2.0 |
+| `encrypt` | `(plaintext: str, secret_key: str) -> str` | Encrypts a secret for storage, base64 out | `xo_connection.save_connection` | v0.2.0 |
 
 The key is derived from the application secret key, so a copy of the database
 alone does not decrypt. `DecryptionError` means the key changed or the value was
@@ -132,12 +132,17 @@ stored URL, token and TLS setting are applied in one place.
 
 | Method | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
-| `XoClient.check_log_export` | `(*, is_admin: bool) -> LogExportSupport` | Whether this account can download host logs, and why not | `test_connection`, settings page | unreleased |
-| `XoClient.grantable_host_actions` | `() -> set[str]` | Host actions this instance can grant to a role | `check_log_export` | unreleased |
-| `XoClient.is_admin` | `() -> bool` | Whether the account has XO administrator permission | `test_connection` | unreleased |
-| `XoClient.list_hosts` | `() -> list[str]` | Host hrefs this account can see | `test_connection` | unreleased |
-| `XoClient.list_pools` | `() -> list[str]` | Pool hrefs this account can see | inventory | unreleased |
-| `XoClient.test_connection` | `() -> ConnectionTest` | Checks URL and token, reports what the account reaches | `routes.settings.settings_test` | unreleased |
+| `XoClient.check_log_export` | `(*, is_admin: bool) -> LogExportSupport` | Whether this account can download host logs, and why not | `test_connection`, settings page | v0.2.0 |
+| `XoClient.grantable_host_actions` | `() -> set[str]` | Host actions this instance can grant to a role | `check_log_export` | v0.2.0 |
+| `XoClient.inventory` | `() -> Inventory` | Pools and hosts with their details, for the dashboard | `routes.dashboard.dashboard` | v0.3.0 |
+| `XoClient.is_admin` | `() -> bool` | Whether the account has XO administrator permission | `test_connection` | v0.2.0 |
+| `XoClient.list_hosts` | `() -> list[str]` | Host hrefs this account can see, for counting only | `test_connection` | v0.2.0 |
+| `XoClient.list_pools` | `() -> list[str]` | Pool hrefs this account can see, for counting only | `test_connection` | v0.2.0 |
+| `XoClient.test_connection` | `() -> ConnectionTest` | Checks URL and token, reports what the account reaches | `routes.settings.settings_test` | v0.2.0 |
+
+`list_pools` and `list_hosts` return href strings and exist only to count what
+is visible. `inventory` asks the same routes for `fields`, which is what makes
+XO return objects rather than hrefs, and is what the dashboard renders.
 
 `XoError` carries a message written for the operator; the settings page renders
 it directly. `ConnectionTest` and `LogExportSupport` are frozen dataclasses.
@@ -151,11 +156,11 @@ than only whether the call succeeded.
 
 | Function | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
-| `build_client` | `(conn, secret_key: str) -> XoClient` | Builds a client from the stored connection | `routes.settings.settings_test` | unreleased |
-| `delete_connection` | `(conn) -> bool` | Removes the connection and its token | `routes.settings.settings_delete` | unreleased |
-| `get_connection` | `(conn) -> XoConnection \| None` | Reads the connection, never the token | `routes.settings` | unreleased |
-| `record_test_result` | `(conn, *, ok: bool, message: str) -> None` | Remembers the last test outcome | `routes.settings.settings_test` | unreleased |
-| `save_connection` | `(conn, *, url, token, account_type, verify_tls, secret_key) -> None` | Stores the connection, encrypting the token | `routes.settings.settings_save` | unreleased |
+| `build_client` | `(conn, secret_key: str) -> XoClient` | Builds a client from the stored connection | `routes.settings.settings_test` | v0.2.0 |
+| `delete_connection` | `(conn) -> bool` | Removes the connection and its token | `routes.settings.settings_delete` | v0.2.0 |
+| `get_connection` | `(conn) -> XoConnection \| None` | Reads the connection, never the token | `routes.settings` | v0.2.0 |
+| `record_test_result` | `(conn, *, ok: bool, message: str) -> None` | Remembers the last test outcome | `routes.settings.settings_test` | v0.2.0 |
+| `save_connection` | `(conn, *, url, token, account_type, verify_tls, secret_key) -> None` | Stores the connection, encrypting the token | `routes.settings.settings_save` | v0.2.0 |
 
 `get_connection` deliberately does not return the token: the settings template
 renders this object, and shows only that a token is stored.
@@ -164,15 +169,15 @@ renders this object, and shows only that a token is stored.
 
 | Function | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
-| `dashboard` | `(request, username) -> Response` | `GET /` — the landing page | router | v0.1.0 |
+| `dashboard` | `(request, username) -> Response` | `GET /` — lists the pools and hosts the connection can see | router | v0.1.0 |
 | `healthz` | `() -> dict[str, str]` | `GET /healthz` — unauthenticated liveness | router, compose healthcheck | v0.1.0 |
 | `login_form` | `(request, next: str = "/") -> Response` | `GET /login` | router | v0.1.0 |
 | `login_submit` | `(request, username, password, next) -> Response` | `POST /login` | router | v0.1.0 |
 | `logout` | `(request) -> Response` | `POST /logout` | router | v0.1.0 |
-| `settings_delete` | `(request, username) -> Response` | `POST /settings/delete` — forgets the connection | router | unreleased |
-| `settings_page` | `(request, username) -> Response` | `GET /settings` — the XO connection page | router | unreleased |
-| `settings_save` | `(request, username, url, token, account_type, verify_tls) -> Response` | `POST /settings` — stores the connection | router | unreleased |
-| `settings_test` | `(request, username) -> Response` | `POST /settings/test` — tests and reports reach | router | unreleased |
+| `settings_delete` | `(request, username) -> Response` | `POST /settings/delete` — forgets the connection | router | v0.2.0 |
+| `settings_page` | `(request, username) -> Response` | `GET /settings` — the XO connection page | router | v0.2.0 |
+| `settings_save` | `(request, username, url, token, account_type, verify_tls) -> Response` | `POST /settings` — stores the connection | router | v0.2.0 |
+| `settings_test` | `(request, username) -> Response` | `POST /settings/test` — tests and reports reach | router | v0.2.0 |
 
 ## `app/hashpw.py` — password hash helper
 
