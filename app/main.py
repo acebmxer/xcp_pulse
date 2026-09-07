@@ -12,8 +12,16 @@ from app import __version__
 from app.config import Settings, load_settings
 from app.db import init_db
 from app.dependencies import STATIC_DIR, RedirectToLogin
+
+# Importing a job module is what registers its kind with the runner, which
+# deliberately holds no list of its own. Anything defining a job kind has to be
+# imported here or its jobs fail at run time with "no handler".
+from app.job_inventory import KIND as _INVENTORY_KIND  # noqa: F401
+from app.job_runner import JobWorker
+from app.jobs import reset_orphans
 from app.logging_conf import configure_logging
 from app.routes import auth, dashboard, health
+from app.routes import jobs as job_routes
 from app.routes import settings as settings_routes
 from app.security import purge_expired_sessions, purge_old_login_attempts
 
@@ -29,6 +37,17 @@ async def lifespan(app: FastAPI):
     # and stale failures would keep an address locked out past its window.
     sessions = purge_expired_sessions(app.state.db)
     attempts = purge_old_login_attempts(app.state.db, settings.login_lockout_minutes)
+
+    # A job recorded as running belongs to a thread that died with the previous
+    # process. Marking those failed at startup is the only moment it can be done
+    # safely, because nothing can legitimately be running yet.
+    orphans = reset_orphans(app.state.db)
+    if orphans:
+        log.warning("marked %d interrupted job(s) as failed", orphans)
+
+    app.state.job_worker = JobWorker(settings.db_path, settings.data_dir, settings)
+    app.state.job_worker.start()
+
     log.info(
         "XCP Pulse %s started (data=%s, purged %d sessions, %d login attempts)",
         __version__,
@@ -39,6 +58,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    app.state.job_worker.stop()
     app.state.db.close()
     log.info("XCP Pulse stopped")
 
@@ -67,6 +87,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth.router)
     app.include_router(dashboard.router)
     app.include_router(settings_routes.router)
+    app.include_router(job_routes.router)
     return app
 
 

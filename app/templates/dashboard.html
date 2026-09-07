@@ -51,7 +51,15 @@
       {{ inventory.pools | length }} pool{{ '' if inventory.pools | length == 1 else 's' }},
       {{ inventory.hosts | length }} host{{ '' if inventory.hosts | length == 1 else 's' }}
       from <span class="mono">{{ connection.url }}</span>
+      {% if result_job and result_job.finished_at %}
+      — read {{ result_job.finished_at | age }}
+      {% endif %}
     </p>
+    <form method="post" action="/jobs/refresh-inventory" class="inline">
+      <button type="submit" class="btn btn-quiet" {{ 'disabled' if refreshing }}>
+        {{ 'Refreshing…' if refreshing else 'Refresh' }}
+      </button>
+    </form>
   </div>
 
   {% for pool in inventory.pools %}
@@ -91,6 +99,14 @@
   </div>
   {% endif %}
 </section>
+
+{% elif refreshing and not inventory %}
+<div class="card empty-state">
+  <span class="empty-mark">◈</span>
+  <h2>Reading the inventory</h2>
+  <p>{{ pending_help }}</p>
+  <p class="note"><a href="/jobs">Watch it on the jobs page</a>.</p>
+</div>
 
 {% else %}
 <div class="card empty-state">

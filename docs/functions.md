@@ -33,9 +33,12 @@ columns; those are a reviewer's job.
 | Call the Xen Orchestra API | `app/xo_client.py` — the only module that talks to XO |
 | Read or store the XO connection | `app/xo_connection.py` |
 | Encrypt or decrypt a stored secret | `app/crypto.py` |
+| Queue, read or cancel a background job | `app/jobs.py` |
+| Add a new kind of background job | `app/job_inventory.py` as the worked example; register it in `app/job_runner.py` and import it in `app/main.py` |
+| Store or read what a job produced | `app/artifacts.py` |
 
 Arriving in later stages, listed here so nobody starts a second one: the
-job/artifact store, the redaction engine, and tar handling.
+redaction engine and tar handling.
 
 ---
 
@@ -90,6 +93,7 @@ genuinely invalidates rather than merely asking the browser to forget.
 | Function | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
 | `login_required` | `(request) -> str` | FastAPI dependency; 303s anonymous callers | every protected route | v0.1.0 |
+| `age` | `(timestamp: float \| None) -> str` | A timestamp as how long ago it was, for a stored result | `dashboard.html`, as the `age` filter | unreleased |
 | `redirect` | `(url: str, status_code: int = 303) -> RedirectResponse` | Redirect, defaulting to see-other | `routes/auth` | v0.1.0 |
 
 `templates` is the shared Jinja environment; `RedirectToLogin` is the exception
@@ -134,7 +138,7 @@ stored URL, token and TLS setting are applied in one place.
 | --- | --- | --- | --- | --- |
 | `XoClient.check_log_export` | `(*, is_admin: bool) -> LogExportSupport` | Whether this account can download host logs, and why not | `test_connection`, settings page | v0.2.0 |
 | `XoClient.grantable_host_actions` | `() -> set[str]` | Host actions this instance can grant to a role | `check_log_export` | v0.2.0 |
-| `XoClient.inventory` | `() -> Inventory` | Pools and hosts with their details, for the dashboard | `routes.dashboard.dashboard` | v0.3.0 |
+| `XoClient.inventory` | `() -> Inventory` | Pools and hosts with their details, for the dashboard | `job_inventory.run` | v0.3.0 |
 | `XoClient.is_admin` | `() -> bool` | Whether the account has XO administrator permission | `test_connection` | v0.2.0 |
 | `XoClient.list_hosts` | `() -> list[str]` | Host hrefs this account can see, for counting only | `test_connection` | v0.2.0 |
 | `XoClient.list_pools` | `() -> list[str]` | Pool hrefs this account can see, for counting only | `test_connection` | v0.2.0 |
@@ -156,7 +160,7 @@ than only whether the call succeeded.
 
 | Function | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
-| `build_client` | `(conn, secret_key: str) -> XoClient` | Builds a client from the stored connection | `routes.settings.settings_test` | v0.2.0 |
+| `build_client` | `(conn, secret_key: str) -> XoClient` | Builds a client from the stored connection | `routes.settings.settings_test`, `job_inventory.run` | v0.2.0 |
 | `delete_connection` | `(conn) -> bool` | Removes the connection and its token | `routes.settings.settings_delete` | v0.2.0 |
 | `get_connection` | `(conn) -> XoConnection \| None` | Reads the connection, never the token | `routes.settings` | v0.2.0 |
 | `record_test_result` | `(conn, *, ok: bool, message: str) -> None` | Remembers the last test outcome | `routes.settings.settings_test` | v0.2.0 |
@@ -165,19 +169,116 @@ than only whether the call succeeded.
 `get_connection` deliberately does not return the token: the settings template
 renders this object, and shows only that a token is stored.
 
+## `app/jobs.py` — the job queue
+
+The queue is a database table, not an in-memory structure. That is what lets a
+job survive a restart, lets a web request read progress a worker thread wrote,
+and lets a separate worker process become a second consumer later without the
+schema changing.
+
+Nothing outside this module writes to the `jobs` table. A running job reports
+through the `JobContext` it is handed.
+
+| Function | Signature | Does | Used by | Since |
+| --- | --- | --- | --- | --- |
+| `claim_next` | `(conn) -> Job \| None` | Atomically takes the oldest queued job and marks it running | `job_runner.JobWorker.run_one` | unreleased |
+| `enqueue` | `(conn, kind: str, params: dict \| None = None) -> Job` | Adds a job to the queue | `routes.jobs`, `routes.dashboard` | unreleased |
+| `get_job` | `(conn, job_id: str) -> Job \| None` | One job by id | `routes.jobs`, `jobs.request_cancel` | unreleased |
+| `has_active` | `(conn, kind: str) -> bool` | True when a job of this kind is queued or running | `routes.jobs`, `routes.dashboard` | unreleased |
+| `latest_job` | `(conn, kind: str) -> Job \| None` | The newest job of a kind, whatever its state | `routes.dashboard` | unreleased |
+| `latest_successful` | `(conn, kind: str) -> Job \| None` | The newest job of a kind that succeeded | `routes.dashboard` | unreleased |
+| `list_jobs` | `(conn, *, kind: str \| None = None, limit: int = 50) -> list[Job]` | Recent jobs, newest first | `routes.jobs.jobs_page` | unreleased |
+| `mark_cancelled` | `(conn, job_id: str) -> None` | Records that a job stopped on request | `job_runner.JobWorker.run_one` | unreleased |
+| `mark_failed` | `(conn, job_id: str, error: str) -> None` | Records a failure and its reason | `job_runner.JobWorker.run_one` | unreleased |
+| `mark_succeeded` | `(conn, job_id: str, step: str = "") -> None` | Records completion | `job_runner.JobWorker.run_one` | unreleased |
+| `request_cancel` | `(conn, job_id: str) -> bool` | Asks a job to stop; True if it was still active | `routes.jobs.cancel_job` | unreleased |
+| `reset_orphans` | `(conn) -> int` | Fails jobs left running by a stopped process | `main.lifespan` | unreleased |
+
+`Job` and `JobContext` are dataclasses; `JobCancelled` is what unwinds a body
+that has been asked to stop. `JobContext.progress()` is both the progress
+report and the cancellation checkpoint, so a body that reports progress is
+cancellable without having to think about it.
+
+A running job is **never killed from outside** — a thread stopped mid-download
+leaves a half-written file and an open connection. Cancellation is recorded and
+the body notices it where stopping is safe.
+
+## `app/job_runner.py` — running queued jobs
+
+One worker thread, consuming the queue above. A thread rather than an asyncio
+task because the XO client is synchronous httpx and the collection job later
+runs for 100 seconds — awaiting that on the event loop would freeze the UI.
+
+**This is one implementation of a consumer, not the design.** Jobs are claimed
+with an atomic conditional UPDATE, so a separate worker *process* can be added
+without changing `app/jobs.py`, the schema, or any job body.
+
+| Function | Signature | Does | Used by | Since |
+| --- | --- | --- | --- | --- |
+| `register` | `(kind: str, body: Callable[[JobContext], None]) -> None` | Makes a job kind runnable | each job module at import | unreleased |
+| `registered_kinds` | `() -> list[str]` | Every runnable job kind | tests, logging | unreleased |
+
+`JobWorker` owns the thread. `JobWorker.run_one(conn)` is the whole of what it
+does per job and is public so tests can run a job without a background thread
+racing their assertions. Registration happens at import, so a module defining a
+kind must be imported in `main.py` or its jobs fail with "no handler".
+
+## `app/job_inventory.py` — the Refresh inventory job
+
+The worked example of a job, and what the dashboard reads. Deliberately built
+against endpoints answering in milliseconds, so the queue, progress,
+cancellation and the artifact store are proven before the 100-second collection
+job lands on them.
+
+| Function | Signature | Does | Used by | Since |
+| --- | --- | --- | --- | --- |
+| `inventory_from_job` | `(conn, data_dir, job_id: str) -> Inventory \| None` | Rebuilds the Inventory a job stored | `routes.dashboard.dashboard` | unreleased |
+| `run` | `(context: JobContext) -> None` | Reads XO and stores the inventory as an artifact | `job_runner`, via `register` | unreleased |
+
+`inventory_from_job` drops unknown keys and leaves missing ones at their
+dataclass default, so an artifact written by an older version still loads.
+
+## `app/artifacts.py` — what a job produced
+
+Bodies are files on the data volume; only metadata is in the database. That
+split is what lets one store hold both the JSON an inventory refresh writes and
+the 433 MB tarball collection will write later.
+
+The display name is stored in the row rather than used as the filename, so a
+name coming from Xen Orchestra can never choose a path.
+
+| Function | Signature | Does | Used by | Since |
+| --- | --- | --- | --- | --- |
+| `artifact_path` | `(data_dir: Path, job_id: str, artifact_id: str) -> Path` | Where one artifact's body lives | `artifacts` internals, tests | unreleased |
+| `artifacts_dir` | `(data_dir: Path) -> Path` | The directory holding every body, created if absent | `artifacts.artifact_path` | unreleased |
+| `delete_for_job` | `(conn, data_dir: Path, job_id: str) -> int` | Removes a job's files and rows together | retention, later stages | unreleased |
+| `get_artifact` | `(conn, artifact_id: str) -> Artifact \| None` | One artifact's metadata | later download routes | unreleased |
+| `list_for_job` | `(conn, job_id: str) -> list[Artifact]` | Everything one job produced | `routes.jobs`, `job_inventory` | unreleased |
+| `read_json` | `(data_dir: Path, artifact: Artifact) -> object` | Reads a JSON artifact's body back | `job_inventory.inventory_from_job` | unreleased |
+| `store_file` | `(conn, data_dir, *, job_id, name, media_type, source, move=True) -> Artifact` | Takes a file on disk into the store, hashing in chunks | collection, later | unreleased |
+| `store_json` | `(conn, data_dir, *, job_id, name, payload) -> Artifact` | Stores a JSON result | `job_inventory.run` | unreleased |
+
+`store_file` hashes by reading in chunks and moves rather than copies by
+default, because the caller that matters most writes a 433 MB download to a
+temporary path and has no reason to copy it again.
+
 ## `app/routes/` — HTTP endpoints
 
 | Function | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
-| `dashboard` | `(request, username) -> Response` | `GET /` — lists the pools and hosts the connection can see | router | v0.1.0 |
+| `cancel_job` | `(job_id, request, username) -> Response` | `POST /jobs/{id}/cancel` — asks a job to stop | router | unreleased |
+| `dashboard` | `(request, username) -> Response` | `GET /` — shows the inventory the last refresh stored | router | v0.1.0 |
 | `healthz` | `() -> dict[str, str]` | `GET /healthz` — unauthenticated liveness | router, compose healthcheck | v0.1.0 |
 | `login_form` | `(request, next: str = "/") -> Response` | `GET /login` | router | v0.1.0 |
 | `login_submit` | `(request, username, password, next) -> Response` | `POST /login` | router | v0.1.0 |
+| `job_status` | `(job_id, request, username) -> Response` | `GET /jobs/{id}/status` — one job's state as JSON | router | unreleased |
+| `jobs_page` | `(request, username) -> Response` | `GET /jobs` — history, progress and starting a refresh | router | unreleased |
 | `logout` | `(request) -> Response` | `POST /logout` | router | v0.1.0 |
 | `settings_delete` | `(request, username) -> Response` | `POST /settings/delete` — forgets the connection | router | v0.2.0 |
 | `settings_page` | `(request, username) -> Response` | `GET /settings` — the XO connection page | router | v0.2.0 |
 | `settings_save` | `(request, username, url, token, account_type, verify_tls) -> Response` | `POST /settings` — stores the connection | router | v0.2.0 |
 | `settings_test` | `(request, username) -> Response` | `POST /settings/test` — tests and reports reach | router | v0.2.0 |
+| `start_inventory_refresh` | `(request, username) -> Response` | `POST /jobs/refresh-inventory` — queues a refresh | router | unreleased |
 
 ## `app/hashpw.py` — password hash helper
 

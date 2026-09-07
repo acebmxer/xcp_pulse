@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Jobs — XCP Pulse{% endblock %}
+
+{% block content %}
+{#
+  While anything is queued or running, the page reloads itself so progress
+  moves without the operator pressing anything. It stops once everything has
+  settled, so a finished list is not reloaded for ever.
+#}
+{% if any_active %}
+<meta http-equiv="refresh" content="3">
+{% endif %}
+
+<h1 class="page-title">Jobs</h1>
+
+{% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+{% if notice %}<div class="alert alert-ok">{{ notice }}</div>{% endif %}
+
+<div class="card">
+  <div class="job-actions">
+    <div>
+      <h2>Refresh inventory</h2>
+      <p class="note">
+        Reads the pools and hosts from Xen Orchestra and stores the result for
+        the dashboard.
+      </p>
+    </div>
+    <form method="post" action="/jobs/refresh-inventory" class="inline">
+      <button type="submit" class="btn" {% if not connection %}disabled{% endif %}>
+        Run now
+      </button>
+    </form>
+  </div>
+  {% if not connection %}
+  <p class="note">
+    No Xen Orchestra connection is configured. Add one in
+    <a href="/settings">Settings</a>.
+  </p>
+  {% endif %}
+</div>
+
+<h2 class="section-title">History</h2>
+
+{% if not jobs %}
+<div class="card empty-state">
+  <span class="empty-mark">◇</span>
+  <h2>Nothing has run yet</h2>
+  <p>Jobs you start appear here, with their progress and what they produced.</p>
+</div>
+{% else %}
+<ul class="joblist">
+  {% for job in jobs %}
+  <li class="card job job-{{ job.state }}">
+    <div class="job-head">
+      <span class="job-kind">{{ job.kind.replace('_', ' ') }}</span>
+      <span class="job-state job-state-{{ job.state }}">{{ job.state }}</span>
+      {% if job.duration is not none %}
+      <span class="job-duration">{{ '%.1f'|format(job.duration) }}s</span>
+      {% endif %}
+    </div>
+
+    {% if job.is_active %}
+    <div class="progress" role="progressbar" aria-valuenow="{{ job.progress }}"
+         aria-valuemin="0" aria-valuemax="100">
+      <div class="progress-bar" style="width: {{ job.progress }}%"></div>
+    </div>
+    <p class="job-step">{{ job.step or 'Waiting to start' }} — {{ job.progress }}%</p>
+    <form method="post" action="/jobs/{{ job.id }}/cancel" class="inline">
+      <button type="submit" class="btn btn-quiet">Cancel</button>
+    </form>
+    {% elif job.step %}
+    <p class="job-step">{{ job.step }}</p>
+    {% endif %}
+
+    {% if job.error %}
+    <p class="job-error">{{ job.error }}</p>
+    {% endif %}
+
+    {% set produced = artifacts.get(job.id, []) %}
+    {% if produced %}
+    <ul class="artifacts">
+      {% for artifact in produced %}
+      <li>
+        <span class="mono">{{ artifact.name }}</span>
+        <span class="artifact-size">{{ artifact.size_human }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

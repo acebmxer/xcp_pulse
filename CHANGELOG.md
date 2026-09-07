@@ -10,6 +10,53 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+### Added
+
+- **Work that takes time now runs in the background, and what it produced is
+  kept.** A job has a state — queued, running, succeeded, failed or cancelled —
+  with a percentage and a step description while it runs. A new **Jobs** page
+  shows the history, live progress, and a Cancel button for anything running.
+
+  **The queue is a database table rather than an in-memory structure**, which is
+  what makes a job survive a restart and lets a web request read progress
+  written by the worker thread without sharing objects with it. Claiming a job
+  is a conditional `UPDATE ... WHERE state = 'queued'`, applied atomically by
+  SQLite, so a separate worker process can be added later as a second consumer
+  of the same table without changing the schema or any job body.
+
+  Jobs run on a worker thread rather than as asyncio tasks: the Xen Orchestra
+  client is synchronous `httpx` and log collection later runs for about 100
+  seconds, which awaited on the event loop would freeze every other request. A
+  running job is asked to stop rather than killed — a thread terminated
+  mid-download leaves a half-written file — so cancellation is recorded and the
+  body acts on it at its next progress report.
+
+- **An artifact store for what a job produced.** Bodies are files under
+  `/data/artifacts/`, with name, media type, size and SHA-256 in the database.
+  The same store therefore holds the few hundred bytes of JSON an inventory
+  refresh writes and the 433 MB bundle collection will write later, so no second
+  mechanism is needed for the large case and SQLite never carries a blob. The
+  operator-facing name is kept in the row rather than used as the filename, so a
+  name coming from Xen Orchestra cannot choose where a file is written.
+
+### Changed
+
+- **The dashboard shows the inventory a Refresh job stored, rather than calling
+  Xen Orchestra on every page load.** The gain is not speed — those routes
+  answer in milliseconds — but that the inventory is now a result with a time
+  attached: the page says how long ago it was read, and an unreachable Xen
+  Orchestra leaves the last known pools and hosts on screen with the failure
+  reported above them, instead of an error where the hosts were.
+
+  The first load after saving a connection queues one refresh by itself, so a
+  newly configured instance is not an empty page with no obvious next step.
+
+- **A job recorded as running is marked failed at startup.** Such a row belongs
+  to a thread that died with the previous process; left alone it would show as
+  in progress indefinitely and, worse, block a new job of the same kind from
+  being started.
+
+
 ## [0.3.0] - 2026-09-06
 
 ### Added

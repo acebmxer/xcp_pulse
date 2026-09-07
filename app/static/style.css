@@ -435,6 +435,127 @@ select {
   font-size: 0.8rem;
 }
 
+/* ---- jobs ---- */
+
+.section-title {
+  margin: 1.75rem 0 0.75rem;
+  font-size: 1.05rem;
+}
+
+.job-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.job-actions h2 {
+  margin: 0 0 0.25rem;
+  font-size: 1rem;
+}
+
+.joblist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.job {
+  margin-bottom: 0.75rem;
+}
+
+.job-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.job-kind {
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+/* State is colour AND a word, never colour alone: the palette has to survive
+   a monochrome screen and a reader who cannot distinguish the two greens. */
+.job-state {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+
+.job-state-running,
+.job-state-queued { border-color: var(--accent); color: var(--accent); }
+.job-state-succeeded { border-color: var(--ok); color: var(--ok); }
+.job-state-failed { border-color: var(--danger-border); color: var(--danger-text); }
+
+.job-duration {
+  margin-left: auto;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+.progress {
+  height: 6px;
+  margin: 0.7rem 0 0.4rem;
+  border-radius: 999px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.progress-bar {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+
+.job-step {
+  margin: 0.3rem 0;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.job-error {
+  margin: 0.5rem 0 0;
+  padding: 0.5rem 0.65rem;
+  border-radius: 7px;
+  background: var(--danger-bg);
+  border: 1px solid var(--danger-border);
+  color: var(--danger-text);
+  font-size: 0.85rem;
+}
+
+.artifacts {
+  list-style: none;
+  margin: 0.6rem 0 0;
+  padding: 0.6rem 0 0;
+  border-top: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+
+.artifacts li {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.15rem 0;
+}
+
+.artifact-size { color: var(--text-dim); }
+
+/* The inventory heading carries the Refresh button, so it becomes a row. */
+.inventory-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
 @media (max-width: 560px) {
   .kv { grid-template-columns: 1fr; gap: 0.15rem; }
   .kv dd { margin-bottom: 0.5rem; }
@@ -444,4 +565,6 @@ select {
   .stage:not(:has(.stage-tag)) .stage-state,
   .stage:not(:has(.stage-tag)) .stage-note { grid-column: 1; }
   .stage-note { white-space: normal; }
+  .job-actions { align-items: flex-start; }
+  .job-duration { margin-left: 0; }
 }
