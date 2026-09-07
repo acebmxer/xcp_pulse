@@ -10,6 +10,26 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+### Added
+
+- **The image is published to GitHub Container Registry, so deploying no longer
+  needs a clone.** `compose.yaml` pulls `ghcr.io/acebmxer/xcp_pulse` instead of
+  building from the working directory, which means the compose file and an env
+  file are a complete deployment — previously `build: .` required the Dockerfile
+  and the whole `app/` tree to be present, and there was no published image to
+  pull. A new workflow builds and pushes on a version tag, tagging `X.Y.Z`,
+  `X.Y` and `latest`. Building from a clone still works: uncomment `build: .`
+  and pass `--build`.
+
+### Fixed
+
+- **The example env file and `python -m app.hashpw` both told the user to write
+  their settings into `.env`, which is the one name that cannot work.** Compose
+  loads a file called `.env` as its own interpolation source, so the `$` in an
+  Argon2 hash is eaten and the container starts with a mangled hash or refuses
+  to start. Both now name `xcp-pulse.env`, matching what `compose.yaml` has
+  always read.
+
 ## [0.4.0] - 2026-09-07
 
 ### Added

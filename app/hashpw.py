@@ -35,7 +35,7 @@ def main() -> int:
         return 1
 
     print()
-    print("Add this line to your .env file:")
+    print("Add this line to your xcp-pulse.env file:")
     print()
     print(f"XCP_PULSE_ADMIN_PASSWORD_HASH={hash_password(password)}")
     print()
