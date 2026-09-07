@@ -25,6 +25,28 @@ templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 templates.env.globals["app_version"] = __version__
 
 
+def _asset_token() -> str:
+    """A cache-busting token for the stylesheet, from its own mtime.
+
+    Starlette's StaticFiles sends an ETag and Last-Modified but no Cache-Control,
+    so a browser is free to reuse a cached stylesheet without revalidating it.
+    In practice it does: a CSS change would reach the container and still not
+    reach the page, which is invisible from the server side and looks exactly
+    like a fix that did not work.
+
+    The version string alone is not enough, because it does not move between
+    builds during development — which is precisely when the stylesheet changes
+    most. The mtime does.
+    """
+    try:
+        return str(int((STATIC_DIR / "style.css").stat().st_mtime))
+    except OSError:
+        return __version__
+
+
+templates.env.globals["asset_token"] = _asset_token()
+
+
 def age(timestamp: float | None) -> str:
     """A unix timestamp as how long ago it was, for showing beside a result.
 

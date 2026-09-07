@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Redaction — XCP Pulse{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Redaction</h1>
+
+{% if error %}
+<p class="alert alert-error" role="alert">{{ error }}</p>
+{% endif %}
+
+<div class="card">
+  <h2>Preview</h2>
+  <p class="note">
+    Paste log text to see what would be masked. Nothing here is stored.
+  </p>
+
+  <form method="post" action="/redaction" class="stack">
+    <label for="text">Log text</label>
+    <textarea id="text" name="text" rows="10" spellcheck="false" class="mono">{{ text }}</textarea>
+    <button type="submit" class="btn btn-primary">Redact</button>
+  </form>
+</div>
+
+{% if result is not none %}
+<div class="card">
+  <h2>Result</h2>
+  {% if total_hits %}
+  <p>{{ total_hits }} value{{ '' if total_hits == 1 else 's' }} masked.</p>
+  {% else %}
+  <p class="note">Nothing in that text matched a rule.</p>
+  {% endif %}
+  <pre class="mono redaction-result">{{ result }}</pre>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>Rules</h2>
+  <dl class="kv">
+    {% for rule in rules %}
+    <dt>{{ rule.title }}
+      {% if counts.get(rule.name) %}<span class="tag">{{ counts[rule.name] }}</span>{% endif %}
+    </dt>
+    <dd>{{ rule.description }} Replaced with <code>{{ rule.placeholder }}</code>.</dd>
+    {% endfor %}
+  </dl>
+</div>
+{% endblock %}

@@ -3,7 +3,7 @@
 [← back to the README](../README.md)
 
 How the pieces fit together, and why. This page grows with each stage; today it
-describes v0.4.0 and states the decisions already taken about what follows.
+describes v0.4.0 and the redaction work in progress, and states the decisions already taken about what follows.
 
 ## Shape
 
@@ -43,6 +43,7 @@ streaming download.
 | `app/job_runner.py` | The worker that runs queued jobs, and the registry of job kinds. |
 | `app/job_inventory.py` | The **Refresh inventory** job — the worked example of a job. |
 | `app/artifacts.py` | What a job produced: files on the volume, metadata in the database. |
+| `app/redact.py` | The masking rules. The **only** place a redaction pattern is written. |
 | `app/security.py` | Password hashing, sessions, login throttling. |
 | `app/dependencies.py` | Shared route plumbing: the template environment, `login_required`. |
 | `app/routes/` | HTTP endpoints, one module per area. |
@@ -105,6 +106,36 @@ The gain is not speed — those routes answer in milliseconds. It is that the
 inventory becomes a *result with a time on it*: the page says how old it is, and
 an XO that has gone away leaves the last known pools and hosts on screen with
 the failure reported above them, instead of an error where the hosts were.
+
+## Redaction
+
+Masking is a **line-oriented transform**: `redact_line` takes a string and
+returns a string. That is deliberate, because the caller that matters most is
+not the preview page — it is the repack that will stream a 56 MB log through
+this and must never hold it in memory. The preview page and the eventual bundle
+therefore run identical rules over identical units.
+
+**A placeholder keeps the shape of what it replaced.** `10.20.30.40` becomes
+`[IPv4]`, and the same address gets the same placeholder everywhere, so a
+support engineer reading a redacted log can still see that two lines concern one
+host. Deleting the value instead would make the log safe and useless.
+
+**Rule order is load-bearing**, and there are two cases where it decides the
+answer rather than merely the label:
+
+- `secret` runs before the value-shape rules, so `password=10.0.0.1` is masked
+  as a password rather than as an address.
+- `mac` runs before `ipv6`, because a MAC address is also a run of
+  colon-separated hex and whichever rule runs first claims it.
+
+**Some things are deliberately not masked.** Loopback, `0.0.0.0` and `localhost`
+identify nobody, and masking them costs readability for no privacy. The hostname
+rule matches only dotted names for the same reason: a bare-word rule would match
+half the vocabulary of a log file, and an unreadable bundle helps nobody.
+
+The IPv6 pattern is written as whole-address alternatives rather than "a run of
+hex and colons", because the looser form matched the `12:30:45` timestamp that
+prefixes nearly every syslog line.
 
 ## Authentication
 
