@@ -1,7 +1,7 @@
 name: Publish image
 
 # Builds the image and pushes it to GHCR so a user can deploy with only
-# compose.yaml and xcp-pulse.env — no clone, no local build.
+# docker-compose.yml and xcp-pulse.env — no clone, no local build.
 #
 # Fires on a version tag (v0.4.1 -> :0.4.1 and :latest) and can be run by hand
 # against any branch, which publishes only the branch-named tag.

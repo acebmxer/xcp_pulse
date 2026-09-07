@@ -15,7 +15,7 @@ deployment — there is nothing to clone and nothing to build:
 
 ```bash
 mkdir xcp-pulse && cd xcp-pulse
-curl -o compose.yaml https://raw.githubusercontent.com/acebmxer/xcp_pulse/main/compose.yaml.example
+curl -o docker-compose.yml https://raw.githubusercontent.com/acebmxer/xcp_pulse/main/docker-compose.yml.example
 curl -o xcp-pulse.env https://raw.githubusercontent.com/acebmxer/xcp_pulse/main/xcp-pulse.env.example
 ```
 
@@ -23,13 +23,13 @@ The env file must be called `xcp-pulse.env` and not `.env` — compose treats a
 file of that name as its own variable source and mangles the password hash.
 
 Prefer to build from source? Clone the repository instead, copy the sample,
-uncomment `build: .` in your `compose.yaml`, and add `--build` to the `up`
+uncomment `build: .` in your `docker-compose.yml`, and add `--build` to the `up`
 command below:
 
 ```bash
 git clone https://github.com/acebmxer/xcp_pulse.git
 cd xcp_pulse
-cp compose.yaml.example compose.yaml
+cp docker-compose.yml.example docker-compose.yml
 cp xcp-pulse.env.example xcp-pulse.env
 ```
 
@@ -68,7 +68,7 @@ docker compose logs -f  # application log
 
 ## Upgrading
 
-Edit the image tag in `compose.yaml` to the version you want, then:
+Edit the image tag in `docker-compose.yml` to the version you want, then:
 
 ```bash
 docker compose pull
@@ -110,4 +110,4 @@ should. Run `python -m app.hashpw` as above and put the result in `xcp-pulse.env
 `XCP_PULSE_HTTPS=true` while serving over plain HTTP. Set it to `false`.
 
 **Port already in use** — change the left-hand side of the port mapping in
-`compose.yaml`, for example `"127.0.0.1:9090:8080"`.
+`docker-compose.yml`, for example `"127.0.0.1:9090:8080"`.

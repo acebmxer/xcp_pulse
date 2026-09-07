@@ -10,6 +10,21 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+### Changed
+
+- **The compose sample is now `docker-compose.yml.example`, not
+  `compose.yaml.example`.** Both names are ones Compose looks for on its own,
+  so `docker compose up -d` behaves identically either way; the change is to
+  the more widely recognised of the two, which is what most projects publish
+  and what an operator expects to find. The README quick start, the
+  installation and configuration docs, the `.gitignore` entry for the working
+  copy and the compose tests all follow the new name. Upgrading an existing
+  deployment needs nothing — an existing `compose.yaml` keeps working, and
+  renaming it to `docker-compose.yml` is optional. **The env file is unchanged
+  and must stay `xcp-pulse.env`:** Compose auto-loads a file named `.env` as
+  its own interpolation source, which mangles the `$` characters in the Argon2
+  password hash and stops the container from starting.
+
 ### Fixed
 
 - **A flaky redaction-report test that failed CI on Python 3.12.** The jobs

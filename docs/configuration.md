@@ -61,7 +61,7 @@ should sit behind a proxy: exposed directly, that header is client-supplied.
 ### `XCP_PULSE_DATA_DIR`
 
 Default `/data`. Where the database, session key and collected bundles live
-inside the container. Normally you change the volume in `compose.yaml` rather
+inside the container. Normally you change the volume in `docker-compose.yml` rather
 than this.
 
 ### `XCP_PULSE_LOG_LEVEL`
