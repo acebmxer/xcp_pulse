@@ -22,14 +22,14 @@
     <div>
       <h2>Collect from a host</h2>
       <p class="note">
-        Downloads the host's log bundle and its XAPI audit trail, then makes a
-        redacted copy of each using the rules switched on in
-        <a href="/redaction">Redaction</a>. Expect roughly <strong>433 MB</strong>
-        and <strong>three minutes</strong> per host — measured runs took 166 and
-        203 seconds end to end.
+        Downloads the host's log bundle — the same status report
+        <code>xen-bugtool</code> produces, which is what Vates ask for — then
+        makes a redacted copy using the rules switched on in
+        <a href="/redaction">Redaction</a>. Expect roughly <strong>870 MB</strong>
+        of stored files and <strong>two minutes</strong> per host.
       </p>
     </div>
-    <form method="post" action="/collect" class="inline">
+    <form method="post" action="/collect" class="inline" id="collect-form">
       <label class="visually-hidden" for="host_id">Host to collect from</label>
       <select id="host_id" name="host_id" {% if not hosts %}disabled{% endif %}>
         {% for host in hosts %}
@@ -43,6 +43,18 @@
       </button>
     </form>
   </div>
+
+  <label class="check">
+    <input type="checkbox" name="include_audit" value="1" form="collect-form">
+    <span>Also download the XAPI audit trail</span>
+  </label>
+  <p class="note audit-note">
+    Adds about 770 MiB and a minute per host. The bundle already contains
+    <code>/var/log/audit.log</code> and its rotated copies; this fetches the
+    current trail uncompressed as a separate file. Most of it is the toolstack
+    calling itself — storage scans and PBD updates — rather than a record of
+    what people did.
+  </p>
 
   {% if not connection %}
   <p class="note">

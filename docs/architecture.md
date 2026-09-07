@@ -44,7 +44,7 @@ streaming download.
 | `app/job_runner.py` | The worker that runs queued jobs, and the registry of job kinds. |
 | `app/job_inventory.py` | The **Refresh inventory** job — the worked example of a job. |
 | `app/job_redact.py` | The **Redact artifact** job: masks a stored file, writes the report. |
-| `app/job_collect.py` | The **Collect logs** job: downloads a host's bundle and audit trail, keeps raw and redacted copies. |
+| `app/job_collect.py` | The **Collect logs** job: downloads a host's bundle (and optionally its audit trail), keeps raw and redacted copies. |
 | `app/retention.py` | What stored collections to delete, always previewed before it acts. |
 | `app/artifacts.py` | What a job produced: files on the volume, metadata in the database. |
 | `app/redact.py` | The masking rules. The **only** place a redaction pattern is written. |

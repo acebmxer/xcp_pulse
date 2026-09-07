@@ -10,6 +10,33 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+### Changed
+
+- **The XAPI audit trail is no longer downloaded unless a collection asks for
+  it.** Every collection fetched `/hosts/{id}/audit.txt` alongside the log
+  bundle, which at a measured 770 MiB was the largest file in the run — larger
+  than the bundle itself, and with its redacted copy accounting for about two
+  thirds of the 2.3 GiB a collection stored. It duplicates what is already
+  collected: `xen-bugtool` puts `/var/log/audit.log` and its rotated copies
+  inside the bundle, verified by listing a stored bundle's members. Vates' own
+  support documentation asks for a bugtool status report, not a separate trail.
+  The Collect page now offers it as an unticked checkbox, so the default
+  collection is the bundle and its redacted copy — about 870 MB and two
+  minutes. Queued jobs and any caller omitting the flag get the smaller run.
+
+### Fixed
+
+- **The Collect page told operators to expect 433 MB per host, which is the
+  size of the log bundle alone.** A collection also downloads the XAPI audit
+  trail — measured at 770 MiB, larger than the bundle — and then writes a
+  redacted copy of each, so a single host's collection stores about 2.3 GiB.
+  The figure came from the first measurement, of `logs.tgz` on its own, and was
+  never widened when the audit trail and the redacted copies joined the same
+  job. Someone sizing a data volume from it would have under-provisioned by
+  more than fivefold. The estimate on the page, the same claim in the README,
+  and the retention module's docstring now all say 2.3 GiB and name the four
+  files. The timing half of the estimate was already right and is unchanged.
+
 ## [0.6.1] - 2026-09-07
 
 ### Changed

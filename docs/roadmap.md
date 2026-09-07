@@ -138,7 +138,7 @@ Collect a host's logs and download them, redacted.
 - Per-host collection as a background job, with real progress and ETA
 - Cancellable; a failed download cannot resume, and says so plainly
 - Raw bundle kept; redacted bundle produced for download
-- Also collects the XAPI audit trail
+- The XAPI audit trail is an optional extra per collection, off by default
 - Bundle list with size and age, and retention with a preview of what the next
   cleanup will delete
 
@@ -246,6 +246,22 @@ Download only the log families you want, without collecting again.
 > This cannot come first. `logs.tgz` supports no range requests and no
 > server-side filtering, so a request for one category cannot be made smaller —
 > it has to extract from a bundle already on disk.
+
+### Redact on demand, not only at collection
+
+*Prerequisite met: redaction shipped in v0.5.0, per-rule toggles in v0.5.1,
+full-bundle collection in v0.6.0.*
+
+Redaction currently happens once, during collection, using whichever rules were
+switched on at that moment. Changing a rule afterwards means collecting the
+whole bundle again.
+
+- Make redaction a choice at collection time rather than automatic, the way the
+  audit trail already is
+- A **Redact** button beside each stored raw artifact, producing a redacted
+  copy from the rules switched on now
+- So a user who wants hostnames masked after all can re-redact the bundle they
+  already have, in seconds, without a second 433 MB download
 
 ### Self-update from the UI
 

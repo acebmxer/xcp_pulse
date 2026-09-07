@@ -120,7 +120,35 @@ def test_starting_a_collection_queues_a_job_for_that_host(with_inventory: TestCl
     assert response.status_code == 303
 
     job = list_jobs(app.state.db, kind=COLLECT_KIND, limit=1)[0]
-    assert job.params == {"host_id": HOST.id, "host_name": HOST.name}
+    assert job.params == {
+        "host_id": HOST.id,
+        "host_name": HOST.name,
+        "include_audit": False,
+    }
+
+
+def test_ticking_the_audit_box_asks_the_job_for_the_trail(
+    with_inventory: TestClient,
+) -> None:
+    """A browser sends the checkbox only when it is ticked.
+
+    The unticked case is covered by the test above, which is what proves the
+    box is a choice rather than a label on something that always happens.
+    """
+    app = with_inventory.app  # type: ignore[attr-defined]
+
+    with_inventory.post("/collect", data={"host_id": HOST.id, "include_audit": "1"})
+
+    job = list_jobs(app.state.db, kind=COLLECT_KIND, limit=1)[0]
+    assert job.params["include_audit"] is True
+
+
+def test_the_page_offers_the_audit_trail_as_an_unticked_choice(
+    with_inventory: TestClient,
+) -> None:
+    body = with_inventory.get("/collect").text
+    assert 'name="include_audit"' in body
+    assert "checked" not in body.split('name="include_audit"')[1].split(">")[0]
 
 
 def test_a_host_that_is_not_in_the_inventory_is_refused(with_inventory: TestClient) -> None:

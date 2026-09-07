@@ -273,10 +273,12 @@ without losing counts the run recorded.
 
 ## `app/job_collect.py` — the Collect logs job
 
-Downloads one host's log bundle and audit trail, keeps the raw copies, and
-writes a redacted copy of each. Expect about **433 MB** and **three minutes**
-per host, measured on XCP-ng 8.3 — runs took 166 and 203 seconds end to end. The
-100-second figure quoted for the transfer is the `logs.tgz` download alone.
+Downloads one host's log bundle, keeps the raw copy, and writes a redacted copy.
+Expect about **433 MB** and **two minutes** per host, measured on XCP-ng 8.3;
+the 100-second figure quoted for the transfer is the `logs.tgz` download alone.
+The XAPI audit trail is fetched as well only when the collection asks for it —
+`xen-bugtool` already puts `/var/log/audit.log` into the bundle, and the
+separate trail measured 770 MiB. With it, runs took 166 and 203 seconds.
 
 The masking is `app/redact.py`'s — `active_rules` and `Rule.apply`, in the same
 order as `redact_text` and `job_redact` — so the preview page, a redaction job
@@ -395,7 +397,7 @@ on databases written before it did.
 | `delete_collection` | `(job_id, request, username) -> Response` | `POST /collect/{id}/delete` — deletes one collection | router | v0.6.0 |
 | `download_artifact` | `(artifact_id, request, username) -> Response` | `GET /collect/download/{id}` — streams a stored file from disk | router | v0.6.0 |
 | `run_cleanup` | `(request, username, keep_days, keep_count) -> Response` | `POST /collect/cleanup` — applies the retention limits | router | v0.6.0 |
-| `start_collection` | `(request, username, host_id) -> Response` | `POST /collect` — queues a collection for one host | router | v0.6.0 |
+| `start_collection` | `(request, username, host_id, include_audit) -> Response` | `POST /collect` — queues a collection for one host | router | v0.6.0 |
 
 ## `app/hashpw.py` — password hash helper
 

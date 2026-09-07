@@ -82,6 +82,7 @@ def start_collection(
     request: Request,
     username: str = Depends(login_required),
     host_id: str = Form(...),
+    include_audit: str = Form(default=""),
 ) -> Response:
     """Queue a collection for one host.
 
@@ -89,6 +90,11 @@ def start_collection(
     for the same disk and the same Xen Orchestra for no gain, and the worker
     runs one job at a time anyway — queueing a second would only leave it
     apparently stuck.
+
+    ``include_audit`` is an unchecked checkbox by default, so an absent field
+    means off. It is off because ``xen-bugtool`` already puts ``audit.log`` and
+    its rotated copies inside the log bundle, and the separate trail is the
+    largest file in a collection.
     """
     db = request.app.state.db
     data_dir = request.app.state.settings.data_dir
@@ -107,7 +113,15 @@ def start_collection(
             "Refresh+the+inventory+and+try+again."
         )
 
-    job = enqueue(db, COLLECT_KIND, {"host_id": host.id, "host_name": host.name})
+    job = enqueue(
+        db,
+        COLLECT_KIND,
+        {
+            "host_id": host.id,
+            "host_name": host.name,
+            "include_audit": bool(include_audit),
+        },
+    )
     wake_worker(request)
     log.info("queued %s job %s for host %s by %s", COLLECT_KIND, job.id, host.name, username)
     return redirect(f"/collect?notice=Collecting+from+{host.name}.")

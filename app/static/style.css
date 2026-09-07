@@ -621,6 +621,10 @@ textarea {
 .rule-title { font-weight: 600; }
 .rule-desc { margin: 0.2rem 0 0 1.65rem; }
 
+/* The audit-trail note sits under its checkbox, indented to line up with the
+   label text rather than the box — the same relationship as .rule-desc. */
+.audit-note { margin: 0.2rem 0 0 1.65rem; }
+
 /* ---- redaction report ---- */
 
 .report {

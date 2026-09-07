@@ -97,6 +97,11 @@ def _fake_client(bundle: bytes = b"", audit: str = AUDIT):
     payload = bundle or _bundle_bytes({"var/log/xensource.log": XENSOURCE_LOG})
 
     class _Client:
+        # Counted rather than merely recorded: the point of the audit checkbox
+        # is that an unticked box skips a 770 MiB transfer, which an assertion
+        # about stored artifacts alone would not prove.
+        audit_calls = 0
+
         def download_logs(self, host_id, destination, *, on_chunk=None):
             destination.write_bytes(payload)
             if on_chunk is not None:
@@ -104,6 +109,7 @@ def _fake_client(bundle: bytes = b"", audit: str = AUDIT):
             return len(payload)
 
         def download_audit(self, host_id, destination, *, on_chunk=None):
+            self.__class__.audit_calls += 1
             body = audit.encode("utf-8")
             destination.write_bytes(body)
             if on_chunk is not None:
@@ -113,7 +119,10 @@ def _fake_client(bundle: bytes = b"", audit: str = AUDIT):
     return _Client()
 
 
-_DEFAULT_PARAMS = {"host_id": HOST_ID, "host_name": HOST_NAME}
+# The audit trail is off by default in the app, so the tests that exercise it
+# have to ask for it the same way the page's checkbox does.
+_DEFAULT_PARAMS = {"host_id": HOST_ID, "host_name": HOST_NAME, "include_audit": True}
+_NO_AUDIT_PARAMS = {"host_id": HOST_ID, "host_name": HOST_NAME}
 
 
 def _run(conn, worker, client=None, params=_DEFAULT_PARAMS) -> str:
@@ -154,6 +163,38 @@ def test_a_collection_stores_raw_and_redacted_copies_of_both_downloads(
         f"{HOST_NAME}-audit.redacted.txt",
         REPORT_ARTIFACT,
     }
+
+
+def test_without_the_audit_flag_the_trail_is_neither_fetched_nor_stored(
+    conn: sqlite3.Connection, worker: JobWorker
+) -> None:
+    """The default collection is the bundle alone.
+
+    Both sides of this condition need a test: one that only checked the flag
+    switched on would pass just as well against a flag that is always on, which
+    is the whole thing being fixed here.
+    """
+    client = _fake_client()
+    job_id = _run(conn, worker, client=client, params=_NO_AUDIT_PARAMS)
+
+    assert get_job(conn, job_id).state == SUCCEEDED
+    assert set(_named(conn, job_id)) == {
+        f"{HOST_NAME}-logs.tgz",
+        f"{HOST_NAME}-logs.redacted.tgz",
+        REPORT_ARTIFACT,
+    }
+    # Not merely unstored — the 770 MiB download must not happen at all.
+    assert client.audit_calls == 0
+
+
+def test_the_report_covers_only_the_files_a_collection_produced(
+    conn: sqlite3.Connection, worker: JobWorker, tmp_path: Path
+) -> None:
+    job_id = _run(conn, worker, params=_NO_AUDIT_PARAMS)
+    report = report_from_job(conn, tmp_path, job_id)
+
+    names = [(pair["raw"]["name"], pair["redacted"]["name"]) for pair in report["files"]]
+    assert names == [(f"{HOST_NAME}-logs.tgz", f"{HOST_NAME}-logs.redacted.tgz")]
 
 
 def test_the_redacted_bundle_holds_no_unmasked_values(
