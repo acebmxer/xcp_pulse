@@ -59,9 +59,22 @@ def test_refresh_without_a_connection_says_to_configure_one(logged_in: TestClien
 
 
 def test_a_second_refresh_is_refused_while_one_is_pending(connected: TestClient) -> None:
-    """Queueing another identical refresh produces nothing the first will not."""
+    """Queueing another identical refresh produces nothing the first will not.
+
+    The pending job is enqueued directly rather than through the route, and the
+    app's worker thread is stopped first, so it stays queued for the second
+    request to be refused against. Queueing the first through the route let the
+    worker claim and fail it — against the fixture's unreachable
+    ``xo.example.com`` — before the second request arrived, leaving nothing
+    active and the guard measuring timing rather than behaviour. That failed on
+    CI under Python 3.12 while passing under 3.13 on the same commit.
+    """
     app = connected.app  # type: ignore[attr-defined]
-    connected.post("/jobs/refresh-inventory")
+    worker_thread = getattr(app.state, "job_worker", None)
+    if worker_thread is not None:
+        worker_thread.stop()
+
+    enqueue(app.state.db, INVENTORY_KIND)
     response = connected.post("/jobs/refresh-inventory")
 
     assert "already+running" in response.headers["location"]

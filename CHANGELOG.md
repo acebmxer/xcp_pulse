@@ -10,6 +10,46 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-09-07
+
+### Changed
+
+- **The XAPI audit trail is no longer downloaded unless a collection asks for
+  it.** Every collection fetched `/hosts/{id}/audit.txt` alongside the log
+  bundle, which at a measured 770 MiB was the largest file in the run — larger
+  than the bundle itself, and with its redacted copy accounting for about two
+  thirds of the 2.3 GiB a collection stored. It duplicates what is already
+  collected: `xen-bugtool` puts `/var/log/audit.log` and its rotated copies
+  inside the bundle, verified by listing a stored bundle's members. Vates' own
+  support documentation asks for a bugtool status report, not a separate trail.
+  The Collect page now offers it as an unticked checkbox, so the default
+  collection is the bundle and its redacted copy — about 870 MB and two
+  minutes. Queued jobs and any caller omitting the flag get the smaller run.
+
+### Fixed
+
+- **The test for refusing a duplicate inventory refresh raced the worker
+  thread.** It queued the first refresh through `POST /jobs/refresh-inventory`
+  and expected the second to be refused, but the background worker could claim
+  and fail that job — against the fixture's unreachable `xo.example.com` —
+  before the second request arrived, leaving nothing queued or running for
+  `has_active` to find. The guard was then measuring thread timing rather than
+  behaviour, and CI failed on Python 3.12 while passing on 3.13 for the same
+  commit. The test now stops the worker and enqueues directly, matching the
+  redaction test beside it, which had already been given the same treatment.
+  The route itself was never wrong.
+
+- **The Collect page told operators to expect 433 MB per host, which is the
+  size of the log bundle alone.** A collection also downloads the XAPI audit
+  trail — measured at 770 MiB, larger than the bundle — and then writes a
+  redacted copy of each, so a single host's collection stores about 2.3 GiB.
+  The figure came from the first measurement, of `logs.tgz` on its own, and was
+  never widened when the audit trail and the redacted copies joined the same
+  job. Someone sizing a data volume from it would have under-provisioned by
+  more than fivefold. The estimate on the page, the same claim in the README,
+  and the retention module's docstring now all say 2.3 GiB and name the four
+  files. The timing half of the estimate was already right and is unchanged.
+
 ## [0.6.1] - 2026-09-07
 
 ### Changed
@@ -634,7 +674,8 @@ must extract from a locally cached bundle rather than making a smaller request;
 and real bundles contain internal addresses and session tokens, which is why
 redaction is scheduled before the first downloadable bundle rather than after.
 
-[Unreleased]: https://github.com/acebmxer/xcp_pulse/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/acebmxer/xcp_pulse/compare/v0.6.2...HEAD
+[0.6.2]: https://github.com/acebmxer/xcp_pulse/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/acebmxer/xcp_pulse/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/acebmxer/xcp_pulse/compare/v0.5.3...v0.6.0
 [0.5.3]: https://github.com/acebmxer/xcp_pulse/compare/v0.5.2...v0.5.3

@@ -20,8 +20,8 @@ Vates support ticket.
 
 > [!NOTE]
 > XCP Pulse is being built in stages. **Log collection shipped in v0.6.0: it
-> downloads a host's full log bundle and XAPI audit trail, keeps the raw copies,
-> and produces redacted copies to send — with a report of what was masked.**
+> downloads a host's full log bundle, keeps the raw copy, and produces a
+> redacted copy to send — with a report of what was masked.**
 > Findings from the logs and a Vates support package come next. See
 > [the roadmap](docs/roadmap.md) for what is planned and what is done.
 
@@ -71,12 +71,15 @@ Then open `http://<server>:8080` and sign in. To build from source instead, see
 Measured against a real XCP-ng 8.3 pool, so the numbers below are observed
 rather than estimated:
 
-- **Collect a host's full log bundle** via Xen Orchestra's REST API, alongside
-  the XAPI audit trail. A real bundle is **433 MB** — 603 files, all of
-  `/var/log` — and downloads in about 100 seconds. A whole collection, which
-  also fetches the audit trail and redacts a copy of each, takes about **three
-  minutes**: measured runs took 166 and 203 seconds. Collection runs as a
-  cancellable background job with progress and an ETA.
+- **Collect a host's full log bundle** via Xen Orchestra's REST API — the same
+  status report `xen-bugtool` produces, which is what Vates ask for. A real
+  bundle is **433 MB** — 603 files, all of `/var/log` — and downloads in about
+  100 seconds. With its redacted copy a collection stores about **870 MB** and
+  takes roughly **two minutes**. The XAPI audit trail can be added per
+  collection with a checkbox; it is off by default because the bundle already
+  contains `/var/log/audit.log` and its rotated copies, and the separate trail
+  measured 770 MiB. Collection runs as a cancellable background job with
+  progress and an ETA.
 - **Redact** internal addresses, session tokens and credentials before anything
   leaves the machine. A single real `xensource.log` contained 8,359 lines
   matching password, secret or session patterns. The raw bundle is kept too, and

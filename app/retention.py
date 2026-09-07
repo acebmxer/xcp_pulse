@@ -1,6 +1,8 @@
 """Retention: what to delete, shown before anything is deleted.
 
-A collection is about 433 MB. A handful of them fills a data volume, and the
+A collection stores about 870 MB — a 433 MB log bundle and a redacted copy —
+or about 2.3 GiB when the optional audit trail is included. A handful of them
+fills a data volume, and the
 failure that matters is a full disk mid-download — a job that fails after 90
 seconds with a half-written file, on the machine the operator was relying on.
 

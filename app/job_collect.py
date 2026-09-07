@@ -10,17 +10,26 @@ What it produces, per host:
   kept because the redacted copy is lossy and a question about what was masked
   can only be answered against the original;
 * ``<host>-logs.redacted.tgz`` — the copy to send, every text member masked;
-* ``<host>-audit.txt`` and its redacted copy — the XAPI audit trail;
+* ``<host>-audit.txt`` and its redacted copy — the XAPI audit trail, only when
+  the collection asked for it;
 * ``redaction-report.json`` — what was masked across the whole run.
+
+**The audit trail is off unless asked for.** ``xen-bugtool`` already collects
+``/var/log/audit.log`` and its rotated copies into the bundle above, so the
+separate ``audit.txt`` route duplicates them — and at a measured 770 MiB it is
+the largest file in a collection, larger than the bundle itself. What it adds
+over the bundle is the current, uncompressed trail. Vates ask for a bugtool
+status report, not this, so a collection produces it only when the operator
+ticks the box.
 
 **The raw bundle never leaves this machine by default.** The download button
 offers the redacted copy; the raw one is downloadable too, because an operator
 diagnosing their own pool needs it, but the page says which is which.
 
-Expect about 433 MB and three minutes per host, measured on XCP-ng 8.3.
-The 100-second figure quoted elsewhere is the ``logs.tgz`` download alone;
-a whole run also fetches the audit trail and redacts a copy of each, and
-measured runs took 166 and 203 seconds.
+Expect about 433 MB and roughly two minutes per host, measured on XCP-ng 8.3.
+The 100-second figure quoted elsewhere is the ``logs.tgz`` download alone; a
+run also redacts a copy of it. With the audit trail included the run stores
+about 2.3 GiB and measured runs took 166 and 203 seconds.
 """
 
 from __future__ import annotations
@@ -93,6 +102,10 @@ def run(context: JobContext) -> None:
     if not isinstance(host_id, str) or not host_id:
         raise ValueError("No host was named to collect from.")
     host_name = _safe_name(str(params.get("host_name") or host_id))
+    # Absent means off: collections queued before the checkbox existed, and any
+    # caller that omits the flag, get the smaller run rather than the 770 MiB
+    # download that duplicates what is already inside the bundle.
+    include_audit = bool(params.get("include_audit"))
 
     context.progress(2, "Connecting to Xen Orchestra")
     client = build_client(context.conn, context.settings.secret_key)
@@ -113,25 +126,29 @@ def run(context: JobContext) -> None:
     )
     produced.append(raw_logs)
 
-    raw_audit = _download(
-        context,
-        client,
-        host_id=host_id,
-        name=f"{host_name}-{AUDIT_SUFFIX}",
-        media_type=TEXT_MEDIA_TYPE,
-        fetch=client.download_audit,
-        band=(_AUDIT_FROM, _AUDIT_TO),
-        step="Downloading the audit trail",
-    )
-    produced.append(raw_audit)
+    raw_audit = None
+    if include_audit:
+        raw_audit = _download(
+            context,
+            client,
+            host_id=host_id,
+            name=f"{host_name}-{AUDIT_SUFFIX}",
+            media_type=TEXT_MEDIA_TYPE,
+            fetch=client.download_audit,
+            band=(_AUDIT_FROM, _AUDIT_TO),
+            step="Downloading the audit trail",
+        )
+        produced.append(raw_audit)
 
     context.progress(_REDACT_FROM, "Redacting the bundle")
     redacted_logs = _redact_tarball(context, raw_logs, enabled, counts)
     produced.append(redacted_logs)
 
-    context.progress(_REDACT_TO, "Redacting the audit trail")
-    redacted_audit = _redact_text_artifact(context, raw_audit, enabled, counts)
-    produced.append(redacted_audit)
+    redacted_audit = None
+    if raw_audit is not None:
+        context.progress(_REDACT_TO, "Redacting the audit trail")
+        redacted_audit = _redact_text_artifact(context, raw_audit, enabled, counts)
+        produced.append(redacted_audit)
 
     context.progress(95, "Writing the report")
     report = build_report(
@@ -139,8 +156,8 @@ def run(context: JobContext) -> None:
         host_name=host_name,
         enabled=enabled,
         counts=counts,
-        raw=[raw_logs, raw_audit],
-        redacted=[redacted_logs, redacted_audit],
+        raw=[item for item in (raw_logs, raw_audit) if item is not None],
+        redacted=[item for item in (redacted_logs, redacted_audit) if item is not None],
     )
     store_json(
         context.conn,
