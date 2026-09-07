@@ -74,7 +74,6 @@ def decrypt(stored: str, secret_key: str) -> str:
         plaintext = AESGCM(_derive_key(secret_key)).decrypt(nonce, ciphertext, None)
     except InvalidTag as exc:
         raise DecryptionError(
-            "cannot decrypt with the current secret key — "
-            "the key changed or the value was altered"
+            "cannot decrypt with the current secret key — the key changed or the value was altered"
         ) from exc
     return plaintext.decode("utf-8")
