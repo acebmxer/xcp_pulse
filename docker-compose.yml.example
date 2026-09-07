@@ -12,7 +12,7 @@ services:
     # new version. Pin one instead to stay put until you choose to move —
     # database migrations run at startup, so an upgrade is worth deciding on:
     #
-    #   image: ghcr.io/acebmxer/xcp_pulse:0.5.2
+    #   image: ghcr.io/acebmxer/xcp_pulse:0.5.3
     #
     image: ghcr.io/acebmxer/xcp_pulse:latest
     container_name: xcp-pulse

@@ -65,7 +65,7 @@ chose. On the Docker host itself, <http://localhost:8080> works too.
 curl -sf http://localhost:8080/healthz
 ```
 
-Expected: `{"status":"ok","version":"0.1.0"}`. This endpoint needs no login — the
+Expected: `{"status":"ok","version":"0.5.3"}`. This endpoint needs no login — the
 container healthcheck uses it.
 
 ```bash
@@ -86,7 +86,7 @@ To stay on one version instead, pin the tag in `docker-compose.yml` — the
 sample carries a commented example:
 
 ```yaml
-image: ghcr.io/acebmxer/xcp_pulse:0.5.2
+image: ghcr.io/acebmxer/xcp_pulse:0.5.3
 ```
 
 A pinned deployment then upgrades by editing that tag and running the two

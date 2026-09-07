@@ -10,18 +10,18 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
-### Added
+## [0.5.3] - 2026-09-07
 
-- **`docker-compose.dev.yml`, for building the image from a clone.** Building
-  locally meant editing your own `docker-compose.yml` to uncomment `build: .`,
-  which is a change to a file the sample cannot then be copied over cleanly —
-  and one easily left in place by accident. The overlay carries nothing but
-  `build: .` and is used alongside the main file
+### Changed
+
+- **Building from a clone no longer means editing your own compose file.** The
+  sample carried a commented `build: .` to uncomment, which is a change to the
+  one file a deployment owns — easy to leave in place by accident, and it makes
+  the sample awkward to copy over later. A committed `docker-compose.dev.yml`
+  now adds `build: .` as an overlay, used alongside the main file
   (`docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
   --build`), so the deployment file stays untouched and the built image keeps
   the tag it already names. This matches the layout `beacon_pxe` uses.
-
-### Changed
 
 - **The compose sample now publishes the port on all interfaces, not just
   loopback.** It bound to `127.0.0.1:8080:8080`, so a deployment on a remote
@@ -451,7 +451,8 @@ must extract from a locally cached bundle rather than making a smaller request;
 and real bundles contain internal addresses and session tokens, which is why
 redaction is scheduled before the first downloadable bundle rather than after.
 
-[Unreleased]: https://github.com/acebmxer/xcp_pulse/compare/v0.5.2...HEAD
+[Unreleased]: https://github.com/acebmxer/xcp_pulse/compare/v0.5.3...HEAD
+[0.5.3]: https://github.com/acebmxer/xcp_pulse/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/acebmxer/xcp_pulse/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/acebmxer/xcp_pulse/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/acebmxer/xcp_pulse/compare/v0.4.0...v0.5.0
