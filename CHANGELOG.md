@@ -10,6 +10,58 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-07
+
+### Added
+
+- **Redaction rules can be switched on and off.** Each rule on the redaction
+  page now has a checkbox, and the choice is stored in the database rather than
+  applying to one preview: a rule switched off stops masking everywhere
+  redaction runs, and the preview shows what a collected bundle would actually
+  get. Only the switched-off rules are recorded (new table
+  `redaction_disabled`, migration 4), so a rule added to `RULES` in a later
+  version is on from the moment it exists rather than needing a row written for
+  it — storing the enabled set instead would have left every new rule silently
+  inactive on existing installs. A stored name that no longer matches a rule is
+  ignored, which makes renaming one safe. The page states how many rules are
+  off, because a bundle collected with masking disabled is the failure this
+  feature makes possible.
+
+### Changed
+
+- **`compose.yaml` is no longer tracked; `compose.yaml.example` is the
+  committed template.** A compose file is a deployment's own — it carries the
+  image tag, the port binding and any local overrides — so the repository ships
+  the sample and each deployment keeps its own copy, matching how
+  `xcp-pulse.env` has always worked. `compose.yaml` is now gitignored, and a
+  test asserts both samples are committed and both working files are ignored.
+  The download line in the README and in `docs/installation.md` fetches
+  `compose.yaml.example` and writes it as `compose.yaml`; the clone path copies
+  the sample before uncommenting `build: .`.
+
+### Fixed
+
+- **A failed read from Xen Orchestra was stored as a successful refresh with an
+  empty inventory, so the dashboard told an administrator their account could
+  see nothing.** The two collection readers in `app/xo_client.py` turned any
+  non-200 response into an empty list, on the reasoning that a refused account
+  and an empty installation are indistinguishable. That is true of `200 []`
+  only. Every other status — a revoked token, a 502 from a reverse proxy, a
+  rate limit — also became an empty list, which `inventory()` returned as a
+  normal result, the job runner recorded as **succeeded**, and the dashboard
+  rendered as "Nothing visible to this account". Observed against
+  `xo-ce.pozzatech.com` with an admin token: one refresh stored
+  `{"hosts": [], "pools": []}` and reported `0 pool(s), 0 host(s)`, while the
+  refreshes either side of it read 1 pool and 2 hosts from the same unchanged
+  connection. Both readers now share one status check and raise `XoError` for
+  anything that is not a usable 200, so the failure reaches the job as an error
+  and the last good inventory stays on screen.
+
+- **The empty-inventory message asserted a cause the code had not
+  established.** It told the operator the account "lacks read access", which is
+  only one of the two things `200 []` can mean. It now names both possible
+  causes and says they cannot be told apart from here.
+
 ## [0.5.0] - 2026-09-07
 
 ### Added
@@ -308,7 +360,8 @@ must extract from a locally cached bundle rather than making a smaller request;
 and real bundles contain internal addresses and session tokens, which is why
 redaction is scheduled before the first downloadable bundle rather than after.
 
-[Unreleased]: https://github.com/acebmxer/xcp_pulse/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/acebmxer/xcp_pulse/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/acebmxer/xcp_pulse/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/acebmxer/xcp_pulse/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/acebmxer/xcp_pulse/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/acebmxer/xcp_pulse/compare/v0.2.0...v0.3.0

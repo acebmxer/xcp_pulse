@@ -6,8 +6,9 @@ sends the container a hash with pieces missing, it refuses to start, and the
 symptom is a wall of "variable is not set" warnings — which is exactly what
 happened once already.
 
-These are static checks on compose.yaml rather than a docker run, so they work
-in CI without a daemon.
+These are static checks on compose.yaml.example rather than a docker run, so
+they work in CI without a daemon. The sample is what a clone gets and what an
+operator copies, so it is the file that has to be right.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-COMPOSE = REPO_ROOT / "compose.yaml"
+COMPOSE = REPO_ROOT / "compose.yaml.example"
 
 
 def _compose_text() -> str:
@@ -47,12 +48,20 @@ def test_env_file_is_not_called_dot_env() -> None:
     )
 
 
-def test_example_env_file_is_committed() -> None:
-    """The sample must survive; the filled-in copy is gitignored."""
+def test_example_files_are_committed() -> None:
+    """The samples must survive; the filled-in copies are gitignored."""
     assert (REPO_ROOT / "xcp-pulse.env.example").exists()
+    assert (REPO_ROOT / "compose.yaml.example").exists()
 
 
-def test_real_env_file_is_gitignored() -> None:
+def test_working_files_are_gitignored() -> None:
+    """A deployment's own files must never become committable.
+
+    Both are per-deployment: the env file holds the password hash and the
+    encryption key, and compose.yaml carries whatever the operator changed —
+    image tag, port binding, local overrides. Only the samples are tracked.
+    """
     ignored = (REPO_ROOT / ".gitignore").read_text(encoding="utf-8").split()
     assert "xcp-pulse.env" in ignored, "xcp-pulse.env holds the password hash"
     assert ".env" in ignored, "an older .env must not become committable"
+    assert "compose.yaml" in ignored, "compose.yaml is a deployment's own file"

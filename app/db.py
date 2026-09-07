@@ -102,6 +102,24 @@ _MIGRATIONS: list[str] = [
     );
     CREATE INDEX idx_artifacts_job ON artifacts (job_id);
     """,
+    # 3 -> 4: which redaction rules are switched off.
+    #
+    # Only the exceptions are stored. A rule absent from this table is on, so a
+    # rule added to app/redact.py in a later version is masked from the moment
+    # it exists rather than needing a row written for it, and a database from an
+    # older version has every new rule on by default. Storing the enabled set
+    # instead would make a new rule silently inactive on every existing install
+    # — the one failure mode that must not be possible here.
+    #
+    # The name is the rule's own identifier from RULES, not a foreign key: the
+    # rules live in code. A row naming a rule that no longer exists is ignored
+    # rather than being an error, which is what makes renaming one safe.
+    """
+    CREATE TABLE redaction_disabled (
+        name        TEXT PRIMARY KEY,
+        disabled_at REAL NOT NULL
+    );
+    """,
 ]
 
 

@@ -23,7 +23,12 @@ masking it makes a log harder to read for no gain in privacy.
 from __future__ import annotations
 
 import re
+import sqlite3
+import time
+from collections.abc import Iterable
 from dataclasses import dataclass, field
+
+from app.db import transaction
 
 # Addresses that reveal nothing about the site and are worth keeping legible.
 # 0.0.0.0 is a bind-to-everything marker rather than a host.
@@ -279,3 +284,38 @@ def redact_text(
         out.append(line)
 
     return "".join(out), counts
+
+
+def enabled_rules(conn: sqlite3.Connection) -> frozenset[str]:
+    """The names of the rules currently switched on.
+
+    Read as "everything except what is stored as off", so a rule added to
+    ``RULES`` in a later version is on from the moment it exists, on databases
+    written before it did. A stored name that no longer matches a rule is
+    ignored rather than raising — renaming a rule turns it back on, which is
+    the safe direction.
+    """
+    rows = conn.execute("SELECT name FROM redaction_disabled").fetchall()
+    disabled = {row["name"] for row in rows}
+    return frozenset(rule.name for rule in RULES if rule.name not in disabled)
+
+
+def set_enabled_rules(conn: sqlite3.Connection, names: Iterable[str]) -> frozenset[str]:
+    """Switch on exactly the named rules and switch off the rest.
+
+    Written as a whole set rather than one toggle at a time because the form it
+    serves posts every checkbox at once: an unticked box sends nothing, so the
+    absence of a name is the instruction to turn it off, which only a
+    replace-everything write can express.
+
+    Unknown names are dropped. Returns the enabled set as it now stands.
+    """
+    wanted = {name for name in names if rule_by_name(name) is not None}
+    now = time.time()
+    with transaction(conn):
+        conn.execute("DELETE FROM redaction_disabled")
+        conn.executemany(
+            "INSERT INTO redaction_disabled (name, disabled_at) VALUES (?, ?)",
+            [(rule.name, now) for rule in RULES if rule.name not in wanted],
+        )
+    return frozenset(wanted)

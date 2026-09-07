@@ -15,19 +15,21 @@ deployment — there is nothing to clone and nothing to build:
 
 ```bash
 mkdir xcp-pulse && cd xcp-pulse
-curl -O https://raw.githubusercontent.com/acebmxer/xcp_pulse/main/compose.yaml
+curl -o compose.yaml https://raw.githubusercontent.com/acebmxer/xcp_pulse/main/compose.yaml.example
 curl -o xcp-pulse.env https://raw.githubusercontent.com/acebmxer/xcp_pulse/main/xcp-pulse.env.example
 ```
 
 The env file must be called `xcp-pulse.env` and not `.env` — compose treats a
 file of that name as its own variable source and mangles the password hash.
 
-Prefer to build from source? Clone the repository instead, uncomment `build: .`
-in `compose.yaml`, and add `--build` to the `up` command below:
+Prefer to build from source? Clone the repository instead, copy the sample,
+uncomment `build: .` in your `compose.yaml`, and add `--build` to the `up`
+command below:
 
 ```bash
 git clone https://github.com/acebmxer/xcp_pulse.git
 cd xcp_pulse
+cp compose.yaml.example compose.yaml
 cp xcp-pulse.env.example xcp-pulse.env
 ```
 

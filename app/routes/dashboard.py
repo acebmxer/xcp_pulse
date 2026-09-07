@@ -29,14 +29,16 @@ from app.xo_connection import get_connection
 router = APIRouter()
 log = logging.getLogger("xcp_pulse.dashboard")
 
-# Shown when XO answers normally but the account can see nothing. Worth saying
-# in full because an empty list is what XO returns for missing privileges as
-# well as for an empty installation, and the two look identical from here.
+# Shown when XO answered 200 with an empty list. That is now the only way to
+# reach this text — a refused or failed read raises and lands on the job as an
+# error instead — but 200 [] still has two causes XO does not distinguish, so
+# this offers both rather than asserting the likelier one.
 EMPTY_HELP = (
     "Xen Orchestra answered, but this account can see no pools or hosts. "
-    "Xen Orchestra returns an empty list rather than an error when an account "
-    "lacks read access, so this usually means the account needs pool and host "
-    "read privileges rather than that there is nothing installed."
+    "Either the account needs pool and host read privileges, or there is "
+    "nothing registered in this Xen Orchestra — it returns an empty list for "
+    "both, so they cannot be told apart from here. Refresh from the jobs page "
+    "to read it again."
 )
 
 # Shown while the very first refresh is still running, when there is no earlier

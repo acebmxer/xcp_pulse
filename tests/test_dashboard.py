@@ -113,15 +113,16 @@ def test_dashboard_marks_the_pool_master_and_disabled_hosts(connected: TestClien
 def test_dashboard_explains_an_empty_inventory(connected: TestClient) -> None:
     """An account that can see nothing must not look like an empty pool.
 
-    XO answers a privilege-less account with 200 and [], so the page has to say
-    that missing privileges are the likely cause rather than showing an empty
-    but apparently healthy inventory.
+    XO answers both a privilege-less account and an empty installation with
+    200 and [], so the page has to offer both causes rather than asserting the
+    one it cannot tell apart from the other.
     """
     _refresh(connected, Inventory())
     body = connected.get("/").text
 
     assert "Nothing visible to this account" in body
-    assert "lacks read access" in body
+    assert "needs pool and host read privileges" in body
+    assert "nothing registered in this Xen Orchestra" in body
 
 
 def test_dashboard_shows_a_connection_failure(connected: TestClient) -> None:

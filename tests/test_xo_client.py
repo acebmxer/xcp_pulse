@@ -335,3 +335,52 @@ def test_inventory_surfaces_transport_failure() -> None:
 
     with pytest.raises(XoError):
         _client(handler).inventory()
+
+
+def test_inventory_raises_when_pools_are_refused() -> None:
+    """A refusal must not be reported as an inventory with nothing in it.
+
+    Regression, measured on a live instance: the collection readers turned any
+    non-200 into an empty list, so a refused or failing read produced an empty
+    Inventory, was stored as a *successful* refresh, and was shown to the
+    operator as "this account can see no pools or hosts" — a privilege claim
+    the code had never established. Only 200 [] means empty.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json={"error": "forbidden"})
+
+    with pytest.raises(XoError, match="refused the token"):
+        _client(handler).inventory()
+
+
+def test_inventory_raises_when_hosts_fail_after_pools_succeed() -> None:
+    """A failure on the second call must not silently yield pools and no hosts."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/pools"):
+            return httpx.Response(200, json=[{"id": POOL_ID, "name_label": "Pool1"}])
+        return httpx.Response(502, text="bad gateway")
+
+    with pytest.raises(XoError, match="HTTP 502"):
+        _client(handler).inventory()
+
+
+def test_inventory_raises_when_the_response_is_not_json() -> None:
+    """A proxy login page answering 200 must not read as an empty inventory."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text="<html>login</html>")
+
+    with pytest.raises(XoError, match="did not return JSON"):
+        _client(handler).inventory()
+
+
+def test_list_hosts_raises_on_a_server_error() -> None:
+    """The href reader fails the same way as the record reader."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="boom")
+
+    with pytest.raises(XoError, match="HTTP 500"):
+        _client(handler).list_hosts()
