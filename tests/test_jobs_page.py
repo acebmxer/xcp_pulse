@@ -221,15 +221,14 @@ def test_redacting_an_artifact_that_is_gone_says_so(connected: TestClient) -> No
 def test_a_second_redaction_is_refused_while_one_is_pending(connected: TestClient) -> None:
     """A second redaction of the same file produces nothing the first will not.
 
-    The pending job is enqueued directly rather than through the route, and the
-    worker is stopped first: the app's own worker thread runs under the test
-    client, so a job queued and left alone can be claimed and finished before
-    the second request arrives — which would test the timing rather than the
-    guard.
+    The pending job is enqueued directly rather than through the route, so it
+    stays queued for the second request to be refused against. The app's worker
+    thread is already stopped by ``run_pending_jobs`` inside
+    ``_inventory_artifact``; otherwise it would finish this one first and the
+    test would measure timing rather than the guard.
     """
     app = connected.app  # type: ignore[attr-defined]
     artifact_id = _inventory_artifact(app)
-    app.state.job_worker.stop()
 
     enqueue(app.state.db, REDACT_KIND, {"artifact_id": artifact_id})
     response = connected.post("/jobs/redact", data={"artifact_id": artifact_id})

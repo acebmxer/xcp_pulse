@@ -10,6 +10,20 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+### Fixed
+
+- **A flaky redaction-report test that failed CI on Python 3.12.** The jobs
+  tests ran queued work through `run_pending_jobs`, whose docstring claimed the
+  worker thread was never started in tests — but `create_app` starts one in its
+  lifespan and `TestClient` runs that lifespan, so two consumers were competing
+  for the same queue. When the background worker won the claim, the helper
+  found nothing left to run and returned immediately, and the assertion read a
+  page whose job had not finished. It passed locally and went red on CI, which
+  is the failure a synchronous helper exists to prevent. `run_pending_jobs` now
+  stops the app's worker before draining the queue, making every caller
+  deterministic rather than patching the one test that happened to lose the
+  race.
+
 ## [0.5.2] - 2026-09-07
 
 ### Added
