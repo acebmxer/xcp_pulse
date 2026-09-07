@@ -103,26 +103,36 @@ Turn an individual redaction rule off when it is masking something you need.
 - The page says how many rules are off, because a bundle collected with masking
   disabled is the failure this makes possible
 
+### v0.5.2 — Redaction report
+
+A record of what was masked, alongside what was produced.
+
+- A **Redact a stored file** job, masking an artifact and keeping the result
+- Per-rule hit counts for a whole run, not just a pasted snippet
+- The report is kept as an artifact beside the redacted copy, naming both files
+  by size and SHA-256, so the counts stay attached to what they describe
+- A switched-off rule reads as **off**, not as zero hits, because "nothing was
+  found" and "nothing was looked for" are different answers
+
+The file is read a line at a time and never held, so the same job serves a few
+hundred bytes now and a 433 MB bundle once collection lands. The masking is the
+same `active_rules` and `Rule.apply` the preview page uses, in the same order,
+so the two cannot diverge.
+
 ---
 
 ## Next
 
-### Redaction report — in progress
+### Self-update from the UI
 
-A record of what was masked, alongside what was produced.
+*Needs: published container images — done, `ghcr.io/acebmxer/xcp_pulse`.*
 
-- Per-rule hit counts for a whole redaction run, not just a pasted snippet
-- Kept with the artifact, so a bundle can say what came out of it
-- A switched-off rule reads as **off**, not as zero hits, because "nothing was
-  found" and "nothing was looked for" are different answers
-- The file is read a line at a time and never held, so the same job serves a
-  few hundred bytes now and a 433 MB bundle once collection lands
+Tells you when a new version is out, and applies it from the UI. It comes next
+because a lot of changes are coming, and anyone testing along should not have
+to pull and recreate by hand each time.
 
-The masking is the same `active_rules` and `Rule.apply` the preview page uses,
-in the same order, so the two cannot diverge.
-
-It comes **before** the first downloadable bundle, for the reason in
-[Redaction](#redaction-1) below.
+The design is in [Self-update](#self-update--up-next) below, where the details
+worth copying from `beacon_pxe` are recorded.
 
 ---
 
@@ -161,42 +171,17 @@ More than one person can use XCP Pulse, with their own credentials.
 Migration is automatic: the existing environment-configured admin becomes the
 first row in the user table and continues to work.
 
-### Date ranges
-
-Ask for the window you care about instead of everything on the host.
-
-- A date-range picker wherever a range makes sense: collection, category
-  downloads, findings, the support package
-- Rotated logs selected by **modification time**, so "the last three days" skips
-  the 28 older `xensource.log.N.gz` files rather than downloading and discarding
-- Line-level filtering by parsed timestamp for files straddling the window edge
-- Presets — last 24 hours, last 7 days, since the last reboot
-
-Of a measured 433 MB bundle, 418 MB is rotated history, so a narrow window is a
-large saving on what you keep and send.
-
-> [!NOTE]
-> **The first collection still downloads the whole bundle.** Xen Orchestra's
-> `logs.tgz` accepts no date parameter and supports no range requests, so
-> filtering happens here, after the download. A date range shrinks what you keep
-> and send, not the 100 seconds of the initial fetch.
->
-> This is why date ranges are listed as independent: they are useful the moment
-> collection exists, and are not a prerequisite for anything.
-
----
-
 ## Planned — has prerequisites
 
 The order inside this group is forced. Each item says what must come first.
 
-### Redaction
+### Redaction — done
 
 *Prerequisite for: any downloadable bundle. Has none of its own.*
 
-**The rules and the preview page shipped in v0.5.0; per-rule enable and disable
-shipped in v0.5.1.** The redaction report is in progress — see
-[Next](#next).
+**Shipped in full: the rules and the preview page in v0.5.0, per-rule enable and
+disable in v0.5.1, the redaction report in v0.5.2.** Nothing here blocks
+collection any more.
 
 > [!IMPORTANT]
 > This comes **before** the first downloadable bundle, not after. A real bundle
@@ -274,6 +259,31 @@ this plainly, rather than surfacing a bare `403`.
 > tiers. Installations from the sources are not restricted.
 
 
+### Date ranges
+
+*Needs: full-bundle collection.*
+
+Ask for the window you care about instead of everything on the host.
+
+- A date-range picker wherever a range makes sense: collection, category
+  downloads, findings, the support package
+- Rotated logs selected by **modification time**, so "the last three days" skips
+  the 28 older `xensource.log.N.gz` files rather than downloading and discarding
+- Line-level filtering by parsed timestamp for files straddling the window edge
+- Presets — last 24 hours, last 7 days, since the last reboot
+
+Of a measured 433 MB bundle, 418 MB is rotated history, so a narrow window is a
+large saving on what you keep and send.
+
+> [!NOTE]
+> **The first collection still downloads the whole bundle.** Xen Orchestra's
+> `logs.tgz` accepts no date parameter and supports no range requests, so
+> filtering happens here, after the download. A date range shrinks what you keep
+> and send, not the 100 seconds of the initial fetch.
+>
+> There is nothing to filter until a bundle exists, which is why this follows
+> collection rather than standing on its own.
+
 ### Collect individual categories
 
 *Needs: full-bundle collection.*
@@ -318,9 +328,11 @@ One file to attach to a support ticket.
 - Redacted bundle, findings in Markdown and JSON, redaction report, inventory
 - A manifest saying what is included and what was masked
 
-### Self-update
+### Self-update — up next
 
-*Needs: published container images.*
+*Needed published container images; those now exist at
+`ghcr.io/acebmxer/xcp_pulse`, so this is ready to start. Listed under
+[Next](#next).*
 
 Tells you when a new version is out, and applies it from the UI.
 
@@ -344,9 +356,8 @@ worth copying rather than rediscovering:
 
 Two things to settle before building it:
 
-- **It needs a published image.** XCP Pulse builds from source today; a digest
-  comparison needs something like `ghcr.io/acebmxer/xcp-pulse`. Publishing images
-  is the prerequisite, not part of the feature.
+- ~~**It needs a published image.**~~ Settled: releases publish to
+  `ghcr.io/acebmxer/xcp_pulse`, which is what the compose file already pulls.
 - **It needs the Docker socket, which is effectively host root** — directly
   against this project's own threat model. The intended answer is that
   self-update is **opt-in**, with update *checking* (outbound HTTPS only)

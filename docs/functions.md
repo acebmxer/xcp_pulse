@@ -252,11 +252,11 @@ order as `redact_text` — so the preview page and a real run cannot diverge.
 
 | Function | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
-| `build_report` | `(*, source, redacted, enabled, counts, lines) -> dict` | The report as plain JSON | `job_redact.run` | unreleased |
-| `redacted_name` | `(name: str) -> str` | The name a redacted copy is stored under | `job_redact.run` | unreleased |
-| `report_from_job` | `(conn, data_dir, job_id: str) -> dict \| None` | Reads back the report a job stored | `routes.jobs` | unreleased |
-| `report_rows` | `(report: dict) -> list[dict]` | The report's per-rule rows, filled out from `RULES` | `routes.jobs` | unreleased |
-| `run` | `(context: JobContext) -> None` | Redacts the named artifact, storing the copy and the report | `job_runner`, via `register` | unreleased |
+| `build_report` | `(*, source, redacted, enabled, counts, lines) -> dict` | The report as plain JSON | `job_redact.run` | v0.5.2 |
+| `redacted_name` | `(name: str) -> str` | The name a redacted copy is stored under | `job_redact.run` | v0.5.2 |
+| `report_from_job` | `(conn, data_dir, job_id: str) -> dict \| None` | Reads back the report a job stored | `routes.jobs` | v0.5.2 |
+| `report_rows` | `(report: dict) -> list[dict]` | The report's per-rule rows, filled out from `RULES` | `routes.jobs` | v0.5.2 |
+| `run` | `(context: JobContext) -> None` | Redacts the named artifact, storing the copy and the report | `job_runner`, via `register` | v0.5.2 |
 
 Every rule appears in the report, including ones that matched nothing and ones
 that were switched off — "was this masked?" is the question someone about to
@@ -334,7 +334,7 @@ on databases written before it did.
 | `settings_save` | `(request, username, url, token, account_type, verify_tls) -> Response` | `POST /settings` — stores the connection | router | v0.2.0 |
 | `settings_test` | `(request, username) -> Response` | `POST /settings/test` — tests and reports reach | router | v0.2.0 |
 | `start_inventory_refresh` | `(request, username) -> Response` | `POST /jobs/refresh-inventory` — queues a refresh | router | v0.4.0 |
-| `start_redaction` | `(request, username, artifact_id) -> Response` | `POST /jobs/redact` — queues a redaction of one stored file | router | unreleased |
+| `start_redaction` | `(request, username, artifact_id) -> Response` | `POST /jobs/redact` — queues a redaction of one stored file | router | v0.5.2 |
 
 ## `app/hashpw.py` — password hash helper
 
