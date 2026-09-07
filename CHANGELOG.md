@@ -10,6 +10,68 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+### Added
+
+- **The Xen Orchestra connection can be configured and tested.** A settings page
+  takes the XO address, an API token and the account type, and stores them in a
+  new `xo_connection` table. The token is encrypted with AES-GCM under a key
+  derived from the application secret key (`app/crypto.py`), so a copy of the
+  database alone does not yield it; it is never rendered back to the page, which
+  shows only that a token is stored. Changing `XCP_PULSE_SECRET_KEY` makes the
+  stored token unreadable, and that is reported as needing the token re-entered
+  rather than surfacing later as an authentication failure.
+
+  **"Test connection" reports what the account can actually reach**, not merely
+  that the request succeeded. This matters because Xen Orchestra answers an
+  account with no privileges with `200` and an empty list rather than a refusal,
+  so a connection that can see nothing is indistinguishable from a healthy one
+  by status code alone. The result names the account type, the pools and hosts
+  visible, and whether log collection will be possible — the last determined by
+  reading the instance's own privilege catalogue, since whether `export:logs`
+  can be granted is a property of the deployment.
+
+  All Xen Orchestra calls go through `app/xo_client.py`; nothing else builds XO
+  requests.
+
+### Changed
+
+- **Removed the remaining version numbers from unbuilt work.** The rule that
+  only shipped work is numbered was recorded but never applied outside the
+  roadmap, so `v0.2.0` and `v0.4.0` were still attached to planned features in
+  `README.md`, `SECURITY.md`, the architecture, installation, configuration and
+  function-index pages, four source-module docstrings, and the dashboard users
+  see after logging in. Each now names the work — "once log collection ships",
+  "the next piece of work" — rather than a number that was guessed.
+
+- **Documented that log collection requires an admin Xen Orchestra account, and
+  recorded that the connection settings will ask which type it has.** Verified
+  against a live XO CE instance running `@xen-orchestra/rest-api` 0.39.0, not
+  reasoned from the documentation, which disagrees with the behaviour.
+
+  Downloading a host's logs requires `export:logs` on host, a distinct privilege
+  from read — the instance's own API specification documents this, and a
+  restricted account is refused with `403 not enough privileges` naming that
+  action. But `export:logs` was absent from the privilege catalogue that roles
+  are built from: it offered three host privileges (`read`, `allow-vm`, `*`)
+  where the API requires eighteen. Of the eight built-in roles, only
+  **Administrator** — via `host:*` — could reach the logs.
+
+  The catalogue is stored per instance and Xen Orchestra does define
+  `export:logs` in its source, so this is a property of the connected instance
+  rather than a fixed rule, and the version string does not distinguish the two
+  cases. XCP Pulse therefore reads the catalogue from Xen Orchestra and reports
+  what that instance can actually grant.
+
+  A restricted account remains sufficient for inventory and API-based findings.
+  The connection settings will take the account type alongside the URL and token
+  so this can be stated plainly instead of surfacing a bare `403`.
+
+  `SECURITY.md` now treats the stored token as equivalent to pool admin
+  credentials rather than read-only access, which changes where XCP Pulse should
+  be run. Separately, role-based access control is an Essential+ feature on XOA,
+  so lower tiers must use an admin account regardless; installations from the
+  sources are unrestricted.
+
 ### Fixed
 
 - **`docker compose up` mangled the admin password hash, and the container

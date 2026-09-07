@@ -30,10 +30,12 @@ columns; those are a reviewer's job.
 | Redirect after a POST | `app/dependencies.py` — `redirect` |
 | Render a page | `app/dependencies.py` — `templates` |
 | Add a route | `app/routes/` — one module per area |
+| Call the Xen Orchestra API | `app/xo_client.py` — the only module that talks to XO |
+| Read or store the XO connection | `app/xo_connection.py` |
+| Encrypt or decrypt a stored secret | `app/crypto.py` |
 
-Arriving in later stages, listed here so nobody starts a second one: an HTTP
-client for Xen Orchestra and the job/artifact store (v0.2.0), the redaction
-engine (v0.3.0), and tar handling (v0.4.0).
+Arriving in later stages, listed here so nobody starts a second one: the
+job/artifact store, the redaction engine, and tar handling.
 
 ---
 
@@ -108,6 +110,56 @@ This is XCP Pulse's own diagnostics, not the XCP-ng logs it collects.
 | `create_app` | `(settings: Settings \| None = None) -> FastAPI` | Builds and wires the app | module scope, tests | v0.1.0 |
 | `lifespan` | `(app: FastAPI)` | Opens the database on start, closes on stop | `main.create_app` | v0.1.0 |
 
+## `app/crypto.py` — encryption at rest
+
+| Function | Signature | Does | Used by | Since |
+| --- | --- | --- | --- | --- |
+| `decrypt` | `(stored: str, secret_key: str) -> str` | Recovers a stored secret; raises on a wrong key | `xo_connection.build_client` | unreleased |
+| `encrypt` | `(plaintext: str, secret_key: str) -> str` | Encrypts a secret for storage, base64 out | `xo_connection.save_connection` | unreleased |
+
+The key is derived from the application secret key, so a copy of the database
+alone does not decrypt. `DecryptionError` means the key changed or the value was
+altered — both need the token entering again.
+
+## `app/xo_client.py` — Xen Orchestra REST API
+
+Every call to Xen Orchestra goes through here. Nothing else builds XO requests.
+
+These are methods on `XoClient`, so they carry no row above — the table and its
+checker cover top-level functions. Build one with
+`xo_connection.build_client()` rather than constructing it by hand, so the
+stored URL, token and TLS setting are applied in one place.
+
+| Method | Signature | Does | Used by | Since |
+| --- | --- | --- | --- | --- |
+| `XoClient.check_log_export` | `(*, is_admin: bool) -> LogExportSupport` | Whether this account can download host logs, and why not | `test_connection`, settings page | unreleased |
+| `XoClient.grantable_host_actions` | `() -> set[str]` | Host actions this instance can grant to a role | `check_log_export` | unreleased |
+| `XoClient.is_admin` | `() -> bool` | Whether the account has XO administrator permission | `test_connection` | unreleased |
+| `XoClient.list_hosts` | `() -> list[str]` | Host hrefs this account can see | `test_connection` | unreleased |
+| `XoClient.list_pools` | `() -> list[str]` | Pool hrefs this account can see | inventory | unreleased |
+| `XoClient.test_connection` | `() -> ConnectionTest` | Checks URL and token, reports what the account reaches | `routes.settings.settings_test` | unreleased |
+
+`XoError` carries a message written for the operator; the settings page renders
+it directly. `ConnectionTest` and `LogExportSupport` are frozen dataclasses.
+
+**A restricted account gets HTTP 200 and an empty list from `/pools` and
+`/hosts`, not a 403.** Treating a successful request as a usable connection is
+therefore wrong, which is why `test_connection` reports what was visible rather
+than only whether the call succeeded.
+
+## `app/xo_connection.py` — the stored connection
+
+| Function | Signature | Does | Used by | Since |
+| --- | --- | --- | --- | --- |
+| `build_client` | `(conn, secret_key: str) -> XoClient` | Builds a client from the stored connection | `routes.settings.settings_test` | unreleased |
+| `delete_connection` | `(conn) -> bool` | Removes the connection and its token | `routes.settings.settings_delete` | unreleased |
+| `get_connection` | `(conn) -> XoConnection \| None` | Reads the connection, never the token | `routes.settings` | unreleased |
+| `record_test_result` | `(conn, *, ok: bool, message: str) -> None` | Remembers the last test outcome | `routes.settings.settings_test` | unreleased |
+| `save_connection` | `(conn, *, url, token, account_type, verify_tls, secret_key) -> None` | Stores the connection, encrypting the token | `routes.settings.settings_save` | unreleased |
+
+`get_connection` deliberately does not return the token: the settings template
+renders this object, and shows only that a token is stored.
+
 ## `app/routes/` — HTTP endpoints
 
 | Function | Signature | Does | Used by | Since |
@@ -117,6 +169,10 @@ This is XCP Pulse's own diagnostics, not the XCP-ng logs it collects.
 | `login_form` | `(request, next: str = "/") -> Response` | `GET /login` | router | v0.1.0 |
 | `login_submit` | `(request, username, password, next) -> Response` | `POST /login` | router | v0.1.0 |
 | `logout` | `(request) -> Response` | `POST /logout` | router | v0.1.0 |
+| `settings_delete` | `(request, username) -> Response` | `POST /settings/delete` — forgets the connection | router | unreleased |
+| `settings_page` | `(request, username) -> Response` | `GET /settings` — the XO connection page | router | unreleased |
+| `settings_save` | `(request, username, url, token, account_type, verify_tls) -> Response` | `POST /settings` — stores the connection | router | unreleased |
+| `settings_test` | `(request, username) -> Response` | `POST /settings/test` — tests and reports reach | router | unreleased |
 
 ## `app/hashpw.py` — password hash helper
 

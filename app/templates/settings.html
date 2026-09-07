@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block title %}Settings — XCP Pulse{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Xen Orchestra connection</h1>
+
+{% if error %}
+<p class="alert alert-error" role="alert">{{ error }}</p>
+{% endif %}
+
+{% if notice %}
+<p class="alert" role="status">{{ notice }}</p>
+{% endif %}
+
+{% if request.query_params.get('saved') %}
+<p class="alert" role="status">Connection saved. Test it to check what the account can reach.</p>
+{% endif %}
+
+{% if request.query_params.get('deleted') %}
+<p class="alert" role="status">Connection deleted, including the stored token.</p>
+{% endif %}
+
+{% if test %}
+<div class="card">
+  <h2>{% if test.ok %}Connection working{% else %}Connection failed{% endif %}</h2>
+  <p>{{ test.message }}</p>
+
+  {% if test.ok %}
+  <dl class="kv">
+    <dt>Account</dt>
+    <dd>{{ "Administrator" if test.is_admin else "Restricted" }}</dd>
+    <dt>Pools visible</dt>
+    <dd>{{ test.pool_count }}</dd>
+    <dt>Hosts visible</dt>
+    <dd>{{ test.host_count }}</dd>
+    <dt>Log collection</dt>
+    <dd>{{ test.log_export.summary if test.log_export else "not checked" }}</dd>
+  </dl>
+  {% endif %}
+
+  {% for warning in test.warnings %}
+  <p class="note">{{ warning }}</p>
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="card">
+  {% if connection %}
+  <dl class="kv">
+    <dt>Address</dt>
+    <dd>{{ connection.url }}</dd>
+    <dt>Account type</dt>
+    <dd>{{ connection.account_type }}</dd>
+    <dt>Token</dt>
+    <dd>stored, encrypted</dd>
+    <dt>Certificate check</dt>
+    <dd>{{ "enabled" if connection.verify_tls else "disabled" }}</dd>
+    {% if connection.tested %}
+    <dt>Last test</dt>
+    <dd>{{ "passed" if connection.last_test_ok else "failed" }} — {{ connection.last_test_message }}</dd>
+    {% endif %}
+  </dl>
+
+  <div class="row-actions">
+    <form method="post" action="/settings/test" class="inline">
+      <button type="submit" class="btn btn-primary">Test connection</button>
+    </form>
+    <form method="post" action="/settings/delete" class="inline">
+      <button type="submit" class="btn btn-quiet">Delete connection</button>
+    </form>
+  </div>
+  {% else %}
+  <p class="note">No Xen Orchestra connection is configured yet.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>{% if connection %}Replace the connection{% else %}Add a connection{% endif %}</h2>
+
+  <form method="post" action="/settings" class="stack">
+    <label for="url">Xen Orchestra address</label>
+    <input id="url" name="url" type="url" required spellcheck="false"
+           placeholder="https://xo.example.com"
+           value="{{ connection.url if connection else '' }}">
+
+    <label for="token">API token</label>
+    <input id="token" name="token" type="password" required spellcheck="false"
+           autocomplete="off"
+           placeholder="{% if connection %}enter the token again to replace it{% else %}token from Xen Orchestra{% endif %}">
+    <p class="note">
+      Create one in Xen Orchestra under your user's <strong>Authentication tokens</strong>.
+      It is encrypted before storage and never shown again.
+    </p>
+
+    <label for="account_type">Account type</label>
+    <select id="account_type" name="account_type">
+      {% for value in account_types %}
+      <option value="{{ value }}"
+        {% if connection and connection.account_type == value %}selected{% endif %}>
+        {{ "Administrator" if value == "admin" else "Restricted account" }}
+      </option>
+      {% endfor %}
+    </select>
+    <p class="note">
+      Downloading host logs needs the <code>export:logs</code> privilege, which many
+      Xen Orchestra instances cannot grant to a restricted account. Testing the
+      connection reports whether this one can.
+    </p>
+
+    <label class="check">
+      <input type="checkbox" name="verify_tls" value="1"
+        {% if not connection or connection.verify_tls %}checked{% endif %}>
+      Verify the TLS certificate
+    </label>
+    <p class="note">
+      Clear this only for a Xen Orchestra using a self-signed certificate on a
+      trusted network.
+    </p>
+
+    <button type="submit" class="btn btn-primary">Save connection</button>
+  </form>
+</div>
+{% endblock %}

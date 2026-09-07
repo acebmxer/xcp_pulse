@@ -270,6 +270,64 @@ code {
   padding: 0.1em 0.35em;
 }
 
+/* ---- settings ---- */
+
+.navlink {
+  color: var(--text-dim);
+  text-decoration: none;
+  font-size: 0.88rem;
+}
+
+.navlink:hover { color: var(--text); }
+
+/* Cards stack down the settings page; the login card is centred and alone. */
+.wrap > .card + .card { margin-top: 1.25rem; }
+
+.card h2 {
+  margin: 0 0 0.9rem;
+  font-size: 1.05rem;
+  letter-spacing: -0.01em;
+}
+
+/* Definition list as a two-column label/value grid. */
+.kv {
+  display: grid;
+  grid-template-columns: minmax(8rem, max-content) 1fr;
+  gap: 0.45rem 1.25rem;
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.kv dt { color: var(--text-dim); }
+.kv dd { margin: 0; overflow-wrap: anywhere; }
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-top: 1.25rem;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  margin-top: 0.5rem;
+}
+
+.check input { width: auto; margin: 0; }
+
+select {
+  width: 100%;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
 /* ---- footer ---- */
 
 .footer {
@@ -280,6 +338,8 @@ code {
 }
 
 @media (max-width: 560px) {
+  .kv { grid-template-columns: 1fr; gap: 0.15rem; }
+  .kv dd { margin-bottom: 0.5rem; }
   .stage { grid-template-columns: 4.5rem 1fr; }
   .stage:not(:has(.stage-tag)) { grid-template-columns: 1fr; }
   .stage-state { grid-column: 2; font-size: 0.7rem; }

@@ -1,7 +1,7 @@
 """The landing page after logging in.
 
-Empty by design in v0.1.0 — there is no XO connection until v0.2.0, and the
-page says so rather than showing a hollow frame.
+Empty by design in v0.1.0 — there is no XO connection yet, and the page says
+so rather than showing a hollow frame.
 """
 
 from __future__ import annotations
