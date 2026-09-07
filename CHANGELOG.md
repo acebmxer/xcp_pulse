@@ -68,6 +68,27 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
   fault. Nothing partial is stored, and the last few kilobytes are scanned for
   the error page so a 433 MB body is still never held.
 
+- **Documentation that had gone stale against shipped releases.** The README
+  still required "a Xen Orchestra instance — once the XO connection ships",
+  which shipped in v0.2.0; its status note named v0.5.2 after v0.5.3 was
+  released; the Python badge said 3.13 while the image runs 3.14 and
+  `pyproject.toml` requires 3.12 or newer, so it matched neither; the test
+  badge counted 192 against a suite of 236. `docs/architecture.md` described
+  itself as covering "v0.4.0 and the redaction work in progress" three
+  redaction releases after it shipped, and `docs/roadmap.md` had no v0.5.3
+  section, so its Shipped list stopped a release short. None of these change
+  behaviour; all of them are read before anyone installs.
+
+- **The build-from-source instructions generated the password hash from the
+  published image, not the clone.** `docker compose run --rm xcp-pulse python
+  -m app.hashpw` was given once, before the container exists, but on the clone
+  path it resolves to `ghcr.io/acebmxer/xcp_pulse:latest` — verified with
+  `docker compose config --images` against a copy of the sample. The hash
+  itself is portable, so this worked by accident while silently pulling a
+  release image; it fails for a clone that has changed `hashpw` or has no
+  registry access. `docs/installation.md` now gives the overlay form of the
+  command alongside it.
+
 ### Changed
 
 - **A download that has stopped arriving is now treated as finished, not as a
@@ -119,29 +140,6 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
   module-level function that `Artifact.size_human` calls, because a total —
   a collection's files summed, a retention plan's freed space — has no
   `Artifact` to ask.
-
-### Fixed
-
-- **Documentation that had gone stale against shipped releases.** The README
-  still required "a Xen Orchestra instance — once the XO connection ships",
-  which shipped in v0.2.0; its status note named v0.5.2 after v0.5.3 was
-  released; the Python badge said 3.13 while the image runs 3.14 and
-  `pyproject.toml` requires 3.12 or newer, so it matched neither; the test
-  badge counted 192 against a suite of 236. `docs/architecture.md` described
-  itself as covering "v0.4.0 and the redaction work in progress" three
-  redaction releases after it shipped, and `docs/roadmap.md` had no v0.5.3
-  section, so its Shipped list stopped a release short. None of these change
-  behaviour; all of them are read before anyone installs.
-
-- **The build-from-source instructions generated the password hash from the
-  published image, not the clone.** `docker compose run --rm xcp-pulse python
-  -m app.hashpw` was given once, before the container exists, but on the clone
-  path it resolves to `ghcr.io/acebmxer/xcp_pulse:latest` — verified with
-  `docker compose config --images` against a copy of the sample. The hash
-  itself is portable, so this worked by accident while silently pulling a
-  release image; it fails for a clone that has changed `hashpw` or has no
-  registry access. `docs/installation.md` now gives the overlay form of the
-  command alongside it.
 
 ## [0.5.3] - 2026-09-07
 
