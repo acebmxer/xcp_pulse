@@ -39,6 +39,35 @@
   {% endif %}
 </div>
 
+<div class="card">
+  <div class="job-actions">
+    <div>
+      <h2>Redact a stored file</h2>
+      <p class="note">
+        Masks a stored file line by line with the rules switched on in
+        <a href="/redaction">Redaction</a>, keeping a redacted copy and a report
+        of what was masked.
+      </p>
+    </div>
+    <form method="post" action="/jobs/redact" class="inline">
+      <label class="visually-hidden" for="artifact_id">File to redact</label>
+      <select id="artifact_id" name="artifact_id" {% if not redactable %}disabled{% endif %}>
+        {% for item in redactable %}
+        <option value="{{ item.id }}">{{ item.name }} — {{ item.size_human }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="btn" {% if not redactable %}disabled{% endif %}>
+        Redact
+      </button>
+    </form>
+  </div>
+  {% if not redactable %}
+  <p class="note">
+    Nothing is stored to redact yet. Run a job that produces a file first.
+  </p>
+  {% endif %}
+</div>
+
 <h2 class="section-title">History</h2>
 
 {% if not jobs %}
@@ -74,6 +103,28 @@
 
     {% if job.error %}
     <p class="job-error">{{ job.error }}</p>
+    {% endif %}
+
+    {% set report = reports.get(job.id) %}
+    {% if report %}
+    <table class="report">
+      <caption class="visually-hidden">What each redaction rule masked</caption>
+      <thead>
+        <tr><th scope="col">Rule</th><th scope="col">Masked as</th>
+            <th scope="col" class="num">Hits</th></tr>
+      </thead>
+      <tbody>
+        {% for row in report %}
+        <tr class="{{ 'rule-off' if not row.enabled }}">
+          <th scope="row">{{ row.title }}</th>
+          <td><code>{{ row.placeholder }}</code></td>
+          <td class="num">
+            {% if row.enabled %}{{ row.hits }}{% else %}off{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
     {% endif %}
 
     {% set produced = artifacts.get(job.id, []) %}

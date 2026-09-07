@@ -10,6 +10,49 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+### Fixed
+
+- **A flaky redaction-report test that failed CI on Python 3.12.** The jobs
+  tests ran queued work through `run_pending_jobs`, whose docstring claimed the
+  worker thread was never started in tests — but `create_app` starts one in its
+  lifespan and `TestClient` runs that lifespan, so two consumers were competing
+  for the same queue. When the background worker won the claim, the helper
+  found nothing left to run and returned immediately, and the assertion read a
+  page whose job had not finished. It passed locally and went red on CI, which
+  is the failure a synchronous helper exists to prevent. `run_pending_jobs` now
+  stops the app's worker before draining the queue, making every caller
+  deterministic rather than patching the one test that happened to lose the
+  race.
+
+## [0.5.2] - 2026-09-07
+
+### Added
+
+- **A redaction report saying what was masked in a whole file.** A new
+  "Redact a stored file" job (`app/job_redact.py`, kind `redact_artifact`)
+  masks a stored artifact and keeps two results against the job: a redacted
+  copy, named so the suffix stays last (`xensource.log` becomes
+  `xensource.redacted.log`, so it still opens as a log), and
+  `redaction-report.json` holding the per-rule hit counts for the run, the
+  line count, and the name, size and SHA-256 of both files — without those
+  hashes the counts have nothing to attach them to once the bundle is copied
+  elsewhere. The jobs page renders the report as a table, with a switched-off
+  rule shown as **off** rather than as zero hits, because "nothing was found"
+  and "nothing was looked for" are the two answers a person about to send a
+  bundle to Vates must be able to tell apart. Rules that matched nothing get a
+  row too, for the same reason.
+
+  The file is read a line at a time and never held in memory, which is what
+  lets the same job serve a few hundred bytes of `inventory.json` now and a
+  433 MB log bundle once collection lands. The masking itself is
+  `app/redact.py`'s existing `active_rules` and `Rule.apply`, applied in the
+  same order as `redact_text`, so the preview page and a real run cannot
+  diverge; a test asserts the stored copy is byte-for-byte what `redact_text`
+  produces on the same input. Line endings and malformed bytes both survive
+  the round trip untouched — a redacted log whose CRLFs were rewritten no
+  longer matches the file it came from, and one bad byte in a real log must
+  not lose the whole run.
+
 ## [0.5.1] - 2026-09-07
 
 ### Added
@@ -360,7 +403,8 @@ must extract from a locally cached bundle rather than making a smaller request;
 and real bundles contain internal addresses and session tokens, which is why
 redaction is scheduled before the first downloadable bundle rather than after.
 
-[Unreleased]: https://github.com/acebmxer/xcp_pulse/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/acebmxer/xcp_pulse/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/acebmxer/xcp_pulse/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/acebmxer/xcp_pulse/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/acebmxer/xcp_pulse/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/acebmxer/xcp_pulse/compare/v0.3.0...v0.4.0
