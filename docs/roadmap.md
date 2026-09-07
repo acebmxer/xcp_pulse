@@ -206,6 +206,43 @@ this plainly, rather than surfacing a bare `403`.
 
 ---
 
+## Known issues
+
+Bugs found and not yet fixed. Listed here so they are tracked with everything
+else rather than remembered.
+
+### The restricted-account warning shows on every connection
+
+`app/templates/collect.html` branches on `connection.is_admin`, but
+`XoConnection` in `app/xo_connection.py` has no such attribute — it stores
+`account_type`, which is `"admin"` or `"restricted"`. Jinja resolves a missing
+attribute to Undefined, which is falsy, so `not connection.is_admin` is always
+true and the red "This connection uses a restricted account" box renders for
+every connection, administrators included.
+
+The fix is an `is_admin` property on `XoConnection` returning
+`account_type == "admin"`.
+
+`tests/test_collect_page.py::test_a_restricted_connection_is_warned_about_before_collecting`
+passes despite this: it asserts the warning appears for a restricted account,
+which is equally true of a warning that appears for everyone. It needs a
+companion asserting the warning is **absent** for an admin connection — a test
+that checks only the positive case cannot catch a condition stuck on.
+
+Found 2026-09-07, on an admin connection whose collection had just succeeded.
+
+### The collection time estimate is the download only
+
+The Collect page, `README.md`, this file, `docs/functions.md` and
+`app/job_collect.py` all say to expect "about 100 seconds per host". That is
+the time `logs.tgz` takes to arrive. A collection also fetches the audit trail
+and redacts a copy of each, and a measured full run took **203 seconds** — so
+an operator reading the estimate before starting is told half the real wait.
+
+Found 2026-09-07, against a run of 203s on XCP-ng 8.3.
+
+---
+
 ## Next
 
 ### Self-update from the UI
