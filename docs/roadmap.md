@@ -90,19 +90,22 @@ Mask addresses, tokens and credentials out of log text, and see it happen.
 Nothing pasted into the preview is stored. Redaction works a line at a time,
 which is the unit the streaming repack of a real bundle will use.
 
----
-
-## Next
-
-### Per-rule enable and disable
+### v0.5.1 — Per-rule enable and disable
 
 Turn an individual redaction rule off when it is masking something you need.
 
-- A rule's on/off state stored and applied wherever redaction runs
-- The preview page reflects the current settings
+- A rule's on/off state stored in the database and applied wherever redaction
+  runs, not only in the preview
+- The preview reflects the current settings, so it shows what a collected
+  bundle would actually get
+- Only the switched-off rules are stored, so a rule added in a later version is
+  on from the moment it exists
+- The page says how many rules are off, because a bundle collected with masking
+  disabled is the failure this makes possible
 
-The engine already takes the set of enabled rules as an argument and defaults to
-all of them, so this is wiring rather than new masking logic.
+---
+
+## Next
 
 ### Redaction report
 
@@ -114,7 +117,7 @@ A record of what was masked, alongside what was produced.
 `redact_text` already returns per-rule counts; what is missing is somewhere to
 put them once redaction runs over a real bundle rather than a paste.
 
-Both come **before** the first downloadable bundle, for the reason in
+It comes **before** the first downloadable bundle, for the reason in
 [Redaction](#redaction-1) below.
 
 ---
@@ -187,9 +190,9 @@ The order inside this group is forced. Each item says what must come first.
 
 *Prerequisite for: any downloadable bundle. Has none of its own.*
 
-**The rules and the preview page shipped in v0.5.0.** What remains is per-rule
-enable and disable, and a redaction report with per-rule hit counts — both
-listed under [Next](#next).
+**The rules and the preview page shipped in v0.5.0; per-rule enable and disable
+shipped in v0.5.1.** What remains is a redaction report with per-rule hit
+counts, listed under [Next](#next).
 
 > [!IMPORTANT]
 > This comes **before** the first downloadable bundle, not after. A real bundle

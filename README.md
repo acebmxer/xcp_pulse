@@ -19,11 +19,10 @@ them, and reports findings — for your own troubleshooting or to attach to a
 Vates support ticket.
 
 > [!NOTE]
-> XCP Pulse is being built in stages. **v0.5.0 masks addresses, tokens and
+> XCP Pulse is being built in stages. **v0.5.1 masks addresses, tokens and
 > credentials out of log text, with a preview page showing exactly what would
-> be redacted.** Turning individual rules on and off comes next, then log
-> collection. See [the roadmap](docs/roadmap.md) for what is planned and what
-> is done.
+> be redacted and a switch for each rule.** Log collection comes next. See
+> [the roadmap](docs/roadmap.md) for what is planned and what is done.
 
 ## Read next
 
