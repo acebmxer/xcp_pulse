@@ -17,7 +17,10 @@ What it produces, per host:
 offers the redacted copy; the raw one is downloadable too, because an operator
 diagnosing their own pool needs it, but the page says which is which.
 
-Expect about 433 MB and 100 seconds per host, measured on XCP-ng 8.3.
+Expect about 433 MB and three minutes per host, measured on XCP-ng 8.3.
+The 100-second figure quoted elsewhere is the ``logs.tgz`` download alone;
+a whole run also fetches the audit trail and redacts a copy of each, and
+measured runs took 166 and 203 seconds.
 """
 
 from __future__ import annotations

@@ -10,6 +10,27 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+### Fixed
+
+- **The restricted-account warning on the Collect page showed for every
+  connection, administrators included.** `collect.html` branched on
+  `connection.is_admin`, an attribute `XoConnection` never had — it stores
+  `account_type`, `"admin"` or `"restricted"`. Jinja resolves a missing
+  attribute to Undefined, which is falsy, so `not connection.is_admin` was
+  always true and the red "This connection uses a restricted account" box
+  rendered above successful admin collections. `XoConnection` now has an
+  `is_admin` property. The existing test asserted only that a restricted
+  account is warned, which a warning stuck on satisfies too; a companion test
+  now asserts the warning is absent for an admin connection.
+
+- **The collection time estimate described the download, not the
+  collection.** The Collect page, `README.md`, `docs/functions.md` and
+  `job_collect.py` all said to expect about 100 seconds per host — the time
+  `logs.tgz` takes to arrive. A collection also fetches the audit trail and
+  redacts a copy of each; measured runs took 166 and 203 seconds. All four now
+  say about three minutes, and the places that genuinely describe the
+  `logs.tgz` transfer still say 100 seconds.
+
 ## [0.6.0] - 2026-09-07
 
 ### Added

@@ -37,6 +37,10 @@ class XoConnection:
     def tested(self) -> bool:
         return self.last_tested_at is not None
 
+    @property
+    def is_admin(self) -> bool:
+        return self.account_type == "admin"
+
 
 def save_connection(
     conn: sqlite3.Connection,

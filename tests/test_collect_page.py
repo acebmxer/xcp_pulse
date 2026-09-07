@@ -327,6 +327,27 @@ def test_a_restricted_connection_is_warned_about_before_collecting(
     assert "export:logs" in body
 
 
+def test_an_admin_connection_is_not_warned_about(logged_in: TestClient) -> None:
+    """The other side of the condition.
+
+    Shipped stuck on: the template read an attribute the connection did not
+    have, so every account saw the restricted-account warning. Asserting only
+    that a restricted account is warned cannot catch that.
+    """
+    app = logged_in.app  # type: ignore[attr-defined]
+    save_connection(
+        app.state.db,
+        url="https://xo.example.com",
+        token="stored-token",
+        account_type="admin",
+        verify_tls=True,
+        secret_key=app.state.settings.secret_key,
+    )
+
+    body = logged_in.get("/collect").text
+    assert "restricted account" not in body
+
+
 def test_the_inventory_the_page_uses_is_the_stored_one(with_inventory: TestClient) -> None:
     """The page must not need XO to be reachable to show what was collected.
 
