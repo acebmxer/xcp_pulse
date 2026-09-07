@@ -28,6 +28,17 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ### Fixed
 
+- **The test for refusing a duplicate inventory refresh raced the worker
+  thread.** It queued the first refresh through `POST /jobs/refresh-inventory`
+  and expected the second to be refused, but the background worker could claim
+  and fail that job — against the fixture's unreachable `xo.example.com` —
+  before the second request arrived, leaving nothing queued or running for
+  `has_active` to find. The guard was then measuring thread timing rather than
+  behaviour, and CI failed on Python 3.12 while passing on 3.13 for the same
+  commit. The test now stops the worker and enqueues directly, matching the
+  redaction test beside it, which had already been given the same treatment.
+  The route itself was never wrong.
+
 - **The Collect page told operators to expect 433 MB per host, which is the
   size of the log bundle alone.** A collection also downloads the XAPI audit
   trail — measured at 770 MiB, larger than the bundle — and then writes a
