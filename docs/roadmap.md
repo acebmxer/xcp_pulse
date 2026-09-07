@@ -57,11 +57,7 @@ See the inventory on the dashboard.
   hosts marked
 - An account that can see nothing is told why, rather than shown an empty list
 
----
-
-## Next
-
-### Background jobs and stored results
+### v0.4.0 — Background jobs and stored results
 
 Work that takes time runs in the background, and what it produced is kept.
 
@@ -76,8 +72,12 @@ lets a job survive a restart, and what lets a separate worker process be added
 later without changing the schema or any job body.
 
 > [!NOTE]
-> The job system is built here, against endpoints that answer in milliseconds,
+> The job system was built here, against endpoints that answer in milliseconds,
 > so that the 100-second collection job later lands on a system already proven.
+
+---
+
+## Next
 
 ### Redaction
 

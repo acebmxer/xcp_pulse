@@ -19,10 +19,10 @@ them, and reports findings — for your own troubleshooting or to attach to a
 Vates support ticket.
 
 > [!NOTE]
-> XCP Pulse is being built in stages. **v0.3.0 connects to Xen Orchestra and
-> lists your pools and hosts.** Background jobs with stored results are in
-> progress, then redaction, then log collection. See
-> [the roadmap](docs/roadmap.md) for what is planned and what is done.
+> XCP Pulse is being built in stages. **v0.4.0 connects to Xen Orchestra, lists
+> your pools and hosts, and runs that as a background job with stored results.**
+> Redaction is next, then log collection. See [the roadmap](docs/roadmap.md) for
+> what is planned and what is done.
 
 ## Read next
 
