@@ -272,14 +272,20 @@ password, and `mac` before `ipv6` because a MAC is also colon-separated hex.
 | Function | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
 | `active_rules` | `(enabled: frozenset[str] \| set[str] \| None = None) -> tuple[Rule, ...]` | The rules to apply, in order; `None` means all | `redact_line`, `redact_text` | v0.5.0 |
+| `enabled_rules` | `(conn: sqlite3.Connection) -> frozenset[str]` | The names of the rules currently switched on | `routes.redaction` | unreleased |
 | `redact_line` | `(line: str, enabled=None) -> str` | Masks one line — the unit a streaming repack uses | `redact_text`, collection later | v0.5.0 |
 | `redact_text` | `(text: str, enabled=None) -> tuple[str, dict[str, int]]` | Masks a block and counts hits per rule | `routes.redaction` | v0.5.0 |
-| `rule_by_name` | `(name: str) -> Rule \| None` | One rule by name | per-rule settings later | v0.5.0 |
+| `rule_by_name` | `(name: str) -> Rule \| None` | One rule by name | `set_enabled_rules` | v0.5.0 |
+| `set_enabled_rules` | `(conn: sqlite3.Connection, names: Iterable[str]) -> frozenset[str]` | Switches on exactly the named rules, off the rest | `routes.redaction` | unreleased |
 
 `Rule` is a frozen dataclass carrying the pattern, the placeholder and a `keep`
 set of values not worth masking; `Rule.apply` returns the masked text and its
 own hit count. `DEFAULT_ENABLED` is every rule — a rule is only off when
 somebody turns it off.
+
+Only the switched-off rules are stored (table `redaction_disabled`), so a rule
+added to `RULES` in a later version is on from the moment it exists, including
+on databases written before it did.
 
 ## `app/routes/` — HTTP endpoints
 
@@ -295,6 +301,7 @@ somebody turns it off.
 | `logout` | `(request) -> Response` | `POST /logout` | router | v0.1.0 |
 | `redaction_page` | `(request, username) -> Response` | `GET /redaction` — the preview page | router | v0.5.0 |
 | `redaction_preview` | `(request, username, text) -> Response` | `POST /redaction` — masks pasted text and shows both | router | v0.5.0 |
+| `redaction_rules_save` | `(request, username, rule: list[str]) -> Response` | `POST /redaction/rules` — stores which rules are on | router | unreleased |
 | `settings_delete` | `(request, username) -> Response` | `POST /settings/delete` — forgets the connection | router | v0.2.0 |
 | `settings_page` | `(request, username) -> Response` | `GET /settings` — the XO connection page | router | v0.2.0 |
 | `settings_save` | `(request, username, url, token, account_type, verify_tls) -> Response` | `POST /settings` — stores the connection | router | v0.2.0 |

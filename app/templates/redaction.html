@@ -8,10 +8,22 @@
 <p class="alert alert-error" role="alert">{{ error }}</p>
 {% endif %}
 
+{% if request.query_params.get('saved') %}
+<p class="alert" role="status">Redaction rules saved.</p>
+{% endif %}
+
+{% if disabled_count %}
+<p class="alert alert-error" role="status">
+  {{ disabled_count }} rule{{ '' if disabled_count == 1 else 's' }} switched off. Values
+  those rules would have masked are left in collected logs as they were.
+</p>
+{% endif %}
+
 <div class="card">
   <h2>Preview</h2>
   <p class="note">
-    Paste log text to see what would be masked. Nothing here is stored.
+    Paste log text to see what would be masked, using the rules switched on
+    below. Nothing pasted here is stored.
   </p>
 
   <form method="post" action="/redaction" class="stack">
@@ -35,13 +47,30 @@
 
 <div class="card">
   <h2>Rules</h2>
-  <dl class="kv">
-    {% for rule in rules %}
-    <dt>{{ rule.title }}
-      {% if counts.get(rule.name) %}<span class="tag">{{ counts[rule.name] }}</span>{% endif %}
-    </dt>
-    <dd>{{ rule.description }} Replaced with <code>{{ rule.placeholder }}</code>.</dd>
-    {% endfor %}
-  </dl>
+  <p class="note">
+    A rule switched off leaves what it matches untouched everywhere redaction
+    runs, not just in the preview.
+  </p>
+
+  <form method="post" action="/redaction/rules">
+    <ul class="rule-list">
+      {% for rule in rules %}
+      <li class="rule">
+        <label class="check">
+          <input type="checkbox" name="rule" value="{{ rule.name }}"
+            {% if rule.name in enabled %}checked{% endif %}>
+          <span class="rule-title">{{ rule.title }}</span>
+        </label>
+        {% if counts.get(rule.name) %}<span class="tag">{{ counts[rule.name] }}</span>{% endif %}
+        <p class="note rule-desc">
+          {{ rule.description }} Replaced with <code>{{ rule.placeholder }}</code>.
+        </p>
+      </li>
+      {% endfor %}
+    </ul>
+    <div class="row-actions">
+      <button type="submit" class="btn btn-primary">Save rules</button>
+    </div>
+  </form>
 </div>
 {% endblock %}

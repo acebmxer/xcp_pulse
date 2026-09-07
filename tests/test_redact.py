@@ -8,9 +8,22 @@ is useless to the support engineer the bundle is for.
 
 from __future__ import annotations
 
+import sqlite3
+from collections.abc import Iterator
+from pathlib import Path
+
 import pytest
 
-from app.redact import DEFAULT_ENABLED, RULES, redact_line, redact_text, rule_by_name
+from app.db import init_db
+from app.redact import (
+    DEFAULT_ENABLED,
+    RULES,
+    enabled_rules,
+    redact_line,
+    redact_text,
+    rule_by_name,
+    set_enabled_rules,
+)
 
 
 @pytest.mark.parametrize(
@@ -183,3 +196,77 @@ def test_an_opaqueref_keeps_its_prefix() -> None:
     """OpaqueRef: names the kind of thing; only the identifier is secret."""
     result = redact_line('"resident_on": "OpaqueRef:2b0f6bd0-1234-4a1b-9c8d-aabbccddeeff"')
     assert result == '"resident_on": "OpaqueRef:[UUID]"'
+
+
+# ---- storing which rules are on ----
+
+
+@pytest.fixture
+def conn(tmp_path: Path) -> Iterator[sqlite3.Connection]:
+    connection = init_db(tmp_path / "test.db")
+    yield connection
+    connection.close()
+
+
+def test_a_fresh_database_has_every_rule_on(conn: sqlite3.Connection) -> None:
+    """Nothing stored means nothing switched off — the safe default."""
+    assert enabled_rules(conn) == DEFAULT_ENABLED
+
+
+def test_setting_the_enabled_set_switches_off_the_rest(conn: sqlite3.Connection) -> None:
+    assert set_enabled_rules(conn, ["ipv4", "uuid"]) == {"ipv4", "uuid"}
+    assert enabled_rules(conn) == {"ipv4", "uuid"}
+
+
+def test_an_empty_set_switches_everything_off(conn: sqlite3.Connection) -> None:
+    set_enabled_rules(conn, [])
+    assert enabled_rules(conn) == frozenset()
+    assert redact_line("host 10.0.0.1 password=hunter2", enabled_rules(conn)) == (
+        "host 10.0.0.1 password=hunter2"
+    )
+
+
+def test_a_rule_switched_off_stops_masking(conn: sqlite3.Connection) -> None:
+    set_enabled_rules(conn, [name for name in DEFAULT_ENABLED if name != "ipv4"])
+    line = "management address 10.20.30.41 up"
+    assert redact_line(line, enabled_rules(conn)) == line
+    # The rules left on are unaffected.
+    assert redact_line("host 4c8a1f2e-77b3-4a91-9f0e-2d5c8b1a6e34", enabled_rules(conn)) == (
+        "host [UUID]"
+    )
+
+
+def test_switching_back_on_leaves_nothing_behind(conn: sqlite3.Connection) -> None:
+    set_enabled_rules(conn, ["ipv4"])
+    set_enabled_rules(conn, [rule.name for rule in RULES])
+    assert enabled_rules(conn) == DEFAULT_ENABLED
+    assert conn.execute("SELECT COUNT(*) AS n FROM redaction_disabled").fetchone()["n"] == 0
+
+
+def test_an_unknown_name_is_dropped_rather_than_stored(conn: sqlite3.Connection) -> None:
+    assert set_enabled_rules(conn, ["ipv4", "no-such-rule"]) == {"ipv4"}
+    assert enabled_rules(conn) == {"ipv4"}
+
+
+def test_a_stored_name_that_is_no_longer_a_rule_is_ignored(conn: sqlite3.Connection) -> None:
+    """Renaming a rule must turn it back on, not raise."""
+    conn.execute("INSERT INTO redaction_disabled (name, disabled_at) VALUES ('retired-rule', 0)")
+    conn.commit()
+    assert enabled_rules(conn) == DEFAULT_ENABLED
+
+
+def test_a_new_rule_is_on_even_on_a_database_written_before_it(conn: sqlite3.Connection) -> None:
+    """Storing the off-set rather than the on-set is what buys this.
+
+    Simulated by switching everything off *except* one rule, then asking for a
+    rule the stored rows never mentioned — which is the position a rule added in
+    a later version is in.
+    """
+    conn.execute("DELETE FROM redaction_disabled")
+    conn.executemany(
+        "INSERT INTO redaction_disabled (name, disabled_at) VALUES (?, 0)",
+        [("ipv4",)],
+    )
+    conn.commit()
+    assert "uuid" in enabled_rules(conn)
+    assert "ipv4" not in enabled_rules(conn)

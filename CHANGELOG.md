@@ -10,6 +10,21 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+### Added
+
+- **Redaction rules can be switched on and off.** Each rule on the redaction
+  page now has a checkbox, and the choice is stored in the database rather than
+  applying to one preview: a rule switched off stops masking everywhere
+  redaction runs, and the preview shows what a collected bundle would actually
+  get. Only the switched-off rules are recorded (new table
+  `redaction_disabled`, migration 4), so a rule added to `RULES` in a later
+  version is on from the moment it exists rather than needing a row written for
+  it — storing the enabled set instead would have left every new rule silently
+  inactive on existing installs. A stored name that no longer matches a rule is
+  ignored, which makes renaming one safe. The page states how many rules are
+  off, because a bundle collected with masking disabled is the failure this
+  feature makes possible.
+
 ### Changed
 
 - **`compose.yaml` is no longer tracked; `compose.yaml.example` is the
