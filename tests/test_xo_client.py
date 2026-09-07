@@ -8,10 +8,12 @@ documentation alone — in particular that a restricted account is answered with
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import httpx
 import pytest
 
-from app.xo_client import XoClient, XoError
+from app.xo_client import XoClient, XoError, _content_length
 
 POOL_HREF = "/rest/v0/pools/751d40fa-60b5-82cf-e735-6ed42d0e03f8"
 HOST_HREF = "/rest/v0/hosts/c1372ec6-3651-4481-808b-34293e53e144"
@@ -384,3 +386,321 @@ def test_list_hosts_raises_on_a_server_error() -> None:
 
     with pytest.raises(XoError, match="HTTP 500"):
         _client(handler).list_hosts()
+
+
+# ---- streaming downloads -------------------------------------------------
+#
+# The log bundle is measured at 433 MB, so what matters here is that the body
+# reaches the disk without being held, that a refusal names the privilege the
+# operator has to change, and that a failure never leaves a partial file behind
+# for someone to mistake for a collection.
+
+
+def _download_client(handler: object) -> XoClient:
+    """Like ``_client``, but with the download timeout the real one uses.
+
+    Built through ``_client`` so the download path under test is the one the
+    application uses, rather than a second construction that could drift.
+    """
+    return _client(handler)
+
+
+def test_a_download_streams_the_body_to_the_named_file(tmp_path) -> None:
+    payload = b"x" * (3 * 1024 * 1024)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/hosts/host-1/logs.tgz")
+        return httpx.Response(200, content=payload)
+
+    destination = tmp_path / "bundle.tgz"
+    written = _download_client(handler).download_logs("host-1", destination)
+
+    assert written == len(payload)
+    assert destination.read_bytes() == payload
+
+
+def test_a_download_reports_progress_with_the_declared_total(tmp_path) -> None:
+    """The total is what the ETA on the collect page is computed from."""
+    payload = b"y" * (2 * 1024 * 1024 + 17)
+    seen: list[tuple[int, int | None]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=payload, headers={"content-length": str(len(payload))})
+
+    _download_client(handler).download_logs(
+        "host-1",
+        tmp_path / "bundle.tgz",
+        on_chunk=lambda written, total: seen.append((written, total)),
+    )
+
+    assert seen[-1] == (len(payload), len(payload))
+    assert all(total == len(payload) for _, total in seen)
+
+
+def test_a_response_without_a_content_length_has_no_total_to_report() -> None:
+    """Some XO versions send none, so a progress bar cannot assume one.
+
+    Checked against ``_content_length`` rather than through a download: httpx's
+    MockTransport sets a Content-Length on every response it builds, so a
+    transport-level test cannot produce a reply that lacks one.
+    """
+    assert _content_length(httpx.Response(200)) is None
+    assert _content_length(httpx.Response(200, headers={"content-length": "0"})) is None
+    assert _content_length(httpx.Response(200, headers={"content-length": "nonsense"})) is None
+    assert _content_length(httpx.Response(200, headers={"content-length": "433"})) == 433
+
+
+def test_a_download_whose_total_is_unknown_still_reports_what_has_arrived(
+    tmp_path,
+) -> None:
+    """The progress line falls back to bytes-so-far rather than a percentage."""
+    seen: list[tuple[int, int | None]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"z" * 1024)
+
+    client = _download_client(handler)
+    with patch("app.xo_client._content_length", return_value=None):
+        client.download_audit(
+            "host-1",
+            tmp_path / "audit.txt",
+            on_chunk=lambda written, total: seen.append((written, total)),
+        )
+
+    assert seen and all(total is None for _, total in seen)
+
+
+def test_a_refused_download_names_the_privilege_that_is_missing(tmp_path) -> None:
+    """A restricted account is the expected failure, so it must read clearly."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json={"data": {"missingPrivileges": ["host:export:logs"]}})
+
+    destination = tmp_path / "bundle.tgz"
+    with pytest.raises(XoError) as excinfo:
+        _download_client(handler).download_logs("host-1", destination)
+
+    assert "export:logs" in str(excinfo.value)
+    assert not destination.exists()
+
+
+def test_a_download_of_a_host_that_is_gone_says_so(tmp_path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404)
+
+    with pytest.raises(XoError) as excinfo:
+        _download_client(handler).download_logs("host-1", tmp_path / "bundle.tgz")
+
+    assert "no" in str(excinfo.value).lower()
+
+
+def test_a_failure_mid_transfer_leaves_no_partial_file(tmp_path) -> None:
+    """A half-written 433 MB file is the worst possible remnant."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadError("connection dropped")
+
+    destination = tmp_path / "bundle.tgz"
+    with pytest.raises(XoError):
+        _download_client(handler).download_logs("host-1", destination)
+
+    assert not destination.exists()
+
+
+def test_cancelling_from_the_progress_callback_removes_the_partial_file(tmp_path) -> None:
+    """How a job cancels a download: the callback raises, and nothing is left."""
+
+    class _Cancelled(Exception):
+        pass
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"a" * (4 * 1024 * 1024))
+
+    def cancel(written: int, total: int | None) -> None:
+        raise _Cancelled
+
+    destination = tmp_path / "bundle.tgz"
+    with pytest.raises(_Cancelled):
+        _download_client(handler).download_logs("host-1", destination, on_chunk=cancel)
+
+    assert not destination.exists()
+
+
+def test_an_unexpected_status_is_reported_with_its_code(tmp_path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(502)
+
+    with pytest.raises(XoError) as excinfo:
+        _download_client(handler).download_logs("host-1", tmp_path / "bundle.tgz")
+
+    assert "502" in str(excinfo.value)
+
+
+def test_a_truncated_transfer_says_what_happened_and_keeps_nothing(
+    tmp_path,
+) -> None:
+    """Measured on XCP-ng 8.3: the host's bundle process dies part-way.
+
+    Xen Orchestra streams what it has and the connection is reset without a
+    terminating chunk. A bare protocol error here reads as a network fault and
+    sends the operator looking in the wrong place.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        def body():
+            yield b"x" * 1024
+            raise httpx.RemoteProtocolError("incomplete chunked read")
+
+        return httpx.Response(200, content=body())
+
+    destination = tmp_path / "bundle.tgz"
+    with pytest.raises(XoError) as excinfo:
+        _download_client(handler).download_logs("host-1", destination)
+
+    message = str(excinfo.value)
+    assert "without finishing" in message
+    assert "upstream of XCP Pulse" in message
+    assert not destination.exists()
+
+
+def test_a_connection_reset_mid_transfer_is_reported_as_truncation(
+    tmp_path,
+) -> None:
+    """A reset arrives as ReadError, not as a protocol error.
+
+    Measured against a socket closed with SO_LINGER 0: httpx raises
+    ReadError("[Errno 104] Connection reset by peer"), which is a TransportError
+    and not a RemoteProtocolError. Before it was caught here it fell through to
+    the generic handler and was reported as a bare errno, which reads as a local
+    network fault rather than as the upstream truncation it is.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        def body():
+            yield b"x" * 1024
+            raise httpx.ReadError("[Errno 104] Connection reset by peer")
+
+        return httpx.Response(200, content=body())
+
+    destination = tmp_path / "bundle.tgz"
+    with pytest.raises(XoError) as excinfo:
+        _download_client(handler).download_logs("host-1", destination)
+
+    message = str(excinfo.value)
+    assert "without finishing" in message
+    assert "upstream of XCP Pulse" in message
+    assert "Errno 104" not in message
+    assert not destination.exists()
+
+
+def test_an_error_page_appended_to_the_archive_is_trimmed_off(tmp_path) -> None:
+    """The request finishes 200 while the file has rubbish on the end.
+
+    XCP-ng appends a few hundred bytes of HTML after the archive data when its
+    bundle build fails part-way. Trimming rather than refusing, because what
+    comes before is real log data the repack can still read, and a collection
+    costs minutes to repeat.
+    """
+    archive = b"\x1f\x8b" + b"g" * 2048
+    page = (
+        b"<html><body>An error occurred; please wait a while and try again."
+        b"<h1> Additional information </h1>"
+        b"Forkhelpers.Subprocess_failed(1)</body></html>"
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=archive + page)
+
+    destination = tmp_path / "bundle.tgz"
+    written = _download_client(handler).download_logs("host-1", destination)
+
+    assert destination.read_bytes() == archive, "the page must be cut off exactly"
+    assert written == len(archive)
+    assert b"<html" not in destination.read_bytes()
+
+
+def test_a_clean_download_is_not_mistaken_for_an_error_page(tmp_path) -> None:
+    """The tail scan must not fire on archive bytes that merely look textual."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"\x1f\x8b" + b"<not html>" * 100)
+
+    destination = tmp_path / "bundle.tgz"
+    written = _download_client(handler).download_logs("host-1", destination)
+
+    assert written == destination.stat().st_size
+
+
+def test_a_read_timeout_with_data_already_received_ends_the_transfer(tmp_path) -> None:
+    """Every byte arrives and the response never terminates.
+
+    Measured against one pool through nginx: the complete file sat on disk
+    while the read blocked for the whole timeout and the job then failed. With
+    this handling the same download returns in 71 seconds with its bytes kept.
+
+    Checked by driving the transfer to completion and then raising the timeout
+    the way the transport does, because MockTransport cannot deliver a chunk
+    and then time out — and a fake that timed out first would exercise the
+    empty-stall path instead, which is the opposite case.
+    """
+    chunks = [b"\x1f\x8b" + b"a" * 4096]
+    real_iter_bytes = httpx.Response.iter_bytes
+
+    def fake_iter(self, chunk_size=None):
+        # Only the streamed download is replaced. MockTransport builds its
+        # response by reading the body first, so patching unconditionally
+        # raises during construction and exercises the empty-stall path —
+        # the opposite of what is under test here.
+        if getattr(self, "_replace_stream", False):
+            yield from chunks
+            raise httpx.ReadTimeout("no terminator is coming")
+        yield from real_iter_bytes(self, chunk_size)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"ignored")
+
+    original_stream = httpx.Client.stream
+
+    def marking_stream(self, *args, **kwargs):
+        context = original_stream(self, *args, **kwargs)
+
+        class _Marked:
+            def __enter__(inner):
+                response = context.__enter__()
+                response._replace_stream = True
+                return response
+
+            def __exit__(inner, *exc):
+                return context.__exit__(*exc)
+
+        return _Marked()
+
+    destination = tmp_path / "bundle.tgz"
+    with (
+        patch.object(httpx.Response, "iter_bytes", fake_iter),
+        patch.object(httpx.Client, "stream", marking_stream),
+    ):
+        written = _download_client(handler).download_logs("host-1", destination)
+
+    assert written == 4098
+    assert destination.exists(), "what arrived must be kept, not discarded"
+    assert destination.read_bytes() == chunks[0]
+
+
+def test_a_stall_with_nothing_received_is_still_a_failure(tmp_path) -> None:
+    """A transfer that never starts is a real stall, not a finished download."""
+
+    def fake_iter(self, chunk_size=None):
+        raise httpx.ReadTimeout("nothing ever arrived")
+        yield b""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"ignored")
+
+    destination = tmp_path / "bundle.tgz"
+    with patch.object(httpx.Response, "iter_bytes", fake_iter):
+        with pytest.raises(XoError) as excinfo:
+            _download_client(handler).download_logs("host-1", destination)
+
+    assert "stopped sending data" in str(excinfo.value)
+    assert not destination.exists()

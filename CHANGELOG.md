@@ -10,6 +10,153 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-07
+
+### Added
+
+- **Collecting a host's full log bundle, redacted and ready to send.** A new
+  **Collect** page runs a per-host collection as a background job: it streams
+  `logs.tgz` and `audit.txt` from Xen Orchestra to the data volume, keeps both
+  raw copies, and produces a redacted copy of each. About 433 MB and 100
+  seconds per host. The download is streamed a megabyte at a time and never
+  held in memory; every chunk is a cancellation checkpoint, so Cancel stops a
+  transfer rather than waiting for it, and a failed or cancelled download
+  removes its partial file instead of leaving a half-written bundle to be
+  mistaken for a collection.
+
+  A tarball cannot be masked in place, so the redacted bundle is repacked
+  member by member, each member's header size corrected — a placeholder rarely
+  matches the length of what it replaced, and a stale size makes every later
+  member unreadable. Compressed members are copied through unchanged, because
+  masking gzip bytes rewrites the file and masks nothing. The masking is
+  `redact.py`'s own `active_rules` and `Rule.apply` in the preview page's
+  order, so what the preview shows is what a bundle gets.
+
+  Both copies are kept and marked **redacted — safe to send** or **raw —
+  unmasked**: the redacted copy is lossy, and the original is the only thing
+  that can answer what was masked afterwards. Each collection writes a
+  redaction report in the same shape the **Redact a stored file** job writes.
+
+- **A retention policy, previewed before it acts.** The newest *n* collections
+  are kept whatever their age, and only what remains is judged against an age
+  limit, so a long gap in collecting cannot empty the store. The page shows
+  which collections a cleanup would delete and how much space that returns
+  before offering the button, and the cleanup re-plans as it runs so a
+  collection finishing in between is accounted for. Individual collections can
+  also be deleted outright.
+
+- **A download route.** `GET /collect/download/{id}` streams an artifact from
+  disk, so a 433 MB bundle is never read into memory to be returned. The
+  browser's filename comes from the artifact row; the file on disk is a uuid,
+  which keeps a host name from Xen Orchestra out of the filesystem.
+
+### Fixed
+
+- **A connection reset mid-download was reported as a bare errno, and threw
+  away everything received.** The truncation handler caught
+  `RemoteProtocolError` and `StreamClosed`, but a genuine TCP reset arrives as
+  `httpx.ReadError` — verified against a socket closed with `SO_LINGER 0`,
+  which raises `ReadError("[Errno 104] Connection reset by peer")`. That fell
+  through to the generic handler, so the case where the bytes are most
+  expensive to fetch again was the one that discarded them with a message
+  reading as a local network fault. A reset is now reported as the upstream
+  truncation it is, in the same words as the other two.
+
+- **The retention pages said "1 collection(s)".** The preview, the stored-count
+  line and the notice after a cleanup all carried the placeholder plural, on a
+  page an operator reads before deleting gigabytes.
+
+- **The delete button did nothing on a failed or cancelled collection.**
+  `retention.delete_collection` looked the job up through `collections()`,
+  which lists only *successful* jobs so that a half-written run is never
+  counted as a stored result — but a failed collection is precisely what an
+  operator wants to clear away, so the button posted, redirected and left the
+  row on screen. It now looks the job up directly and refuses only a queued or
+  running one, whose files the worker is still writing.
+
+- **A truncated download reported a protocol error instead of naming the
+  cause.** Measured against one pool: `logs.tgz` stops part-way, sometimes with
+  the connection reset without ending the transfer, sometimes with an HTML
+  error page appended after the archive bytes while the request still finishes
+  HTTP 200 — so the status says success and only the tail gives it away. Both
+  are now caught and reported as the truncation they are, with the places to
+  look named, rather than an incomplete-chunked-read that reads as a network
+  fault. Nothing partial is stored, and the last few kilobytes are scanned for
+  the error page so a 433 MB body is still never held.
+
+- **Documentation that had gone stale against shipped releases.** The README
+  still required "a Xen Orchestra instance — once the XO connection ships",
+  which shipped in v0.2.0; its status note named v0.5.2 after v0.5.3 was
+  released; the Python badge said 3.13 while the image runs 3.14 and
+  `pyproject.toml` requires 3.12 or newer, so it matched neither; the test
+  badge counted 192 against a suite of 236. `docs/architecture.md` described
+  itself as covering "v0.4.0 and the redaction work in progress" three
+  redaction releases after it shipped, and `docs/roadmap.md` had no v0.5.3
+  section, so its Shipped list stopped a release short. None of these change
+  behaviour; all of them are read before anyone installs.
+
+- **The build-from-source instructions generated the password hash from the
+  published image, not the clone.** `docker compose run --rm xcp-pulse python
+  -m app.hashpw` was given once, before the container exists, but on the clone
+  path it resolves to `ghcr.io/acebmxer/xcp_pulse:latest` — verified with
+  `docker compose config --images` against a copy of the sample. The hash
+  itself is portable, so this worked by accident while silently pulling a
+  release image; it fails for a clone that has changed `hashpw` or has no
+  registry access. `docs/installation.md` now gives the overlay form of the
+  command alongside it.
+
+### Changed
+
+- **A download that has stopped arriving is now treated as finished, not as a
+  failure.** Measured against one pool through nginx: every byte of the bundle
+  arrives and the response then never terminates, so the read blocked for the
+  whole timeout with the complete file already on disk, and the job failed
+  having thrown it away. A read timeout with data already received now ends the
+  transfer and keeps what arrived, which is validated the same way a cleanly
+  ended one is; with nothing received it is still reported as a real stall.
+  The same download went from hanging 311 seconds and failing to returning in
+  71 seconds with its bytes kept.
+
+- **An error page appended by the host is trimmed off rather than failing the
+  collection.** XCP-ng adds a few hundred bytes of HTML after the archive when
+  its bundle build fails part-way, and the request still finishes HTTP 200.
+  That was refused outright, which threw away 450 MB of readable logs over 263
+  bytes of trailing markup; the page is now cut off and what remains is
+  repacked as usual.
+
+- **The redacted copy of a truncated bundle opened only read-only.** Archive
+  tools reported it as corrupt. The repack copied the source's final member —
+  the one the truncation lands in — by writing its header and then streaming
+  the body, so the header promised more bytes than followed and the archive
+  could not be read by random access, which is what every archive tool uses. A
+  member whose body is short is now dropped rather than written, which is the
+  same thing the source lost. Verified against a real 433 MiB truncated bundle:
+  597 members, opening normally.
+
+- **A truncated bundle no longer loses the whole collection.** The redacted
+  copy is repacked by reading the archive as a stream rather than by random
+  access, so a bundle whose end is missing — measured against one pool, the
+  last member and the terminator absent — still yields a redacted copy of
+  every member that arrived intact, and the job reports that the bundle ends
+  early instead of failing with a bare `EOFError` and discarding a download
+  that takes minutes to repeat. A bundle with nothing readable at all still
+  fails, because an empty redacted copy sitting beside a raw one invites
+  sending the wrong file.
+
+- **Sizes are labelled in binary units.** `human_bytes` divides by 1024 but
+  printed "MB", so a 454 MB download read as "426.0 MB" on the collect page —
+  against a bundle the docs call 433 MB, which made a complete transfer look
+  like a truncated one. It now prints KiB/MiB/GiB.
+
+- **`wake_worker` is now shared route plumbing** in `app/dependencies.py`.
+  Three routers had their own identical copy and a fourth was about to be
+  written.
+
+- **Byte counts are formatted in one place.** `artifacts.human_bytes` is now a
+  module-level function that `Artifact.size_human` calls, because a total —
+  a collection's files summed, a retention plan's freed space — has no
+  `Artifact` to ask.
+
 ## [0.5.3] - 2026-09-07
 
 ### Changed
@@ -451,7 +598,8 @@ must extract from a locally cached bundle rather than making a smaller request;
 and real bundles contain internal addresses and session tokens, which is why
 redaction is scheduled before the first downloadable bundle rather than after.
 
-[Unreleased]: https://github.com/acebmxer/xcp_pulse/compare/v0.5.3...HEAD
+[Unreleased]: https://github.com/acebmxer/xcp_pulse/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/acebmxer/xcp_pulse/compare/v0.5.3...v0.6.0
 [0.5.3]: https://github.com/acebmxer/xcp_pulse/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/acebmxer/xcp_pulse/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/acebmxer/xcp_pulse/compare/v0.5.0...v0.5.1

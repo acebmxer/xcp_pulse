@@ -5,7 +5,7 @@
 ## Requirements
 
 - Docker with Compose v2 (`docker compose version`)
-- About 200 MB of disk for the image; once log collection ships, roughly
+- About 200 MB of disk for the image, plus roughly
   **450 MB per host per log collection** on the data volume
 
 ## Install
@@ -46,6 +46,13 @@ will not start without one:
 docker compose run --rm xcp-pulse python -m app.hashpw
 ```
 
+From a clone, add the overlay here too — without it, compose pulls the
+published image rather than running your build:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm xcp-pulse python -m app.hashpw
+```
+
 It prompts for a password twice, then prints a line beginning
 `XCP_PULSE_ADMIN_PASSWORD_HASH=$argon2id$...`. Paste that into `xcp-pulse.env`, replacing
 the empty entry already there.
@@ -65,7 +72,7 @@ chose. On the Docker host itself, <http://localhost:8080> works too.
 curl -sf http://localhost:8080/healthz
 ```
 
-Expected: `{"status":"ok","version":"0.5.3"}`. This endpoint needs no login — the
+Expected: `{"status":"ok","version":"0.6.0"}`. This endpoint needs no login — the
 container healthcheck uses it.
 
 ```bash
@@ -86,7 +93,7 @@ To stay on one version instead, pin the tag in `docker-compose.yml` — the
 sample carries a commented example:
 
 ```yaml
-image: ghcr.io/acebmxer/xcp_pulse:0.5.3
+image: ghcr.io/acebmxer/xcp_pulse:0.6.0
 ```
 
 A pinned deployment then upgrades by editing that tag and running the two

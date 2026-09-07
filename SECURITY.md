@@ -27,10 +27,9 @@ worth using where log collection is not needed. XOA below the Essential+ tier
 has no role-based access control at all. Details are in
 [the roadmap](docs/roadmap.md#which-xen-orchestra-account-to-use).
 
-Once log collection ships, it also holds collected log bundles containing
-internal IP addresses, hostnames, usernames, XAPI session tokens and audit
-trails. A single
-real `xensource.log` measured during development contained 8,359 lines matching
+It also holds collected log bundles containing internal IP addresses,
+hostnames, usernames, XAPI session tokens and audit trails. A single real
+`xensource.log` measured during development contained 8,359 lines matching
 password, secret or session-id patterns.
 
 **Where it belongs.** On a trusted management network, behind a reverse proxy.
@@ -51,6 +50,13 @@ downloaded by you and sent by you.
 **Redaction is best-effort.** It removes what its rules match. Review a bundle
 before sending it to a third party. A rule cannot know that an unusual string in
 your environment is a secret.
+
+**Both copies of a collection are downloadable.** Each collection keeps the raw
+bundle as well as the redacted one, because the redacted copy is lossy and the
+original is the only thing that can answer what was masked. The download list
+marks each file **redacted — safe to send** or **raw — unmasked**; the raw one
+is for your own troubleshooting, not for sending onward. Anyone who can log in
+to XCP Pulse can download either.
 
 ## Reporting a vulnerability
 

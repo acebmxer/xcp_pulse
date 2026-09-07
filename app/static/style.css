@@ -664,3 +664,34 @@ textarea {
   clip-path: inset(50%);
   white-space: nowrap;
 }
+
+/* ---- collect page ---- */
+
+/* An artifact row now carries a name, a badge saying which copy it is, a size
+   and a download link. Wrapping rather than shrinking, because the badge is
+   the thing that must stay readable: it is what stops the raw bundle being
+   sent to Vates by mistake. */
+.artifacts li {
+  flex-wrap: wrap;
+  align-items: baseline;
+}
+
+.artifacts .btn {
+  margin-left: 0.6rem;
+  padding: 0.1rem 0.55rem;
+  font-size: 0.78rem;
+  text-decoration: none;
+}
+
+/* The retention preview lists collections inside an alert, where the alert's
+   own colour already carries the warning, so the border the artifact list
+   draws above itself would be a second line saying the same thing. */
+.alert .artifacts {
+  border-top: none;
+  margin-top: 0.4rem;
+  padding-top: 0;
+}
+
+.alert .artifacts li {
+  padding: 0.1rem 0;
+}

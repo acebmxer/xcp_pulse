@@ -24,6 +24,29 @@ API_BASE = "/rest/v0"
 LOG_EXPORT_ACTION = "export:logs"
 LOG_EXPORT_RESOURCE = "host"
 
+# The two log routes. Both need LOG_EXPORT_ACTION; both are plain file bodies
+# rather than JSON, and neither accepts a date parameter or a byte range, which
+# is why collection downloads the whole thing and filters afterwards.
+LOGS_PATH = "/hosts/{host_id}/logs.tgz"
+AUDIT_PATH = "/hosts/{host_id}/audit.txt"
+
+# How long the far end may go silent mid-transfer. httpx applies a read timeout
+# per chunk rather than to the whole response, so this is not a limit on how
+# long a download may take — a 433 MiB bundle measured at over three minutes
+# passes fine as long as data keeps arriving.
+#
+# It is also how long a finished transfer waits before giving up on a
+# terminator that is not coming — measured against one pool through nginx, the
+# last byte arrives and the response never ends — so it has to stay short
+# enough that a complete download does not look like a hang, while staying
+# longer than any real gap between chunks. Xen Orchestra builds the archive as
+# it streams, and the largest gap measured was a few seconds.
+DOWNLOAD_TIMEOUT = 60.0
+
+# Written to disk a megabyte at a time. Large enough that a 433 MB body is not
+# 433 000 writes, small enough that cancellation is noticed promptly.
+DOWNLOAD_CHUNK_BYTES = 1024 * 1024
+
 # Granting every action on hosts implies log export. It is full host
 # administration, so it is reported as such rather than as a way to stay
 # restricted.
@@ -336,6 +359,138 @@ class XoClient:
         )
         return LogExportSupport(False, detail, grantable=False)
 
+    # -- log download ----------------------------------------------------
+
+    def download_to(
+        self,
+        path: str,
+        destination,
+        *,
+        on_chunk=None,
+    ) -> int:
+        """Stream one XO route to a file. Returns the bytes written.
+
+        Deliberately not ``_get``: that reads the whole body into the response
+        object, which for a 433 MB bundle means holding it in memory before it
+        ever reaches the disk. This streams it, so the peak cost is one chunk.
+        Do not add a third GET — extend one of these two.
+
+        ``on_chunk(written, total)`` is called after each chunk, with ``total``
+        from Content-Length or ``None`` when the host does not send one. It is
+        how a caller reports progress, and — because a job body raises from it
+        to cancel — how a download is interrupted without the transfer needing
+        to know what a job is. The partial file is removed on the way out.
+
+        A refusal is an XoError naming the privilege, because the operator's
+        next move is to change the account, not to retry.
+        """
+        try:
+            with self._client_for_download() as client:
+                with client.stream("GET", path) as response:
+                    if response.status_code in (401, 403):
+                        # The body carries the missing privileges, but it has
+                        # not been read at this point in a streamed response.
+                        response.read()
+                        raise XoError(
+                            f"Xen Orchestra refused {path}. Downloading logs needs the "
+                            f"host {LOG_EXPORT_ACTION!r} privilege, which in practice "
+                            f"means an administrator account on most instances."
+                        )
+                    if response.status_code == 404:
+                        raise XoError(f"Xen Orchestra has no {path}. Check the host still exists.")
+                    if response.status_code != 200:
+                        raise XoError(
+                            f"Xen Orchestra returned HTTP {response.status_code} for {path}."
+                        )
+
+                    total = _content_length(response)
+                    written = 0
+                    tail = b""
+                    with destination.open("wb") as handle:
+                        try:
+                            for chunk in response.iter_bytes(DOWNLOAD_CHUNK_BYTES):
+                                handle.write(chunk)
+                                written += len(chunk)
+                                tail = (tail + chunk)[-_TAIL_BYTES:]
+                                if on_chunk is not None:
+                                    on_chunk(written, total)
+                        except httpx.ReadTimeout:
+                            # A read timeout with data already received is the
+                            # expected ending here, not a failure.
+                            #
+                            # Measured against one pool through nginx: every
+                            # byte of the bundle arrives and the response then
+                            # never terminates, so the read blocks until the
+                            # timeout with the complete file already on disk.
+                            # Treating that as a failure threw away a finished
+                            # download; what arrived is kept and validated the
+                            # same way a cleanly ended transfer is.
+                            #
+                            # With nothing received it is a real stall, and the
+                            # handler below reports it.
+                            if not written:
+                                raise
+                        except (
+                            httpx.RemoteProtocolError,
+                            httpx.StreamClosed,
+                            httpx.ReadError,
+                        ) as exc:
+                            # A transfer genuinely cut short. Everything
+                            # received is real data, and reporting the
+                            # truncation beats a bare protocol error that reads
+                            # as a network fault and sends the operator looking
+                            # in the wrong place.
+                            #
+                            # ReadError is here because a connection reset
+                            # arrives as one, not as a protocol error: measured
+                            # against a socket closed with SO_LINGER 0, httpx
+                            # raises ReadError("[Errno 104] Connection reset by
+                            # peer"). Without it a reset fell through to the
+                            # generic handler, which deletes the file — so the
+                            # one case where the bytes are most expensive to
+                            # fetch again was the one that discarded them.
+                            raise XoError(
+                                f"The transfer ended after {written / 1024 / 1024:.0f} MiB "
+                                f"without finishing. {_TRUNCATED_HINT}"
+                            ) from exc
+
+                    # The host may append an error page after the archive
+                    # bytes; drop it so what is left is the archive alone.
+                    written -= _trim_host_error_page(destination, tail)
+                    return written
+        except httpx.TimeoutException as exc:
+            destination.unlink(missing_ok=True)
+            raise XoError(
+                f"{self.url} stopped sending data for {DOWNLOAD_TIMEOUT:.0f}s during {path}. "
+                f"A log download cannot resume — it has to be started again."
+            ) from exc
+        except httpx.HTTPError as exc:
+            destination.unlink(missing_ok=True)
+            raise XoError(f"download of {path} from {self.url} failed: {exc}") from exc
+        except BaseException:
+            # Cancellation raises through on_chunk. A half-written 433 MB file
+            # left on the data volume is the worst possible remnant.
+            destination.unlink(missing_ok=True)
+            raise
+
+    def _client_for_download(self) -> httpx.Client:
+        """A client with the download timeout rather than the request one.
+
+        Same construction as ``_client`` otherwise, and built from it, so
+        authentication and TLS handling stay defined in exactly one place.
+        """
+        client = self._client()
+        client.timeout = httpx.Timeout(DOWNLOAD_TIMEOUT)
+        return client
+
+    def download_logs(self, host_id: str, destination, *, on_chunk=None) -> int:
+        """Stream a host's log bundle to ``destination``. Returns bytes written."""
+        return self.download_to(LOGS_PATH.format(host_id=host_id), destination, on_chunk=on_chunk)
+
+    def download_audit(self, host_id: str, destination, *, on_chunk=None) -> int:
+        """Stream a host's XAPI audit trail to ``destination``."""
+        return self.download_to(AUDIT_PATH.format(host_id=host_id), destination, on_chunk=on_chunk)
+
     # -- connection test -------------------------------------------------
 
     def test_connection(self) -> ConnectionTest:
@@ -429,6 +584,64 @@ def _raise_for_collection(response: httpx.Response) -> None:
     raise XoError(
         f"Xen Orchestra returned HTTP {response.status_code} for {response.request.url.path}."
     )
+
+
+# How much of the end of a download to keep for inspection. XCP-ng appends its
+# error page after the archive bytes, so only the tail has to be examined — and
+# a fixed window means a 433 MB body is still never held.
+_TAIL_BYTES = 4096
+
+# Said whenever a bundle arrives truncated. The cause is on the host rather
+# than in Xen Orchestra or here, so the operator is pointed at the right place.
+_TRUNCATED_HINT = (
+    "The cause is upstream of XCP Pulse — usually a reverse proxy in front of Xen Orchestra."
+)
+
+
+def _trim_host_error_page(destination, tail: bytes) -> int:
+    """Cut an appended error page off a download. Returns bytes removed.
+
+    Measured on XCP-ng 8.3: a bundle build that fails part-way ends with a few
+    hundred bytes of HTML after the archive data, and the request still
+    finishes with HTTP 200 — so the status says success while the file has
+    rubbish on the end.
+
+    Trimming rather than refusing, because the archive before that point is
+    real log data that the repack can still read, and a collection costs
+    minutes to repeat. Throwing away 450 MB of readable logs over 263 bytes of
+    trailing HTML is the wrong trade — the job reports that the bundle ends
+    early, which is what the operator needs to know before sending it on.
+    """
+    marker = tail.lower().find(b"<html")
+    if marker == -1:
+        return 0
+
+    # The page sits at the very end, so its length within the tail window is
+    # how much to drop from the file.
+    removed = len(tail) - marker
+    size = destination.stat().st_size
+    if removed >= size:
+        return 0
+    with destination.open("r+b") as handle:
+        handle.truncate(size - removed)
+    return removed
+
+
+def _content_length(response: httpx.Response) -> int | None:
+    """The declared body size, or None when the host does not say.
+
+    XO sends no Content-Length for ``logs.tgz`` on some versions, which is why
+    every caller has to cope with not knowing the total — a progress bar that
+    needs one would be a progress bar that sometimes cannot be drawn.
+    """
+    raw = response.headers.get("content-length")
+    if raw is None:
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    return value if value > 0 else None
 
 
 def _href_list(response: httpx.Response) -> list[str]:

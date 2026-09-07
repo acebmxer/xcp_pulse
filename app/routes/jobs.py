@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from app.artifacts import get_artifact, list_for_job
-from app.dependencies import login_required, redirect, templates
+from app.dependencies import login_required, redirect, templates, wake_worker
 from app.job_inventory import KIND as INVENTORY_KIND
 from app.job_redact import KIND as REDACT_KIND
 from app.job_redact import REDACTED_MARKER, REPORT_ARTIFACT, report_from_job, report_rows
@@ -71,7 +71,7 @@ def start_inventory_refresh(request: Request, username: str = Depends(login_requ
         return redirect("/jobs?notice=An+inventory+refresh+is+already+running.")
 
     job = enqueue(db, INVENTORY_KIND)
-    _wake_worker(request)
+    wake_worker(request)
     log.info("queued %s job %s for %s", INVENTORY_KIND, job.id, username)
     return redirect("/jobs?notice=Inventory+refresh+queued.")
 
@@ -97,7 +97,7 @@ def start_redaction(
         return redirect("/jobs?notice=A+redaction+is+already+running.")
 
     job = enqueue(db, REDACT_KIND, {"artifact_id": artifact_id})
-    _wake_worker(request)
+    wake_worker(request)
     log.info("queued %s job %s for %s", REDACT_KIND, job.id, username)
     return redirect("/jobs?notice=Redaction+queued.")
 
@@ -161,14 +161,3 @@ def _redactable(artifacts: dict) -> list:
         key=lambda item: item.created_at,
         reverse=True,
     )
-
-
-def _wake_worker(request: Request) -> None:
-    """Tell the worker to look now rather than at its next poll.
-
-    Absent when jobs run in a separate process — the queue is the database
-    either way — so its absence is not an error.
-    """
-    worker = getattr(request.app.state, "job_worker", None)
-    if worker is not None:
-        worker.wake()

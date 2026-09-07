@@ -8,10 +8,10 @@
 [![Stars](https://img.shields.io/github/stars/acebmxer/xcp_pulse)](https://github.com/acebmxer/xcp_pulse/stargazers)
 [![Forks](https://img.shields.io/github/forks/acebmxer/xcp_pulse)](https://github.com/acebmxer/xcp_pulse/forks)
 [![Unique cloners](https://img.shields.io/badge/unique%20cloners-0-lightgrey)](https://github.com/acebmxer/xcp_pulse/graphs/traffic)
-[![Python](https://img.shields.io/badge/python-3.13-3776AB?logo=python&logoColor=white)](pyproject.toml)
+[![Python](https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white)](pyproject.toml)
 [![Docker](https://img.shields.io/badge/docker-compose-2496ED?logo=docker&logoColor=white)](docker-compose.yml.example)
 [![Platform: Linux](https://img.shields.io/badge/platform-linux-333333?logo=linux&logoColor=white)](#requirements)
-[![Tests](https://img.shields.io/badge/tests-192%20unit-informational)](https://github.com/acebmxer/xcp_pulse/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-313%20unit-informational)](https://github.com/acebmxer/xcp_pulse/actions/workflows/ci.yml)
 [![Ruff](https://img.shields.io/badge/ruff-clean-brightgreen)](https://github.com/acebmxer/xcp_pulse/actions/workflows/ci.yml)
 
 Collects XCP-ng and Xen Orchestra logs, bundles them for download, analyses
@@ -19,11 +19,11 @@ them, and reports findings — for your own troubleshooting or to attach to a
 Vates support ticket.
 
 > [!NOTE]
-> XCP Pulse is being built in stages. **v0.5.2 masks addresses, tokens and
-> credentials out of log text, with a preview page, a switch for each rule, and
-> a report of what was masked in a whole file.** Self-update from the UI comes
-> next, then log collection. See [the roadmap](docs/roadmap.md) for what is
-> planned and what is done.
+> XCP Pulse is being built in stages. **Log collection shipped in v0.6.0: it
+> downloads a host's full log bundle and XAPI audit trail, keeps the raw copies,
+> and produces redacted copies to send — with a report of what was masked.**
+> Findings from the logs and a Vates support package come next. See
+> [the roadmap](docs/roadmap.md) for what is planned and what is done.
 
 ## Read next
 
@@ -63,22 +63,31 @@ Then open `http://<server>:8080` and sign in. To build from source instead, see
 ## Requirements
 
 - Docker with Compose v2
-- A Xen Orchestra instance reachable over HTTP(S) — once the XO connection ships
-- Disk for collected bundles — roughly **450 MB per host per collection**, once
-  log collection ships
+- A Xen Orchestra instance reachable over HTTP(S), and an API token for it
+- Disk for collected bundles — roughly **450 MB per host per collection**
 
-## What it will do
+## What it does
 
 Measured against a real XCP-ng 8.3 pool, so the numbers below are observed
 rather than estimated:
 
-- **Collect a host's full log bundle** via Xen Orchestra's REST API. A real
-  bundle is **433 MB and takes about 100 seconds** — 603 files, all of `/var/log`.
-- **Collect individual categories** — storage, XAPI, audit, security, kernel and
-  the rest — extracted from the cached bundle without downloading again.
+- **Collect a host's full log bundle** via Xen Orchestra's REST API, alongside
+  the XAPI audit trail. A real bundle is **433 MB and takes about 100 seconds** —
+  603 files, all of `/var/log`. Collection runs as a cancellable background job
+  with progress and an ETA.
 - **Redact** internal addresses, session tokens and credentials before anything
   leaves the machine. A single real `xensource.log` contained 8,359 lines
-  matching password, secret or session patterns.
+  matching password, secret or session patterns. The raw bundle is kept too, and
+  the download list marks which copy is which.
+- **Report what was masked** — per-rule hit counts for the whole run, with a
+  switched-off rule reading as *off* rather than as zero hits.
+- **Keep the disk in check** — a retention policy that shows exactly which
+  collections it would delete before you press the button.
+
+Still to come, on [the roadmap](docs/roadmap.md):
+
+- **Collect individual categories** — storage, XAPI, audit, security, kernel and
+  the rest — extracted from the cached bundle without downloading again.
 - **Report findings** — failed tasks, missing patches, storage errors, HA events
   — with the evidence behind each one.
 

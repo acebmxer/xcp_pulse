@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+{% block title %}Collect — XCP Pulse{% endblock %}
+
+{% block content %}
+{#
+  While a collection is running the page reloads itself, so the progress bar
+  and the ETA move without the operator pressing anything. It stops once
+  everything has settled — a 100-second download is exactly the case this is
+  for, and a finished list reloading for ever is not.
+#}
+{% if any_active %}
+<meta http-equiv="refresh" content="3">
+{% endif %}
+
+<h1 class="page-title">Collect logs</h1>
+
+{% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+{% if notice %}<div class="alert alert-ok">{{ notice }}</div>{% endif %}
+
+<div class="card">
+  <div class="job-actions">
+    <div>
+      <h2>Collect from a host</h2>
+      <p class="note">
+        Downloads the host's log bundle and its XAPI audit trail, then makes a
+        redacted copy of each using the rules switched on in
+        <a href="/redaction">Redaction</a>. Expect roughly <strong>433 MB</strong>
+        and <strong>100 seconds</strong> per host.
+      </p>
+    </div>
+    <form method="post" action="/collect" class="inline">
+      <label class="visually-hidden" for="host_id">Host to collect from</label>
+      <select id="host_id" name="host_id" {% if not hosts %}disabled{% endif %}>
+        {% for host in hosts %}
+        <option value="{{ host.id }}">
+          {{ host.name }}{% if host.address %} — {{ host.address }}{% endif %}
+        </option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="btn btn-primary" {% if not hosts %}disabled{% endif %}>
+        Collect
+      </button>
+    </form>
+  </div>
+
+  {% if not connection %}
+  <p class="note">
+    No Xen Orchestra connection is configured. Add one in
+    <a href="/settings">Settings</a>.
+  </p>
+  {% elif not hosts %}
+  <p class="note">
+    No hosts are known yet. Run <a href="/jobs">Refresh inventory</a> first.
+  </p>
+  {% endif %}
+
+  {% if connection and not connection.is_admin %}
+  <div class="alert alert-error">
+    This connection uses a restricted account. Downloading logs needs the host
+    <code>export:logs</code> privilege, which most Xen Orchestra instances can
+    only grant as full host administration — so a collection will very likely
+    be refused. Check <a href="/settings">Settings</a> for what this instance
+    reported.
+  </div>
+  {% endif %}
+</div>
+
+<h2 class="section-title">Stored collections</h2>
+
+{% if not jobs %}
+<div class="card empty-state">
+  <span class="empty-mark">◇</span>
+  <h2>Nothing collected yet</h2>
+  <p>Collections appear here with their files, ready to download or delete.</p>
+</div>
+{% else %}
+<ul class="joblist">
+  {% for job in jobs %}
+  <li class="card job job-{{ job.state }}">
+    <div class="job-head">
+      <span class="job-kind">{{ job.params.get('host_name') or 'Collection' }}</span>
+      <span class="job-state job-state-{{ job.state }}">{{ job.state }}</span>
+      {% if job.duration is not none %}
+      <span class="job-duration">{{ '%.0f'|format(job.duration) }}s</span>
+      {% endif %}
+    </div>
+
+    {% if job.is_active %}
+    <div class="progress" role="progressbar" aria-valuenow="{{ job.progress }}"
+         aria-valuemin="0" aria-valuemax="100">
+      <div class="progress-bar" style="width: {{ job.progress }}%"></div>
+    </div>
+    <p class="job-step">{{ job.step or 'Waiting to start' }} — {{ job.progress }}%</p>
+    <form method="post" action="/jobs/{{ job.id }}/cancel" class="inline">
+      <button type="submit" class="btn btn-quiet">Cancel</button>
+    </form>
+    {% elif job.step %}
+    <p class="job-step">{{ job.step }}</p>
+    {% endif %}
+
+    {% if job.error %}
+    <p class="job-error">{{ job.error }}</p>
+    {% endif %}
+
+    {% set produced = artifacts.get(job.id, []) %}
+    {% if produced %}
+    <ul class="artifacts">
+      {% for artifact in produced %}
+      {% set is_redacted = '.redacted.' in artifact.name %}
+      <li>
+        <span class="mono">
+          {{ artifact.name }}
+          {#
+            Which copy is which is the one thing an operator must not get
+            wrong: the raw bundle holds the addresses and session tokens the
+            redacted copy exists to remove.
+          #}
+          {% if artifact.name != report_artifact %}
+            {% if is_redacted %}
+            <span class="tag">redacted — safe to send</span>
+            {% else %}
+            <span class="tag tag-warn">raw — unmasked</span>
+            {% endif %}
+          {% endif %}
+        </span>
+        <span class="artifact-size">
+          {{ artifact.size_human }}
+          <a class="btn btn-quiet" href="/collect/download/{{ artifact.id }}">Download</a>
+        </span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+
+    {% set report = reports.get(job.id) %}
+    {% if report %}
+    <table class="report">
+      <caption class="visually-hidden">What each redaction rule masked</caption>
+      <thead>
+        <tr><th scope="col">Rule</th><th scope="col">Masked as</th>
+            <th scope="col" class="num">Hits</th></tr>
+      </thead>
+      <tbody>
+        {% for row in report %}
+        <tr class="{{ 'rule-off' if not row.enabled }}">
+          <th scope="row">{{ row.title }}</th>
+          <td><code>{{ row.placeholder }}</code></td>
+          <td class="num">
+            {% if row.enabled %}{{ row.hits }}{% else %}off{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+
+    {% if not job.is_active %}
+    <form method="post" action="/collect/{{ job.id }}/delete" class="inline row-actions">
+      <button type="submit" class="btn btn-quiet">Delete this collection</button>
+    </form>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+
+<h2 class="section-title">Retention</h2>
+
+<div class="card">
+  <p class="note">
+    Currently storing <strong>{{ human_bytes(plan.stored_bytes) }}</strong>
+    {% set stored_count = plan.delete|length + plan.keep|length %}
+    across {{ stored_count }} collection{{ '' if stored_count == 1 else 's' }}.
+  </p>
+
+  {#
+    Limits are a GET form: changing a number reloads this page with the
+    preview recalculated, so what the delete button acts on is always what is
+    on screen. A single form that both set the limits and deleted would delete
+    against numbers nobody had seen the effect of.
+  #}
+  <form method="get" action="/collect" class="stack">
+    <label for="keep_count">Always keep the newest</label>
+    <input id="keep_count" name="keep_count" type="number" min="0" max="100"
+           value="{{ plan.keep_count }}">
+
+    <label for="keep_days">Delete anything older than (days, 0 for no age limit)</label>
+    <input id="keep_days" name="keep_days" type="number" min="0" max="3650"
+           value="{{ plan.keep_days }}">
+
+    <div class="row-actions">
+      <button type="submit" class="btn btn-quiet">Preview these limits</button>
+    </div>
+  </form>
+
+  {% if plan.is_empty %}
+  <p class="note">With these limits nothing would be deleted.</p>
+  {% else %}
+  <div class="alert alert-error">
+    {% set delete_count = plan.delete|length %}
+    <strong>This would delete {{ delete_count }}
+    collection{{ '' if delete_count == 1 else 's' }},
+    freeing {{ human_bytes(plan.freed_bytes) }}:</strong>
+    <ul class="artifacts">
+      {% for item in plan.delete %}
+      <li>
+        <span class="mono">{{ item.host_name }}</span>
+        <span class="artifact-size">
+          {{ human_bytes(item.size_bytes) }} — {{ '%.0f'|format(item.age_days) }} days old
+        </span>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+
+  {#
+    The limits travel with the delete as hidden fields, so the button acts on
+    exactly the plan rendered above rather than on the defaults.
+  #}
+  <form method="post" action="/collect/cleanup" class="inline">
+    <input type="hidden" name="keep_count" value="{{ plan.keep_count }}">
+    <input type="hidden" name="keep_days" value="{{ plan.keep_days }}">
+    <button type="submit" class="btn">Delete these now</button>
+  </form>
+  {% endif %}
+</div>
+{% endblock %}

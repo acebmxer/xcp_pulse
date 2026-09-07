@@ -175,6 +175,11 @@ def test_size_is_shown_in_readable_units() -> None:
         return Artifact("i", "j", "n", "t", n, "s", 0.0).size_human
 
     assert sized(512) == "512 B"
-    assert sized(1536) == "1.5 KB"
-    assert sized(454 * 1024 * 1024) == "454.0 MB"
-    assert sized(3 * 1024**3) == "3.0 GB"
+    assert sized(1536) == "1.5 KiB"
+    assert sized(454 * 1024 * 1024) == "454.0 MiB"
+    assert sized(3 * 1024**3) == "3.0 GiB"
+
+    # The units are binary and say so. Labelling a division by 1024 as "MB"
+    # made a 454,033,408-byte download read as "426.0 MB" against a bundle the
+    # docs call 433 MB, so a complete transfer looked like a truncated one.
+    assert sized(454_033_408) == "433.0 MiB"

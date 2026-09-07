@@ -69,7 +69,7 @@ than this.
 Default `INFO`. One of `DEBUG`, `INFO`, `WARNING`, `ERROR`. This is XCP Pulse's
 own logging, not the XCP-ng logs it collects.
 
-## Arriving later
+## Set in the web UI, not here
 
 Xen Orchestra connection settings are entered in the web UI and stored encrypted
 in the database, not set here — a token in an environment variable ends up in
