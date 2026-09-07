@@ -66,3 +66,24 @@ def test_working_files_are_gitignored() -> None:
     assert "xcp-pulse.env" in ignored, "xcp-pulse.env holds the password hash"
     assert ".env" in ignored, "an older .env must not become committable"
     assert "docker-compose.yml" in ignored, "docker-compose.yml is a deployment's own file"
+
+
+def test_dev_override_only_adds_a_build() -> None:
+    """The dev overlay must stay an overlay, not a second deployment file.
+
+    It is layered on top of docker-compose.yml, so anything it declares beyond
+    `build:` silently overrides the real deployment's setting — an image tag or
+    port here would apply to local builds only and diverge without warning.
+    """
+    dev = REPO_ROOT / "docker-compose.dev.yml"
+    assert dev.exists(), "docker-compose.dev.yml is how a clone builds the image"
+
+    # Comments explain the overlay and mention these keys by name, so match
+    # real YAML lines rather than the raw text.
+    settings = re.findall(r"^\s+([a-z_]+):", dev.read_text(encoding="utf-8"), re.M)
+    assert "build" in settings, "the overlay exists to add `build: .`"
+    for key in ("image", "ports", "env_file", "volumes"):
+        assert key not in settings, (
+            f"{key} belongs in docker-compose.yml, not the dev overlay — "
+            "declaring it here overrides the deployment for local builds only."
+        )

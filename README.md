@@ -53,7 +53,7 @@ docker compose run --rm xcp-pulse python -m app.hashpw
 docker compose up -d
 ```
 
-Then open <http://localhost:8080> and sign in. To build from source instead, see
+Then open `http://<server>:8080` and sign in. To build from source instead, see
 [Installation](docs/installation.md).
 
 > [!IMPORTANT]

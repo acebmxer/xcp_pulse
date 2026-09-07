@@ -10,7 +10,40 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+### Added
+
+- **`docker-compose.dev.yml`, for building the image from a clone.** Building
+  locally meant editing your own `docker-compose.yml` to uncomment `build: .`,
+  which is a change to a file the sample cannot then be copied over cleanly —
+  and one easily left in place by accident. The overlay carries nothing but
+  `build: .` and is used alongside the main file
+  (`docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+  --build`), so the deployment file stays untouched and the built image keeps
+  the tag it already names. This matches the layout `beacon_pxe` uses.
+
 ### Changed
+
+- **The compose sample now publishes the port on all interfaces, not just
+  loopback.** It bound to `127.0.0.1:8080:8080`, so a deployment on a remote
+  server started, reported healthy and served nothing — `http://<server>:8080`
+  simply did not load, with no error to explain why, because the port answered
+  only on the Docker host itself. Nothing in the logs shows this: the container
+  always reports listening on `0.0.0.0:8080` internally regardless of what is
+  published, and the healthcheck calls itself from inside. Installing on a
+  machine other than your desktop is the normal case for this app, so the
+  sample now uses `"8080:8080"` and keeps the loopback form as a commented
+  alternative for a reverse proxy on the same host. `docs/installation.md` and
+  `SECURITY.md` follow, and a troubleshooting entry explains how to tell the
+  two `docker ps` mappings apart.
+
+- **The compose sample now pulls `:latest` instead of a pinned version.** A
+  fresh deployment had to have its image tag edited before it would run the
+  current release, because the sample carried whatever version was current when
+  it was written — a new user following the quick start got an old image and no
+  indication of it. `:latest` is published on every release tag, so the sample
+  is now correct without editing. The pinned form is kept as a commented
+  example directly above it for anyone who wants to stay on one version, and
+  the upgrade instructions in `docs/installation.md` cover both.
 
 - **The compose sample is now `docker-compose.yml.example`, not
   `compose.yaml.example`.** Both names are ones Compose looks for on its own,
