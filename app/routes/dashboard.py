@@ -1,7 +1,8 @@
 """The landing page after logging in.
 
-Empty by design in v0.1.0 — there is no XO connection yet, and the page says
-so rather than showing a hollow frame.
+Deliberately empty rather than a hollow frame: a Xen Orchestra connection can
+now be configured under /settings, but listing its pools and hosts is the next
+piece of work, so there is nothing true to show here yet.
 """
 
 from __future__ import annotations

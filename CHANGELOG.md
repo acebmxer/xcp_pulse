@@ -10,6 +10,8 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-06
+
 ### Added
 
 - **The Xen Orchestra connection can be configured and tested.** A settings page
@@ -32,6 +34,37 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
   All Xen Orchestra calls go through `app/xo_client.py`; nothing else builds XO
   requests.
+
+- **Planned work is no longer given a version number.** Only shipped work has
+  one; a number is assigned when the work actually starts. Numbering unbuilt
+  work asserted an order that was mostly invented — of the sequence previously
+  implied, only some steps are genuinely forced (redaction before any
+  downloadable bundle, full collection before per-category extraction,
+  published images before self-update), and the rest were numbered simply
+  because they were appended to a list.
+
+  The roadmap and the dashboard now group planned work as **any order** or
+  **in this order**, and each item in the second group states what must come
+  first and why. Reordering costs nothing, because there are no numbers to
+  restate.
+
+- The dashboard's **What is coming** list is a permanent part of the UI, not a
+  placeholder. As stages ship its rows get updated rather than removed, and a
+  test fails if the section disappears — so taking it out has to be a deliberate
+  decision rather than a tidy-up.
+
+- Four features added to the roadmap: date-range selection when collecting and
+  downloading logs (v0.6.5), the documentation browsable in the web UI (v0.9.0),
+  multiple user accounts with roles and an activity log (v0.10.0), and
+  self-update from the UI (v1.1.0). The dashboard's stage list shows them too.
+
+  The self-update entry records the approach used by the sibling project
+  beacon_pxe — compare image digests read from the running container rather
+  than version strings held in the database, and hand container recreation to a
+  throwaway container outside the compose project, because a container cannot
+  reliably replace itself. It also records the two prerequisites: a published
+  image to compare a digest against, and the Docker socket mount, which is
+  effectively host root and so is planned as opt-in.
 
 ### Changed
 
@@ -92,39 +125,6 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
   Upgrading from an earlier checkout: rename your `.env` to `xcp-pulse.env`.
   No other change is needed and the hash inside it is still valid.
 
-### Added
-
-- **Planned work is no longer given a version number.** Only shipped work has
-  one; a number is assigned when the work actually starts. Numbering unbuilt
-  work asserted an order that was mostly invented — of the sequence previously
-  implied, only some steps are genuinely forced (redaction before any
-  downloadable bundle, full collection before per-category extraction,
-  published images before self-update), and the rest were numbered simply
-  because they were appended to a list.
-
-  The roadmap and the dashboard now group planned work as **any order** or
-  **in this order**, and each item in the second group states what must come
-  first and why. Reordering costs nothing, because there are no numbers to
-  restate.
-
-- The dashboard's **What is coming** list is a permanent part of the UI, not a
-  placeholder. As stages ship its rows get updated rather than removed, and a
-  test fails if the section disappears — so taking it out has to be a deliberate
-  decision rather than a tidy-up.
-
-- Four features added to the roadmap: date-range selection when collecting and
-  downloading logs (v0.6.5), the documentation browsable in the web UI (v0.9.0),
-  multiple user accounts with roles and an activity log (v0.10.0), and
-  self-update from the UI (v1.1.0). The dashboard's stage list shows them too.
-
-  The self-update entry records the approach used by the sibling project
-  beacon_pxe — compare image digests read from the running container rather
-  than version strings held in the database, and hand container recreation to a
-  throwaway container outside the compose project, because a container cannot
-  reliably replace itself. It also records the two prerequisites: a published
-  image to compare a digest against, and the Docker socket mount, which is
-  effectively host root and so is planned as opt-in.
-
 ## [0.1.0] - 2026-09-06
 
 First release. Ships the container, the login screen and the empty dashboard —
@@ -170,5 +170,6 @@ must extract from a locally cached bundle rather than making a smaller request;
 and real bundles contain internal addresses and session tokens, which is why
 redaction is scheduled before the first downloadable bundle rather than after.
 
-[Unreleased]: https://github.com/acebmxer/xcp_pulse/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/acebmxer/xcp_pulse/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/acebmxer/xcp_pulse/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/acebmxer/xcp_pulse/releases/tag/v0.1.0
