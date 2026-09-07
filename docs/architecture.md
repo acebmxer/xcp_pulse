@@ -3,8 +3,8 @@
 [← back to the README](../README.md)
 
 How the pieces fit together, and why. This page grows with each stage; today it
-describes v0.5.3 — background jobs and redaction — and states the decisions
-already taken about what follows.
+describes background jobs, redaction and log collection, and states the
+decisions already taken about what follows.
 
 ## Shape
 
@@ -43,6 +43,9 @@ streaming download.
 | `app/jobs.py` | The job queue: states, claiming, progress, cancellation. Owns the `jobs` table. |
 | `app/job_runner.py` | The worker that runs queued jobs, and the registry of job kinds. |
 | `app/job_inventory.py` | The **Refresh inventory** job — the worked example of a job. |
+| `app/job_redact.py` | The **Redact artifact** job: masks a stored file, writes the report. |
+| `app/job_collect.py` | The **Collect logs** job: downloads a host's bundle and audit trail, keeps raw and redacted copies. |
+| `app/retention.py` | What stored collections to delete, always previewed before it acts. |
 | `app/artifacts.py` | What a job produced: files on the volume, metadata in the database. |
 | `app/redact.py` | The masking rules. The **only** place a redaction pattern is written. |
 | `app/security.py` | Password hashing, sessions, login throttling. |
@@ -91,7 +94,7 @@ call.
 A job's output is a **file on the data volume**; only its metadata — name, media
 type, size, SHA-256 — is a database row. The same store therefore holds the few
 hundred bytes of JSON an inventory refresh writes and the 433 MB tarball
-collection will write later, so no second mechanism has to be built for the
+collection writes, so no second mechanism had to be built for the
 large case, and SQLite never carries a blob.
 
 Bodies live at `/data/artifacts/<job-id>/<artifact-id>`. Both ids are generated
@@ -177,11 +180,17 @@ collection downloads once, caches, and every later product (redacted bundle,
 category subset, findings) is derived from that cache. This is why per-category
 collection must come *after* whole-bundle collection, not before.
 
-**Redaction sits between the cache and anything downloadable.** Real bundles
-contain internal addresses, usernames and session tokens. The raw tarball is
-never served directly; downloads are produced by a streaming, line-oriented
-transform during repacking, so a 56 MB log is never held in memory. This is why
-redaction is scheduled before the first downloadable bundle.
+**Redaction sits between the cache and anything sent onward.** Real bundles
+contain internal addresses, usernames and session tokens, so the redacted copy
+is produced by a line-oriented transform during repacking — a member at a time,
+never the whole archive — and it is the copy the page presents as the one to
+send. This is why redaction shipped before the first downloadable bundle.
+
+The raw bundle is downloadable too, and the download list marks each copy as
+**redacted — safe to send** or **raw — unmasked**. Withholding it would not make
+the machine safer, since the file is already on the volume; what it would do is
+leave an operator diagnosing their own pool without the unmasked original, which
+is also the only thing that can answer "what was masked?" after the fact.
 
 **Jobs before they are needed — done in v0.4.0.** A 101-second download needs
 background execution, progress and cancellation. That machinery was built

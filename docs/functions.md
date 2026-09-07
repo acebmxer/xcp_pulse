@@ -36,6 +36,9 @@ columns; those are a reviewer's job.
 | Queue, read or cancel a background job | `app/jobs.py` |
 | Add a new kind of background job | `app/job_inventory.py` as the worked example; register it in `app/job_runner.py` and import it in `app/main.py` |
 | Redact a stored file and report what was masked | `app/job_redact.py` |
+| Collect a host's logs and redact them | `app/job_collect.py` |
+| Decide what stored collections to delete | `app/retention.py` — always `plan` before `apply` |
+| Show a byte count on a page | `app/artifacts.py` — `human_bytes` |
 | Store or read what a job produced | `app/artifacts.py` |
 | Mask an address, token or credential out of text | `app/redact.py` |
 
@@ -97,6 +100,7 @@ genuinely invalidates rather than merely asking the browser to forget.
 | `login_required` | `(request) -> str` | FastAPI dependency; 303s anonymous callers | every protected route | v0.1.0 |
 | `age` | `(timestamp: float \| None) -> str` | A timestamp as how long ago it was, for a stored result | `dashboard.html`, as the `age` filter | v0.4.0 |
 | `redirect` | `(url: str, status_code: int = 303) -> RedirectResponse` | Redirect, defaulting to see-other | `routes/auth` | v0.1.0 |
+| `wake_worker` | `(request) -> None` | Tells the job worker to look now rather than at its next poll | every route that enqueues a job | unreleased |
 
 `templates` is the shared Jinja environment; `RedirectToLogin` is the exception
 `login_required` raises, handled in `main.create_app`.
@@ -140,6 +144,9 @@ stored URL, token and TLS setting are applied in one place.
 | --- | --- | --- | --- | --- |
 | `XoClient.check_log_export` | `(*, is_admin: bool) -> LogExportSupport` | Whether this account can download host logs, and why not | `test_connection`, settings page | v0.2.0 |
 | `XoClient.grantable_host_actions` | `() -> set[str]` | Host actions this instance can grant to a role | `check_log_export` | v0.2.0 |
+| `XoClient.download_audit` | `(host_id, destination, *, on_chunk=None) -> int` | Streams a host's XAPI audit trail to a file | `job_collect.run` | unreleased |
+| `XoClient.download_logs` | `(host_id, destination, *, on_chunk=None) -> int` | Streams a host's log bundle to a file | `job_collect.run` | unreleased |
+| `XoClient.download_to` | `(path, destination, *, on_chunk=None) -> int` | Streams any XO route to a file, never holding the body | `download_logs`, `download_audit` | unreleased |
 | `XoClient.inventory` | `() -> Inventory` | Pools and hosts with their details, for the dashboard | `job_inventory.run` | v0.3.0 |
 | `XoClient.is_admin` | `() -> bool` | Whether the account has XO administrator permission | `test_connection` | v0.2.0 |
 | `XoClient.list_hosts` | `() -> list[str]` | Host hrefs this account can see, for counting only | `test_connection` | v0.2.0 |
@@ -266,11 +273,60 @@ send a bundle is asking, and a report listing only what fired cannot answer it.
 and keeps a stored rule this version no longer has, so an older report renders
 without losing counts the run recorded.
 
+## `app/job_collect.py` — the Collect logs job
+
+Downloads one host's log bundle and audit trail, keeps the raw copies, and
+writes a redacted copy of each. Expect about **433 MB** and **100 seconds** per
+host, measured on XCP-ng 8.3.
+
+The masking is `app/redact.py`'s — `active_rules` and `Rule.apply`, in the same
+order as `redact_text` and `job_redact` — so the preview page, a redaction job
+and a collection cannot mask differently.
+
+| Function | Signature | Does | Used by | Since |
+| --- | --- | --- | --- | --- |
+| `build_report` | `(*, host_id, host_name, enabled, counts, raw, redacted) -> dict` | The collection's redaction report as plain JSON | `job_collect.run` | unreleased |
+| `run` | `(context: JobContext) -> None` | Collects one host's logs, storing raw and redacted copies | `job_runner`, via `register` | unreleased |
+
+`build_report` extends `job_redact.build_report` rather than rebuilding the
+rule rows, so a rule added to `RULES` appears in both reports without either
+being edited — and the jobs and collect pages render both with one code path.
+
+A tarball cannot be masked in place, so the redacted bundle is repacked member
+by member: each text member is read a line at a time, and its header's size is
+corrected because a placeholder rarely matches the length of what it replaced.
+Compressed and oversized members are copied through unchanged.
+
+The raw bundle is kept alongside the redacted one because the redacted copy is
+lossy, and a question about what was masked can only be answered against the
+original. The collect page marks which is which.
+
+## `app/retention.py` — what to delete, previewed first
+
+A collection is about 433 MB, so a data volume fills quickly. Every caller asks
+`plan` before anything is deleted, and the page renders that plan — there is no
+cleanup that has not been previewed.
+
+| Function | Signature | Does | Used by | Since |
+| --- | --- | --- | --- | --- |
+| `apply` | `(conn, data_dir, *, keep_days, keep_count) -> Plan` | Deletes what `plan` names, returning what actually went | `routes.collect.run_cleanup` | unreleased |
+| `collections` | `(conn) -> list[Collection]` | Every stored collection, newest first | `plan`, `delete_collection` | unreleased |
+| `delete_collection` | `(conn, data_dir, job_id: str) -> bool` | Deletes one collection outright | `routes.collect.delete_collection` | unreleased |
+| `plan` | `(conn, *, keep_days, keep_count) -> Plan` | What a cleanup would delete, without deleting it | the collect page, `apply` | unreleased |
+
+Two limits apply together: the newest `keep_count` collections are kept
+whatever their age, and only what remains is judged against `keep_days`. That
+ordering is what stops a long gap in collecting from emptying the store.
+
+`apply` re-plans at the moment it acts rather than trusting a plan posted back
+from a page, so a collection finishing between the preview and the button is
+accounted for.
+
 ## `app/artifacts.py` — what a job produced
 
 Bodies are files on the data volume; only metadata is in the database. That
 split is what lets one store hold both the JSON an inventory refresh writes and
-the 433 MB tarball collection will write later.
+the 433 MB tarball a collection writes.
 
 The display name is stored in the row rather than used as the filename, so a
 name coming from Xen Orchestra can never choose a path.
@@ -279,8 +335,9 @@ name coming from Xen Orchestra can never choose a path.
 | --- | --- | --- | --- | --- |
 | `artifact_path` | `(data_dir: Path, job_id: str, artifact_id: str) -> Path` | Where one artifact's body lives | `artifacts` internals, tests | v0.4.0 |
 | `artifacts_dir` | `(data_dir: Path) -> Path` | The directory holding every body, created if absent | `artifacts.artifact_path` | v0.4.0 |
-| `delete_for_job` | `(conn, data_dir: Path, job_id: str) -> int` | Removes a job's files and rows together | retention, later stages | v0.4.0 |
-| `get_artifact` | `(conn, artifact_id: str) -> Artifact \| None` | One artifact's metadata | later download routes | v0.4.0 |
+| `delete_for_job` | `(conn, data_dir: Path, job_id: str) -> int` | Removes a job's files and rows together | `retention.apply`, `retention.delete_collection` | v0.4.0 |
+| `get_artifact` | `(conn, artifact_id: str) -> Artifact \| None` | One artifact's metadata | `routes.collect.download_artifact`, `routes.jobs` | v0.4.0 |
+| `human_bytes` | `(size: int) -> str` | A byte count as something to put on a page | `Artifact.size_human`, retention, `job_collect` | unreleased |
 | `list_for_job` | `(conn, job_id: str) -> list[Artifact]` | Everything one job produced | `routes.jobs`, `job_inventory` | v0.4.0 |
 | `read_json` | `(data_dir: Path, artifact: Artifact) -> object` | Reads a JSON artifact's body back | `job_inventory.inventory_from_job` | v0.4.0 |
 | `store_file` | `(conn, data_dir, *, job_id, name, media_type, source, move=True) -> Artifact` | Takes a file on disk into the store, hashing in chunks | collection, later | v0.4.0 |
@@ -335,6 +392,11 @@ on databases written before it did.
 | `settings_test` | `(request, username) -> Response` | `POST /settings/test` — tests and reports reach | router | v0.2.0 |
 | `start_inventory_refresh` | `(request, username) -> Response` | `POST /jobs/refresh-inventory` — queues a refresh | router | v0.4.0 |
 | `start_redaction` | `(request, username, artifact_id) -> Response` | `POST /jobs/redact` — queues a redaction of one stored file | router | v0.5.2 |
+| `collect_page` | `(request, username, keep_days, keep_count) -> Response` | `GET /collect` — hosts, stored collections, retention preview | router | unreleased |
+| `delete_collection` | `(job_id, request, username) -> Response` | `POST /collect/{id}/delete` — deletes one collection | router | unreleased |
+| `download_artifact` | `(artifact_id, request, username) -> Response` | `GET /collect/download/{id}` — streams a stored file from disk | router | unreleased |
+| `run_cleanup` | `(request, username, keep_days, keep_count) -> Response` | `POST /collect/cleanup` — applies the retention limits | router | unreleased |
+| `start_collection` | `(request, username, host_id) -> Response` | `POST /collect` — queues a collection for one host | router | unreleased |
 
 ## `app/hashpw.py` — password hash helper
 

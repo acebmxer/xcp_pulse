@@ -19,7 +19,7 @@ import logging
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, Response
 
-from app.dependencies import login_required, templates
+from app.dependencies import login_required, templates, wake_worker
 from app.job_inventory import KIND as INVENTORY_KIND
 from app.job_inventory import inventory_from_job
 from app.jobs import enqueue, has_active, latest_job, latest_successful
@@ -76,7 +76,7 @@ def dashboard(request: Request, username: str = Depends(login_required)) -> Resp
             # first load after saving one. Queue the refresh rather than making
             # the operator find the button to see anything at all.
             enqueue(db, INVENTORY_KIND)
-            _wake_worker(request)
+            wake_worker(request)
             log.info("queued the first %s job", INVENTORY_KIND)
 
     return templates.TemplateResponse(
@@ -93,14 +93,3 @@ def dashboard(request: Request, username: str = Depends(login_required)) -> Resp
             "pending_help": PENDING_HELP,
         },
     )
-
-
-def _wake_worker(request: Request) -> None:
-    """Tell the worker to look now rather than at its next poll.
-
-    Deliberately not app-state-specific: absent when jobs run in a separate
-    process, where the queue in the database is the only handover needed.
-    """
-    worker = getattr(request.app.state, "job_worker", None)
-    if worker is not None:
-        worker.wake()

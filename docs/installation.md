@@ -5,7 +5,7 @@
 ## Requirements
 
 - Docker with Compose v2 (`docker compose version`)
-- About 200 MB of disk for the image; once log collection ships, roughly
+- About 200 MB of disk for the image, plus roughly
   **450 MB per host per log collection** on the data volume
 
 ## Install

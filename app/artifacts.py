@@ -2,7 +2,7 @@
 
 Splitting the two is what lets one store hold both the few hundred bytes of
 JSON a "Refresh inventory" job writes and the 433 MB tarball a collection job
-will write later. The body is always a file; the row records what it is, how
+writes. The body is always a file; the row records what it is, how
 big it is and what it hashes to, so listing artifacts never opens them.
 
 Files live under ``<data_dir>/artifacts/<job_id>/<artifact_id>``. The name the
@@ -27,6 +27,31 @@ _CHUNK_BYTES = 1024 * 1024
 JSON_MEDIA_TYPE = "application/json"
 
 
+def human_bytes(size: int) -> str:
+    """A byte count as something to put on a page.
+
+    Module-level rather than only a property because a total — a collection's
+    files summed, a retention plan's freed space — has no Artifact to ask, and
+    a second copy of this formatting would drift from the first. Anything
+    showing a size calls this or ``Artifact.size_human``, which is this.
+
+    Units are binary and are labelled as such. Dividing by 1024 and printing
+    "MB" made a 454 MB download read as "426.0 MB" on the collect page, which
+    is the one number an operator checks against what they expected to arrive —
+    and a download that appears to stop 28 MB short of a bundle the docs call
+    433 MB looks like a truncation rather than a complete transfer.
+    """
+    value = float(size)
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if unit == "B":
+            if value < 1024:
+                return f"{int(value)} B"
+        elif value < 1024 or unit == "GiB":
+            return f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{value:.1f} GiB"
+
+
 @dataclass(frozen=True)
 class Artifact:
     """One stored result, without its body."""
@@ -46,15 +71,7 @@ class Artifact:
         The exact byte count stays in ``size_bytes`` for anything that needs
         it; nobody reading a job result needs three decimal places.
         """
-        size = float(self.size_bytes)
-        for unit in ("B", "KB", "MB", "GB"):
-            if unit == "B":
-                if size < 1024:
-                    return f"{int(size)} B"
-            elif size < 1024 or unit == "GB":
-                return f"{size:.1f} {unit}"
-            size /= 1024
-        return f"{size:.1f} GB"
+        return human_bytes(self.size_bytes)
 
 
 def artifacts_dir(data_dir: Path) -> Path:

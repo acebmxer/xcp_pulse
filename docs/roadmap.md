@@ -139,9 +139,8 @@ No new capability; the quick start works as written on a server.
 
 *Needs: published container images — done, `ghcr.io/acebmxer/xcp_pulse`.*
 
-Tells you when a new version is out, and applies it from the UI. It comes next
-because a lot of changes are coming, and anyone testing along should not have
-to pull and recreate by hand each time.
+Tells you when a new version is out, and applies it from the UI, so anyone
+testing along does not have to pull and recreate by hand each time.
 
 The design is in [Self-update](#self-update--up-next) below, where the details
 worth copying from `beacon_pxe` are recorded.
@@ -223,20 +222,29 @@ collection any more.
 Testable with no Xen Orchestra connection at all, which is what makes it easy to
 do early.
 
-### Collect the full bundle
+### Collect the full bundle — in progress
 
-*Needs: the job system, and redaction.*
+*Needs: the job system, and redaction. Both shipped.*
 
 Collect a host's logs and download them, redacted.
 
 - Per-host collection as a background job, with real progress and ETA
 - Cancellable; a failed download cannot resume, and says so plainly
-- Raw bundle cached; redacted bundle produced for download
+- Raw bundle kept; redacted bundle produced for download
 - Also collects the XAPI audit trail
 - Bundle list with size and age, and retention with a preview of what the next
   cleanup will delete
 
 Expect **about 433 MB and 100 seconds per host** — measured on XCP-ng 8.3.
+
+A tarball cannot be masked in place, so the redacted bundle is repacked member
+by member, each text member read a line at a time. The masking is the same
+`active_rules` and `Rule.apply` the preview page uses, so what the preview shows
+is what a collected bundle gets.
+
+Both copies are kept and the download list marks which is which: the redacted
+one is what goes to Vates, and the raw one is the only thing that can answer
+"what was masked?" afterwards.
 
 #### Which Xen Orchestra account to use
 
@@ -292,7 +300,7 @@ this plainly, rather than surfacing a bare `403`.
 
 ### Date ranges
 
-*Needs: full-bundle collection.*
+*Needs: full-bundle collection — in progress.*
 
 Ask for the window you care about instead of everything on the host.
 
@@ -317,7 +325,7 @@ large saving on what you keep and send.
 
 ### Collect individual categories
 
-*Needs: full-bundle collection.*
+*Needs: full-bundle collection — in progress.*
 
 Download only the log families you want, without collecting again.
 
@@ -344,7 +352,7 @@ A findings report without collecting anything.
 
 ### Findings from the logs
 
-*Needs: full-bundle collection.*
+*Needs: full-bundle collection — in progress.*
 
 - Storage repository failures, multipath flapping, XAPI exceptions,
   out-of-memory events, HA fencing, clock skew — with counts and first/last seen
@@ -352,7 +360,7 @@ A findings report without collecting anything.
 
 ### Vates support package
 
-*Needs: redaction, collection, and findings.*
+*Needs: redaction (shipped), collection (in progress), and findings.*
 
 One file to attach to a support ticket.
 

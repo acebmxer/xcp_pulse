@@ -93,6 +93,20 @@ def login_required(request: Request) -> str:
     return username
 
 
+def wake_worker(request: Request) -> None:
+    """Tell the job worker to look now rather than at its next poll.
+
+    Here rather than in one router because every route that enqueues a job
+    needs it, and a second copy would be a route that queues work the operator
+    then watches sit still for a second. Absent when jobs run in a separate
+    process — the queue is the database either way — so its absence is not an
+    error.
+    """
+    worker = getattr(request.app.state, "job_worker", None)
+    if worker is not None:
+        worker.wake()
+
+
 def redirect(url: str, status_code: int = 303) -> RedirectResponse:
     """Redirect after a successful POST.
 
