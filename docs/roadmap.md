@@ -75,16 +75,47 @@ later without changing the schema or any job body.
 > The job system was built here, against endpoints that answer in milliseconds,
 > so that the 100-second collection job later lands on a system already proven.
 
+### v0.5.0 — Redaction
+
+Mask addresses, tokens and credentials out of log text, and see it happen.
+
+- Eight rules: IPv4, IPv6, MAC, UUID, `trackid=` session tokens,
+  password/secret/session_id/API-key assignments, email addresses, hostnames
+- A preview page: paste a snippet, see the result and per-rule hit counts
+- Placeholders keep the shape of what they replaced, and equal values get equal
+  placeholders, so a redacted log still reads as a log
+- Loopback and documentation names stay legible; source filenames, API method
+  names and backtraces are deliberately left alone
+
+Nothing pasted into the preview is stored. Redaction works a line at a time,
+which is the unit the streaming repack of a real bundle will use.
+
 ---
 
 ## Next
 
-### Redaction
+### Per-rule enable and disable
 
-See exactly what will be masked before anything can be downloaded.
+Turn an individual redaction rule off when it is masking something you need.
 
-This is next because it has to come **before** the first downloadable bundle,
-not after — see [Redaction](#redaction-1) below for what it covers and why.
+- A rule's on/off state stored and applied wherever redaction runs
+- The preview page reflects the current settings
+
+The engine already takes the set of enabled rules as an argument and defaults to
+all of them, so this is wiring rather than new masking logic.
+
+### Redaction report
+
+A record of what was masked, alongside what was produced.
+
+- Per-rule hit counts for a whole redaction run, not just a pasted snippet
+- Kept with the artifact, so a bundle can say what came out of it
+
+`redact_text` already returns per-rule counts; what is missing is somewhere to
+put them once redaction runs over a real bundle rather than a paste.
+
+Both come **before** the first downloadable bundle, for the reason in
+[Redaction](#redaction-1) below.
 
 ---
 
@@ -156,11 +187,9 @@ The order inside this group is forced. Each item says what must come first.
 
 *Prerequisite for: any downloadable bundle. Has none of its own.*
 
-- Rules for IPv4/IPv6, `trackid=` session tokens, password, secret and
-  session_id assignments, MAC addresses, UUIDs, hostnames, email addresses
-- Per-rule enable and disable
-- A preview page: paste a log snippet, see the result
-- A redaction report with per-rule hit counts
+**The rules and the preview page shipped in v0.5.0.** What remains is per-rule
+enable and disable, and a redaction report with per-rule hit counts — both
+listed under [Next](#next).
 
 > [!IMPORTANT]
 > This comes **before** the first downloadable bundle, not after. A real bundle

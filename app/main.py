@@ -20,7 +20,7 @@ from app.job_inventory import KIND as _INVENTORY_KIND  # noqa: F401
 from app.job_runner import JobWorker
 from app.jobs import reset_orphans
 from app.logging_conf import configure_logging
-from app.routes import auth, dashboard, health
+from app.routes import auth, dashboard, health, redaction
 from app.routes import jobs as job_routes
 from app.routes import settings as settings_routes
 from app.security import purge_expired_sessions, purge_old_login_attempts
@@ -88,6 +88,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(dashboard.router)
     app.include_router(settings_routes.router)
     app.include_router(job_routes.router)
+    app.include_router(redaction.router)
     return app
 
 

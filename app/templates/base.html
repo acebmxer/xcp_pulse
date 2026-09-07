@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}XCP Pulse{% endblock %}</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v={{ asset_token }}">
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 </head>
 <body>
@@ -15,6 +15,7 @@
     </a>
     <nav class="topnav">
       <a class="navlink" href="/jobs">Jobs</a>
+      <a class="navlink" href="/redaction">Redaction</a>
       <a class="navlink" href="/settings">Settings</a>
       <span class="who">{{ username }}</span>
       <form method="post" action="/logout" class="inline">

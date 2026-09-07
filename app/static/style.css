@@ -110,6 +110,12 @@ body {
   border-radius: var(--radius);
   box-shadow: var(--shadow);
   padding: 1.75rem;
+  /* A card holds its width instead of being stretched by wide content inside
+     it. Without this a single long log line widens the card, which widens the
+     page past .wrap's max-width and leaves every other card short of the
+     window. Anything that can be wider than the card scrolls inside itself. */
+  min-width: 0;
+  overflow: hidden;
 }
 
 .card-login { width: 100%; }
@@ -554,6 +560,36 @@ select {
   justify-content: space-between;
   gap: 1rem;
   flex-wrap: wrap;
+}
+
+/* Redaction preview: the pasted box and the result read as the same object,
+   so a difference between them is the redaction and not the styling. */
+textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  resize: vertical;
+  line-height: 1.5;
+}
+
+.redaction-result {
+  margin: 0;
+  padding: 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  /* A backtrace runs to hundreds of characters on one line, so it wraps.
+     Wrapping is what keeps every character on screen; scrolling a <pre>
+     sideways hides the end of the line behind a gesture nobody makes. */
+  width: 100%;
+  box-sizing: border-box;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
 }
 
 @media (max-width: 560px) {

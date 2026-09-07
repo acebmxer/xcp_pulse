@@ -10,6 +10,61 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-07
+
+### Added
+
+- **A redaction engine and a preview page, so what gets masked can be seen
+  before anything is downloadable.** Eight rules cover IPv4 and IPv6 addresses,
+  MAC addresses, UUIDs, `trackid=` session tokens, password/secret/session_id/
+  API-key assignments, email addresses and dotted hostnames. Values keep their
+  shape — `10.20.30.40` becomes `[IPv4]`, and equal values get equal
+  placeholders, so a redacted log still shows that two lines mention the same
+  host. Rule order is load-bearing: the secret rule runs before the value-shape
+  rules so `password=10.0.0.1` is masked as a password, and the MAC rule runs
+  before IPv6 because a MAC is also colon-separated hex. Loopback, `0.0.0.0`,
+  `::1` and `localhost` are deliberately left legible, and the hostname rule
+  matches only dotted names — a bare-word rule would match half the vocabulary
+  of a log file. A new **Redaction** page pastes a snippet in and shows the
+  result with per-rule hit counts; nothing pasted is stored. Redaction works a
+  line at a time, which is the unit the streaming repack of a 56 MB log will
+  use, so the same rules serve the preview and the eventual bundle.
+
+  The hostname rule decides on an explicit suffix list rather than on shape.
+  A first version matched anything dotted, which on a real XapiError paste
+  masked the source filenames in the backtrace — `xapi_host.ml`, `index.mjs` —
+  along with API method names like `host.setMaintenanceMode`, destroying the
+  lines a support ticket exists to explain. Shape cannot separate them and
+  neither can length, since `setMaintenanceMode` is longer than the longest
+  real TLD. A host under an unlisted suffix is now missed rather than mangled,
+  which is the safer way to be wrong: it is visible in the preview.
+
+- **The image is published to GitHub Container Registry, so deploying no longer
+  needs a clone.** `compose.yaml` pulls `ghcr.io/acebmxer/xcp_pulse` instead of
+  building from the working directory, which means the compose file and an env
+  file are a complete deployment — previously `build: .` required the Dockerfile
+  and the whole `app/` tree to be present, and there was no published image to
+  pull. A new workflow builds and pushes on a version tag, tagging `X.Y.Z`,
+  `X.Y` and `latest`. Building from a clone still works: uncomment `build: .`
+  and pass `--build`.
+
+### Fixed
+
+- **A stylesheet change reached the container but never the browser.**
+  Starlette's `StaticFiles` sends an ETag and `Last-Modified` but no
+  `Cache-Control`, so a browser is free to reuse a cached `style.css` without
+  revalidating it — and does. Every CSS fix looked correct from the server side
+  and had no effect on screen, which is indistinguishable from a fix that did
+  not work. The stylesheet URL now carries the file's mtime as a query string,
+  so each build is a URL no cache can match.
+
+- **The example env file and `python -m app.hashpw` both told the user to write
+  their settings into `.env`, which is the one name that cannot work.** Compose
+  loads a file called `.env` as its own interpolation source, so the `$` in an
+  Argon2 hash is eaten and the container starts with a mangled hash or refuses
+  to start. Both now name `xcp-pulse.env`, matching what `compose.yaml` has
+  always read.
+
 ## [0.4.0] - 2026-09-07
 
 ### Added
@@ -253,7 +308,9 @@ must extract from a locally cached bundle rather than making a smaller request;
 and real bundles contain internal addresses and session tokens, which is why
 redaction is scheduled before the first downloadable bundle rather than after.
 
-[Unreleased]: https://github.com/acebmxer/xcp_pulse/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/acebmxer/xcp_pulse/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/acebmxer/xcp_pulse/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/acebmxer/xcp_pulse/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/acebmxer/xcp_pulse/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/acebmxer/xcp_pulse/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/acebmxer/xcp_pulse/releases/tag/v0.1.0

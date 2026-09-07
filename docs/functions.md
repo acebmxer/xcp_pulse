@@ -36,9 +36,10 @@ columns; those are a reviewer's job.
 | Queue, read or cancel a background job | `app/jobs.py` |
 | Add a new kind of background job | `app/job_inventory.py` as the worked example; register it in `app/job_runner.py` and import it in `app/main.py` |
 | Store or read what a job produced | `app/artifacts.py` |
+| Mask an address, token or credential out of text | `app/redact.py` |
 
-Arriving in later stages, listed here so nobody starts a second one: the
-redaction engine and tar handling.
+Arriving in a later stage, listed here so nobody starts a second one: tar
+handling.
 
 ---
 
@@ -262,6 +263,24 @@ name coming from Xen Orchestra can never choose a path.
 default, because the caller that matters most writes a 433 MB download to a
 temporary path and has no reason to copy it again.
 
+## `app/redact.py` — masking
+
+Rules are applied in the order they appear in `RULES`, and the order is load-
+bearing: `secret` before the value-shape rules so `password=10.0.0.1` is a
+password, and `mac` before `ipv6` because a MAC is also colon-separated hex.
+
+| Function | Signature | Does | Used by | Since |
+| --- | --- | --- | --- | --- |
+| `active_rules` | `(enabled: frozenset[str] \| set[str] \| None = None) -> tuple[Rule, ...]` | The rules to apply, in order; `None` means all | `redact_line`, `redact_text` | v0.5.0 |
+| `redact_line` | `(line: str, enabled=None) -> str` | Masks one line — the unit a streaming repack uses | `redact_text`, collection later | v0.5.0 |
+| `redact_text` | `(text: str, enabled=None) -> tuple[str, dict[str, int]]` | Masks a block and counts hits per rule | `routes.redaction` | v0.5.0 |
+| `rule_by_name` | `(name: str) -> Rule \| None` | One rule by name | per-rule settings later | v0.5.0 |
+
+`Rule` is a frozen dataclass carrying the pattern, the placeholder and a `keep`
+set of values not worth masking; `Rule.apply` returns the masked text and its
+own hit count. `DEFAULT_ENABLED` is every rule — a rule is only off when
+somebody turns it off.
+
 ## `app/routes/` — HTTP endpoints
 
 | Function | Signature | Does | Used by | Since |
@@ -274,6 +293,8 @@ temporary path and has no reason to copy it again.
 | `job_status` | `(job_id, request, username) -> Response` | `GET /jobs/{id}/status` — one job's state as JSON | router | v0.4.0 |
 | `jobs_page` | `(request, username) -> Response` | `GET /jobs` — history, progress and starting a refresh | router | v0.4.0 |
 | `logout` | `(request) -> Response` | `POST /logout` | router | v0.1.0 |
+| `redaction_page` | `(request, username) -> Response` | `GET /redaction` — the preview page | router | v0.5.0 |
+| `redaction_preview` | `(request, username, text) -> Response` | `POST /redaction` — masks pasted text and shows both | router | v0.5.0 |
 | `settings_delete` | `(request, username) -> Response` | `POST /settings/delete` — forgets the connection | router | v0.2.0 |
 | `settings_page` | `(request, username) -> Response` | `GET /settings` — the XO connection page | router | v0.2.0 |
 | `settings_save` | `(request, username, url, token, account_type, verify_tls) -> Response` | `POST /settings` — stores the connection | router | v0.2.0 |
