@@ -34,6 +34,13 @@ WILDCARD_ACTION = "*"
 # both with 200 and cannot distinguish them.
 DASHBOARD_PATH = "/dashboard"
 
+# XO returns collections as bare href strings unless "fields" is given, so
+# these are what turns /pools and /hosts into displayable records. Requesting a
+# field an instance does not know is harmless — it is simply absent from the
+# response — so every reader below treats each one as optional.
+POOL_FIELDS = "id,name_label,master"
+HOST_FIELDS = "id,name_label,address,version,productBrand,power_state,enabled,$pool,cpus,memory"
+
 _DEFAULT_TIMEOUT = 30.0
 
 
@@ -62,6 +69,83 @@ class LogExportSupport:
     @property
     def summary(self) -> str:
         return "available" if self.available else f"not available — {self.reason}"
+
+
+@dataclass(frozen=True)
+class Pool:
+    """One pool as the inventory sees it."""
+
+    id: str
+    name: str
+    master_id: str = ""
+
+
+@dataclass(frozen=True)
+class Host:
+    """One host as the inventory sees it."""
+
+    id: str
+    name: str
+    address: str = ""
+    version: str = ""
+    product: str = ""
+    power_state: str = ""
+    enabled: bool = True
+    pool_id: str = ""
+    memory_used: int = 0
+    memory_total: int = 0
+    cpu_cores: int = 0
+    cpu_sockets: int = 0
+
+    @property
+    def memory_percent(self) -> int | None:
+        """Memory in use as a whole percentage, or None when unreported."""
+        if self.memory_total <= 0:
+            return None
+        return round(self.memory_used / self.memory_total * 100)
+
+    @property
+    def running(self) -> bool:
+        return self.power_state.lower() == "running"
+
+
+@dataclass(frozen=True)
+class Inventory:
+    """The pools and hosts one account can see.
+
+    Empty is a legitimate result rather than a failure: XO answers an account
+    without read privileges with an empty list and HTTP 200. Callers decide how
+    to explain that; this only reports what came back.
+    """
+
+    pools: list[Pool] = field(default_factory=list)
+    hosts: list[Host] = field(default_factory=list)
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.pools and not self.hosts
+
+    def hosts_in(self, pool_id: str) -> list[Host]:
+        """The hosts belonging to one pool, named first for a stable order."""
+        return sorted(
+            (host for host in self.hosts if host.pool_id == pool_id),
+            key=lambda host: host.name.lower(),
+        )
+
+    @property
+    def orphan_hosts(self) -> list[Host]:
+        """Hosts whose pool is not in the inventory.
+
+        Possible for a restricted account: pool and host read privileges are
+        granted separately, so an account can be allowed to see a host while
+        being refused the pool containing it. Such a host is still shown rather
+        than silently dropped.
+        """
+        known = {pool.id for pool in self.pools}
+        return sorted(
+            (host for host in self.hosts if host.pool_id not in known),
+            key=lambda host: host.name.lower(),
+        )
 
 
 @dataclass(frozen=True)
@@ -135,6 +219,46 @@ class XoClient:
     def list_hosts(self) -> list[str]:
         """Return the host hrefs this account can see."""
         return _href_list(self._get("/hosts"))
+
+    def inventory(self) -> Inventory:
+        """Return the pools and hosts this account can see, with their details.
+
+        Asking for ``fields`` is what turns a collection from a list of hrefs
+        into a list of objects; without it XO answers with href strings alone,
+        which is enough to count but not to display.
+
+        An empty result is not an error and is not reported as one here — a
+        restricted account is answered with ``200 []`` rather than a refusal,
+        so the caller is told the inventory is empty and left to explain why.
+        """
+        pools = [
+            Pool(
+                id=str(record.get("id", "")),
+                name=_label(record, "pool"),
+                master_id=str(record.get("master") or ""),
+            )
+            for record in _record_list(self._get("/pools", fields=POOL_FIELDS))
+        ]
+
+        hosts = [
+            Host(
+                id=str(record.get("id", "")),
+                name=_label(record, "host"),
+                address=str(record.get("address") or ""),
+                version=str(record.get("version") or ""),
+                product=str(record.get("productBrand") or ""),
+                power_state=str(record.get("power_state") or ""),
+                enabled=bool(record.get("enabled", True)),
+                pool_id=str(record.get("$pool") or ""),
+                memory_used=_nested_int(record, "memory", "usage"),
+                memory_total=_nested_int(record, "memory", "size"),
+                cpu_cores=_nested_int(record, "cpus", "cores"),
+                cpu_sockets=_nested_int(record, "cpus", "sockets"),
+            )
+            for record in _record_list(self._get("/hosts", fields=HOST_FIELDS))
+        ]
+
+        return Inventory(pools=pools, hosts=hosts)
 
     # -- privileges ------------------------------------------------------
 
@@ -298,3 +422,46 @@ def _href_list(response: httpx.Response) -> list[str]:
     if not isinstance(payload, list):
         return []
     return [item for item in payload if isinstance(item, str)]
+
+
+def _record_list(response: httpx.Response) -> list[dict[str, object]]:
+    """Read a collection response into a list of objects.
+
+    Mirrors _href_list for the ``fields`` form of the same routes: a non-200 or
+    an unexpected shape yields nothing, because an account being refused is not
+    distinguishable here from one seeing an empty installation, and neither is
+    an error the caller can act on.
+    """
+    if response.status_code != 200:
+        return []
+    try:
+        payload = response.json()
+    except ValueError:
+        return []
+    if not isinstance(payload, list):
+        return []
+    return [item for item in payload if isinstance(item, dict)]
+
+
+def _label(record: dict[str, object], kind: str) -> str:
+    """The display name for a record, falling back to its id.
+
+    A pool or host may legitimately have an empty name_label in XO, and an
+    unnamed row is far more confusing than one showing its uuid.
+    """
+    name = str(record.get("name_label") or "").strip()
+    if name:
+        return name
+    identifier = str(record.get("id") or "").strip()
+    return identifier or f"unnamed {kind}"
+
+
+def _nested_int(record: dict[str, object], outer: str, inner: str) -> int:
+    """Read record[outer][inner] as an int, or 0 when absent or malformed."""
+    container = record.get(outer)
+    if not isinstance(container, dict):
+        return 0
+    value = container.get(inner)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    return int(value)
