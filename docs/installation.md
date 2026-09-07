@@ -15,22 +15,28 @@ deployment — there is nothing to clone and nothing to build:
 
 ```bash
 mkdir xcp-pulse && cd xcp-pulse
-curl -o compose.yaml https://raw.githubusercontent.com/acebmxer/xcp_pulse/main/compose.yaml.example
+curl -o docker-compose.yml https://raw.githubusercontent.com/acebmxer/xcp_pulse/main/docker-compose.yml.example
 curl -o xcp-pulse.env https://raw.githubusercontent.com/acebmxer/xcp_pulse/main/xcp-pulse.env.example
 ```
 
 The env file must be called `xcp-pulse.env` and not `.env` — compose treats a
 file of that name as its own variable source and mangles the password hash.
 
-Prefer to build from source? Clone the repository instead, copy the sample,
-uncomment `build: .` in your `compose.yaml`, and add `--build` to the `up`
-command below:
+Prefer to build from source? Clone the repository and copy both samples:
 
 ```bash
 git clone https://github.com/acebmxer/xcp_pulse.git
 cd xcp_pulse
-cp compose.yaml.example compose.yaml
+cp docker-compose.yml.example docker-compose.yml
 cp xcp-pulse.env.example xcp-pulse.env
+```
+
+`docker-compose.dev.yml` is committed alongside it and adds `build: .`, so the
+image is built from your clone rather than pulled. Add it to every compose
+command:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 ```
 
 Generate the admin password hash. XCP Pulse stores a hash, never a password, and
@@ -50,7 +56,8 @@ Start it:
 docker compose up -d
 ```
 
-Open <http://localhost:8080> and sign in with `admin` and the password you chose.
+Open `http://<server>:8080` and sign in with `admin` and the password you
+chose. On the Docker host itself, <http://localhost:8080> works too.
 
 ## Checking it is healthy
 
@@ -58,7 +65,7 @@ Open <http://localhost:8080> and sign in with `admin` and the password you chose
 curl -sf http://localhost:8080/healthz
 ```
 
-Expected: `{"status":"ok","version":"0.1.0"}`. This endpoint needs no login — the
+Expected: `{"status":"ok","version":"0.5.3"}`. This endpoint needs no login — the
 container healthcheck uses it.
 
 ```bash
@@ -68,14 +75,28 @@ docker compose logs -f  # application log
 
 ## Upgrading
 
-Edit the image tag in `compose.yaml` to the version you want, then:
+The sample uses `:latest`, so upgrading is a pull and a restart:
 
 ```bash
 docker compose pull
 docker compose up -d
 ```
 
-From a clone, it is `git pull` followed by `docker compose up -d --build`.
+To stay on one version instead, pin the tag in `docker-compose.yml` — the
+sample carries a commented example:
+
+```yaml
+image: ghcr.io/acebmxer/xcp_pulse:0.5.3
+```
+
+A pinned deployment then upgrades by editing that tag and running the two
+commands above.
+
+From a clone, it is `git pull` followed by a rebuild:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+```
 
 The data volume is untouched by a rebuild. Database migrations run at startup.
 
@@ -90,12 +111,22 @@ docker compose down -v       # stop and delete the volume as well
 > `down -v` deletes the data volume: the database, the session key, and every
 > collected log bundle. There is no undo.
 
-## Exposing it beyond localhost
+## Where to expose it
 
-The compose file binds to `127.0.0.1:8080` on purpose. XCP Pulse holds a token
-that can read every log on your pool, so it belongs behind a reverse proxy on a
-trusted management network. If you put TLS in front of it, set
-`XCP_PULSE_HTTPS=true` in `xcp-pulse.env` so the session cookie carries the `Secure` flag.
+The compose file publishes `8080` on all interfaces, so the app is reachable at
+`http://<server>:8080` from your network as soon as it starts.
+
+XCP Pulse holds a token that can read every log on your pool, so keep it on a
+trusted management network and do not expose it to the internet. To restrict it
+to the Docker host alone — a reverse proxy running on the same box — put the
+loopback address in front of the mapping:
+
+```yaml
+      - "127.0.0.1:8080:8080"
+```
+
+If you put TLS in front of it, set `XCP_PULSE_HTTPS=true` in `xcp-pulse.env` so
+the session cookie carries the `Secure` flag.
 
 Setting it to `false` while serving over HTTPS is safe but weaker; setting it to
 `true` while serving plain HTTP makes login appear to fail silently, because the
@@ -110,4 +141,10 @@ should. Run `python -m app.hashpw` as above and put the result in `xcp-pulse.env
 `XCP_PULSE_HTTPS=true` while serving over plain HTTP. Set it to `false`.
 
 **Port already in use** — change the left-hand side of the port mapping in
-`compose.yaml`, for example `"127.0.0.1:9090:8080"`.
+`docker-compose.yml`, for example `"9090:8080"`. The right-hand side is the port
+inside the container and never changes.
+
+**Nothing loads at `http://<server>:8080`** — check `docker ps`. A mapping shown
+as `127.0.0.1:8080->8080/tcp` answers only on the Docker host itself; drop the
+`127.0.0.1:` prefix to reach it from other machines. `0.0.0.0:8080->8080/tcp` is
+the one that answers on your network.

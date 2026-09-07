@@ -1,0 +1,11 @@
+# Development override: build the image from source instead of pulling it from
+# GHCR. Use alongside the main compose file:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+#
+# The service keeps the image: tag from the main file, so the freshly built
+# image is tagged the same and used in place of the published one.
+
+services:
+  xcp-pulse:
+    build: .

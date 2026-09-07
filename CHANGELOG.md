@@ -10,6 +10,54 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-09-07
+
+### Changed
+
+- **Building from a clone no longer means editing your own compose file.** The
+  sample carried a commented `build: .` to uncomment, which is a change to the
+  one file a deployment owns — easy to leave in place by accident, and it makes
+  the sample awkward to copy over later. A committed `docker-compose.dev.yml`
+  now adds `build: .` as an overlay, used alongside the main file
+  (`docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+  --build`), so the deployment file stays untouched and the built image keeps
+  the tag it already names. This matches the layout `beacon_pxe` uses.
+
+- **The compose sample now publishes the port on all interfaces, not just
+  loopback.** It bound to `127.0.0.1:8080:8080`, so a deployment on a remote
+  server started, reported healthy and served nothing — `http://<server>:8080`
+  simply did not load, with no error to explain why, because the port answered
+  only on the Docker host itself. Nothing in the logs shows this: the container
+  always reports listening on `0.0.0.0:8080` internally regardless of what is
+  published, and the healthcheck calls itself from inside. Installing on a
+  machine other than your desktop is the normal case for this app, so the
+  sample now uses `"8080:8080"` and keeps the loopback form as a commented
+  alternative for a reverse proxy on the same host. `docs/installation.md` and
+  `SECURITY.md` follow, and a troubleshooting entry explains how to tell the
+  two `docker ps` mappings apart.
+
+- **The compose sample now pulls `:latest` instead of a pinned version.** A
+  fresh deployment had to have its image tag edited before it would run the
+  current release, because the sample carried whatever version was current when
+  it was written — a new user following the quick start got an old image and no
+  indication of it. `:latest` is published on every release tag, so the sample
+  is now correct without editing. The pinned form is kept as a commented
+  example directly above it for anyone who wants to stay on one version, and
+  the upgrade instructions in `docs/installation.md` cover both.
+
+- **The compose sample is now `docker-compose.yml.example`, not
+  `compose.yaml.example`.** Both names are ones Compose looks for on its own,
+  so `docker compose up -d` behaves identically either way; the change is to
+  the more widely recognised of the two, which is what most projects publish
+  and what an operator expects to find. The README quick start, the
+  installation and configuration docs, the `.gitignore` entry for the working
+  copy and the compose tests all follow the new name. Upgrading an existing
+  deployment needs nothing — an existing `compose.yaml` keeps working, and
+  renaming it to `docker-compose.yml` is optional. **The env file is unchanged
+  and must stay `xcp-pulse.env`:** Compose auto-loads a file named `.env` as
+  its own interpolation source, which mangles the `$` characters in the Argon2
+  password hash and stops the container from starting.
+
 ### Fixed
 
 - **A flaky redaction-report test that failed CI on Python 3.12.** The jobs
@@ -403,7 +451,8 @@ must extract from a locally cached bundle rather than making a smaller request;
 and real bundles contain internal addresses and session tokens, which is why
 redaction is scheduled before the first downloadable bundle rather than after.
 
-[Unreleased]: https://github.com/acebmxer/xcp_pulse/compare/v0.5.2...HEAD
+[Unreleased]: https://github.com/acebmxer/xcp_pulse/compare/v0.5.3...HEAD
+[0.5.3]: https://github.com/acebmxer/xcp_pulse/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/acebmxer/xcp_pulse/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/acebmxer/xcp_pulse/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/acebmxer/xcp_pulse/compare/v0.4.0...v0.5.0

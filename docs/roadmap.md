@@ -155,6 +155,25 @@ Read the documentation without leaving XCP Pulse.
 The source files stay canonical and stay readable on GitHub; the UI is a second
 view of them, not a fork.
 
+### Built-in HTTPS
+
+Serve XCP Pulse over HTTPS without putting your own reverse proxy in front.
+
+- Optional and off by default: a deployment that already has a proxy in front
+  of it carries on unchanged, with no second TLS terminator competing for the
+  port
+- Either a certificate and key you mount in, or one obtained automatically —
+  which means a public DNS name, a reachable port and somewhere on the data
+  volume to persist it across restarts
+- `XCP_PULSE_HTTPS` stops being something you set by hand: when XCP Pulse is
+  terminating TLS itself it knows the browser is on HTTPS and can set the
+  cookie's `Secure` flag without being told
+- A plain-HTTP listener that redirects, so an old bookmark still lands
+
+Most self-hosted deployments already run a proxy — nginx-proxy-manager, Caddy,
+Traefik — and for those this is redundant. It is for the deployment that has
+none, where standing one up is more work than the app it would front.
+
 ### Multiple users
 
 More than one person can use XCP Pulse, with their own credentials.

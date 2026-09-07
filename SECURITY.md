@@ -34,8 +34,10 @@ real `xensource.log` measured during development contained 8,359 lines matching
 password, secret or session-id patterns.
 
 **Where it belongs.** On a trusted management network, behind a reverse proxy.
-The compose file binds to `127.0.0.1` by default for that reason. It is not
-built to be exposed to the internet.
+It is not built to be exposed to the internet. The compose file publishes the
+port on all interfaces so it works on a remote server out of the box; where the
+proxy runs on the Docker host itself, bind the mapping to `127.0.0.1` so nothing
+else can reach it directly.
 
 **What protects it.** A single admin account whose Argon2id password hash is
 supplied by configuration; the app refuses to start without one and has no
