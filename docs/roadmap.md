@@ -230,6 +230,23 @@ A findings report without collecting anything.
   out-of-memory events, HA fencing, clock skew — with counts and first/last seen
 - Correlation between log events and XAPI messages on one timeline
 
+### Collect individual categories
+
+*Prerequisite met: full-bundle collection shipped in v0.6.0.*
+
+Download only the log families you want, without collecting again.
+
+- Categories: XAPI, storage, audit, security, kernel, system, HA, xenstore,
+  RRD plugins, network
+- "Current logs only" or "include rotated history"
+- Extracted from the cached bundle, so it takes seconds rather than 100
+- Current-logs-only bundles come to roughly **35 MB instead of 433 MB**
+
+> [!NOTE]
+> This cannot come first. `logs.tgz` supports no range requests and no
+> server-side filtering, so a request for one category cannot be made smaller —
+> it has to extract from a bundle already on disk.
+
 ### Self-update from the UI
 
 *Prerequisite met: releases publish to `ghcr.io/acebmxer/xcp_pulse`.*
@@ -337,23 +354,6 @@ large saving on what you keep and send.
 >
 > There is nothing to filter until a bundle exists, which is why this follows
 > collection rather than standing on its own.
-
-### Collect individual categories
-
-*Prerequisite met: full-bundle collection shipped in v0.6.0.*
-
-Download only the log families you want, without collecting again.
-
-- Categories: XAPI, storage, audit, security, kernel, system, HA, xenstore,
-  RRD plugins, network
-- "Current logs only" or "include rotated history"
-- Extracted from the cached bundle, so it takes seconds rather than 100
-- Current-logs-only bundles come to roughly **35 MB instead of 433 MB**
-
-> [!NOTE]
-> This cannot come first. `logs.tgz` supports no range requests and no
-> server-side filtering, so a request for one category cannot be made smaller —
-> it has to extract from a bundle already on disk.
 
 ---
 
