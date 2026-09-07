@@ -3,8 +3,7 @@
 [← back to the README](../README.md)
 
 How the pieces fit together, and why. This page grows with each stage; today it
-describes v0.3.0 plus the background job work in progress, and states the
-decisions already taken about what follows.
+describes v0.4.0 and states the decisions already taken about what follows.
 
 ## Shape
 
@@ -99,8 +98,8 @@ a name coming from Xen Orchestra can never choose where a file is written.
 
 ## Why the inventory is stored rather than read per page
 
-v0.3.0 read Xen Orchestra on every dashboard load. The page now shows what the
-last successful **Refresh inventory** job stored.
+v0.3.0 read Xen Orchestra on every dashboard load. Since v0.4.0 the page shows
+what the last successful **Refresh inventory** job stored.
 
 The gain is not speed — those routes answer in milliseconds. It is that the
 inventory becomes a *result with a time on it*: the page says how old it is, and
@@ -152,10 +151,10 @@ never served directly; downloads are produced by a streaming, line-oriented
 transform during repacking, so a 56 MB log is never held in memory. This is why
 redaction is scheduled before the first downloadable bundle.
 
-**Jobs before they are needed.** A 101-second download needs background
-execution, progress and cancellation. That machinery is built against endpoints
-answering in milliseconds, so collection later adds a slow job kind to a proven
-system rather than inventing one under load.
+**Jobs before they are needed — done in v0.4.0.** A 101-second download needs
+background execution, progress and cancellation. That machinery was built
+against endpoints answering in milliseconds, so collection adds a slow job kind
+to a proven system rather than inventing one under load.
 
 **Compression is not worth it on the whole bundle.** Measured: 418 MB of the
 433 MB is already-gzipped rotated logs, so repacking gains about 4%. The real

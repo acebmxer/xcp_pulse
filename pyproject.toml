@@ -1,6 +1,6 @@
 [project]
 name = "xcp-pulse"
-version = "0.3.0"
+version = "0.4.0"
 description = "Collects XCP-ng and Xen Orchestra logs, bundles them, and reports findings."
 readme = "README.md"
 requires-python = ">=3.12"
