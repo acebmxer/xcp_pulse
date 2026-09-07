@@ -10,6 +10,8 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-09-07
+
 ### Added
 
 - **Collecting a host's full log bundle, redacted and ready to send.** A new
@@ -49,6 +51,20 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
   which keeps a host name from Xen Orchestra out of the filesystem.
 
 ### Fixed
+
+- **A connection reset mid-download was reported as a bare errno, and threw
+  away everything received.** The truncation handler caught
+  `RemoteProtocolError` and `StreamClosed`, but a genuine TCP reset arrives as
+  `httpx.ReadError` — verified against a socket closed with `SO_LINGER 0`,
+  which raises `ReadError("[Errno 104] Connection reset by peer")`. That fell
+  through to the generic handler, so the case where the bytes are most
+  expensive to fetch again was the one that discarded them with a message
+  reading as a local network fault. A reset is now reported as the upstream
+  truncation it is, in the same words as the other two.
+
+- **The retention pages said "1 collection(s)".** The preview, the stored-count
+  line and the notice after a cleanup all carried the placeholder plural, on a
+  page an operator reads before deleting gigabytes.
 
 - **The delete button did nothing on a failed or cancelled collection.**
   `retention.delete_collection` looked the job up through `collections()`,
@@ -582,7 +598,8 @@ must extract from a locally cached bundle rather than making a smaller request;
 and real bundles contain internal addresses and session tokens, which is why
 redaction is scheduled before the first downloadable bundle rather than after.
 
-[Unreleased]: https://github.com/acebmxer/xcp_pulse/compare/v0.5.3...HEAD
+[Unreleased]: https://github.com/acebmxer/xcp_pulse/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/acebmxer/xcp_pulse/compare/v0.5.3...v0.6.0
 [0.5.3]: https://github.com/acebmxer/xcp_pulse/compare/v0.5.2...v0.5.3
 [0.5.2]: https://github.com/acebmxer/xcp_pulse/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/acebmxer/xcp_pulse/compare/v0.5.0...v0.5.1

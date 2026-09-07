@@ -169,7 +169,8 @@
 <div class="card">
   <p class="note">
     Currently storing <strong>{{ human_bytes(plan.stored_bytes) }}</strong>
-    across {{ plan.delete|length + plan.keep|length }} collection(s).
+    {% set stored_count = plan.delete|length + plan.keep|length %}
+    across {{ stored_count }} collection{{ '' if stored_count == 1 else 's' }}.
   </p>
 
   {#
@@ -196,7 +197,9 @@
   <p class="note">With these limits nothing would be deleted.</p>
   {% else %}
   <div class="alert alert-error">
-    <strong>This would delete {{ plan.delete|length }} collection(s),
+    {% set delete_count = plan.delete|length %}
+    <strong>This would delete {{ delete_count }}
+    collection{{ '' if delete_count == 1 else 's' }},
     freeing {{ human_bytes(plan.freed_bytes) }}:</strong>
     <ul class="artifacts">
       {% for item in plan.delete %}

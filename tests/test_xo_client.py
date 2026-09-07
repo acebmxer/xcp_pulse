@@ -563,6 +563,36 @@ def test_a_truncated_transfer_says_what_happened_and_keeps_nothing(
     assert not destination.exists()
 
 
+def test_a_connection_reset_mid_transfer_is_reported_as_truncation(
+    tmp_path,
+) -> None:
+    """A reset arrives as ReadError, not as a protocol error.
+
+    Measured against a socket closed with SO_LINGER 0: httpx raises
+    ReadError("[Errno 104] Connection reset by peer"), which is a TransportError
+    and not a RemoteProtocolError. Before it was caught here it fell through to
+    the generic handler and was reported as a bare errno, which reads as a local
+    network fault rather than as the upstream truncation it is.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        def body():
+            yield b"x" * 1024
+            raise httpx.ReadError("[Errno 104] Connection reset by peer")
+
+        return httpx.Response(200, content=body())
+
+    destination = tmp_path / "bundle.tgz"
+    with pytest.raises(XoError) as excinfo:
+        _download_client(handler).download_logs("host-1", destination)
+
+    message = str(excinfo.value)
+    assert "without finishing" in message
+    assert "upstream of XCP Pulse" in message
+    assert "Errno 104" not in message
+    assert not destination.exists()
+
+
 def test_an_error_page_appended_to_the_archive_is_trimmed_off(tmp_path) -> None:
     """The request finishes 200 while the file has rubbish on the end.
 

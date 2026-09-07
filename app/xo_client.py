@@ -430,12 +430,25 @@ class XoClient:
                             # handler below reports it.
                             if not written:
                                 raise
-                        except (httpx.RemoteProtocolError, httpx.StreamClosed) as exc:
+                        except (
+                            httpx.RemoteProtocolError,
+                            httpx.StreamClosed,
+                            httpx.ReadError,
+                        ) as exc:
                             # A transfer genuinely cut short. Everything
                             # received is real data, and reporting the
                             # truncation beats a bare protocol error that reads
                             # as a network fault and sends the operator looking
                             # in the wrong place.
+                            #
+                            # ReadError is here because a connection reset
+                            # arrives as one, not as a protocol error: measured
+                            # against a socket closed with SO_LINGER 0, httpx
+                            # raises ReadError("[Errno 104] Connection reset by
+                            # peer"). Without it a reset fell through to the
+                            # generic handler, which deletes the file — so the
+                            # one case where the bytes are most expensive to
+                            # fetch again was the one that discarded them.
                             raise XoError(
                                 f"The transfer ended after {written / 1024 / 1024:.0f} MiB "
                                 f"without finishing. {_TRUNCATED_HINT}"

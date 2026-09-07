@@ -240,8 +240,26 @@ def test_the_retention_preview_names_what_would_go(logged_in: TestClient) -> Non
     db.commit()
 
     body = logged_in.get("/collect?keep_days=30&keep_count=0").text
-    assert "This would delete 1 collection(s)" in body
+    # Whitespace-insensitive: the wording spans lines in the template.
+    assert "This would delete 1 collection," in " ".join(body.split())
     assert "old-host" in body
+
+
+def test_the_preview_pluralises_the_collection_count(logged_in: TestClient) -> None:
+    """Reads "1 collection", not "1 collection(s)" — an operator reads this page."""
+    app = logged_in.app  # type: ignore[attr-defined]
+    db = app.state.db
+
+    for name in ("old-one", "old-two"):
+        job = enqueue(db, COLLECT_KIND, {"host_id": name, "host_name": name})
+        store_json(db, app.state.settings.data_dir, job_id=job.id, name="logs.tgz", payload={})
+        mark_succeeded(db, job.id)
+        db.execute("UPDATE jobs SET finished_at = 0, created_at = 0 WHERE id = ?", (job.id,))
+    db.commit()
+
+    body = " ".join(logged_in.get("/collect?keep_days=30&keep_count=0").text.split())
+    assert "This would delete 2 collections," in body
+    assert "collection(s)" not in body
 
 
 def test_the_preview_says_when_nothing_would_be_deleted(logged_in: TestClient) -> None:
@@ -262,6 +280,25 @@ def test_running_a_cleanup_deletes_what_the_preview_named(logged_in: TestClient)
     response = logged_in.post("/collect/cleanup", data={"keep_days": 30, "keep_count": 0})
     assert "Deleted+1+collection" in response.headers["location"]
     assert list_jobs(db, kind=COLLECT_KIND) == []
+
+
+def test_a_cleanup_deleting_several_says_collections_not_collection(
+    logged_in: TestClient,
+) -> None:
+    app = logged_in.app  # type: ignore[attr-defined]
+    db = app.state.db
+
+    for name in ("old-one", "old-two"):
+        job = enqueue(db, COLLECT_KIND, {"host_id": name, "host_name": name})
+        store_json(db, app.state.settings.data_dir, job_id=job.id, name="logs.tgz", payload={})
+        mark_succeeded(db, job.id)
+        db.execute("UPDATE jobs SET finished_at = 0, created_at = 0 WHERE id = ?", (job.id,))
+    db.commit()
+
+    response = logged_in.post("/collect/cleanup", data={"keep_days": 30, "keep_count": 0})
+    location = response.headers["location"]
+    assert "Deleted+2+collections," in location
+    assert "collection(s)" not in location
 
 
 def test_a_cleanup_with_nothing_to_do_says_so_rather_than_claiming_a_deletion(

@@ -41,9 +41,7 @@ columns; those are a reviewer's job.
 | Show a byte count on a page | `app/artifacts.py` — `human_bytes` |
 | Store or read what a job produced | `app/artifacts.py` |
 | Mask an address, token or credential out of text | `app/redact.py` |
-
-Arriving in a later stage, listed here so nobody starts a second one: tar
-handling.
+| Read or repack a tarball | `app/job_collect.py` — `_redact_tarball` and its helpers |
 
 ---
 
@@ -100,7 +98,7 @@ genuinely invalidates rather than merely asking the browser to forget.
 | `login_required` | `(request) -> str` | FastAPI dependency; 303s anonymous callers | every protected route | v0.1.0 |
 | `age` | `(timestamp: float \| None) -> str` | A timestamp as how long ago it was, for a stored result | `dashboard.html`, as the `age` filter | v0.4.0 |
 | `redirect` | `(url: str, status_code: int = 303) -> RedirectResponse` | Redirect, defaulting to see-other | `routes/auth` | v0.1.0 |
-| `wake_worker` | `(request) -> None` | Tells the job worker to look now rather than at its next poll | every route that enqueues a job | unreleased |
+| `wake_worker` | `(request) -> None` | Tells the job worker to look now rather than at its next poll | every route that enqueues a job | v0.6.0 |
 
 `templates` is the shared Jinja environment; `RedirectToLogin` is the exception
 `login_required` raises, handled in `main.create_app`.
@@ -144,9 +142,9 @@ stored URL, token and TLS setting are applied in one place.
 | --- | --- | --- | --- | --- |
 | `XoClient.check_log_export` | `(*, is_admin: bool) -> LogExportSupport` | Whether this account can download host logs, and why not | `test_connection`, settings page | v0.2.0 |
 | `XoClient.grantable_host_actions` | `() -> set[str]` | Host actions this instance can grant to a role | `check_log_export` | v0.2.0 |
-| `XoClient.download_audit` | `(host_id, destination, *, on_chunk=None) -> int` | Streams a host's XAPI audit trail to a file | `job_collect.run` | unreleased |
-| `XoClient.download_logs` | `(host_id, destination, *, on_chunk=None) -> int` | Streams a host's log bundle to a file | `job_collect.run` | unreleased |
-| `XoClient.download_to` | `(path, destination, *, on_chunk=None) -> int` | Streams any XO route to a file, never holding the body | `download_logs`, `download_audit` | unreleased |
+| `XoClient.download_audit` | `(host_id, destination, *, on_chunk=None) -> int` | Streams a host's XAPI audit trail to a file | `job_collect.run` | v0.6.0 |
+| `XoClient.download_logs` | `(host_id, destination, *, on_chunk=None) -> int` | Streams a host's log bundle to a file | `job_collect.run` | v0.6.0 |
+| `XoClient.download_to` | `(path, destination, *, on_chunk=None) -> int` | Streams any XO route to a file, never holding the body | `download_logs`, `download_audit` | v0.6.0 |
 | `XoClient.inventory` | `() -> Inventory` | Pools and hosts with their details, for the dashboard | `job_inventory.run` | v0.3.0 |
 | `XoClient.is_admin` | `() -> bool` | Whether the account has XO administrator permission | `test_connection` | v0.2.0 |
 | `XoClient.list_hosts` | `() -> list[str]` | Host hrefs this account can see, for counting only | `test_connection` | v0.2.0 |
@@ -251,8 +249,8 @@ dataclass default, so an artifact written by an older version still loads.
 
 Masks one stored artifact into a redacted copy and writes a report of what was
 masked. It reads a line at a time and never holds the file, which is what lets
-the same job serve a few hundred bytes of `inventory.json` today and a 433 MB
-log bundle later.
+the same job serve a few hundred bytes of `inventory.json` and the 433 MB log
+bundle a collection writes.
 
 The masking is `app/redact.py`'s — `active_rules` and `Rule.apply`, in the same
 order as `redact_text` — so the preview page and a real run cannot diverge.
@@ -285,8 +283,8 @@ and a collection cannot mask differently.
 
 | Function | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
-| `build_report` | `(*, host_id, host_name, enabled, counts, raw, redacted) -> dict` | The collection's redaction report as plain JSON | `job_collect.run` | unreleased |
-| `run` | `(context: JobContext) -> None` | Collects one host's logs, storing raw and redacted copies | `job_runner`, via `register` | unreleased |
+| `build_report` | `(*, host_id, host_name, enabled, counts, raw, redacted) -> dict` | The collection's redaction report as plain JSON | `job_collect.run` | v0.6.0 |
+| `run` | `(context: JobContext) -> None` | Collects one host's logs, storing raw and redacted copies | `job_runner`, via `register` | v0.6.0 |
 
 `build_report` extends `job_redact.build_report` rather than rebuilding the
 rule rows, so a rule added to `RULES` appears in both reports without either
@@ -309,10 +307,10 @@ cleanup that has not been previewed.
 
 | Function | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
-| `apply` | `(conn, data_dir, *, keep_days, keep_count) -> Plan` | Deletes what `plan` names, returning what actually went | `routes.collect.run_cleanup` | unreleased |
-| `collections` | `(conn) -> list[Collection]` | Every stored collection, newest first | `plan`, `delete_collection` | unreleased |
-| `delete_collection` | `(conn, data_dir, job_id: str) -> bool` | Deletes one collection outright | `routes.collect.delete_collection` | unreleased |
-| `plan` | `(conn, *, keep_days, keep_count) -> Plan` | What a cleanup would delete, without deleting it | the collect page, `apply` | unreleased |
+| `apply` | `(conn, data_dir, *, keep_days, keep_count) -> Plan` | Deletes what `plan` names, returning what actually went | `routes.collect.run_cleanup` | v0.6.0 |
+| `collections` | `(conn) -> list[Collection]` | Every stored collection, newest first | `plan`, `delete_collection` | v0.6.0 |
+| `delete_collection` | `(conn, data_dir, job_id: str) -> bool` | Deletes one collection outright | `routes.collect.delete_collection` | v0.6.0 |
+| `plan` | `(conn, *, keep_days, keep_count) -> Plan` | What a cleanup would delete, without deleting it | the collect page, `apply` | v0.6.0 |
 
 Two limits apply together: the newest `keep_count` collections are kept
 whatever their age, and only what remains is judged against `keep_days`. That
@@ -337,10 +335,10 @@ name coming from Xen Orchestra can never choose a path.
 | `artifacts_dir` | `(data_dir: Path) -> Path` | The directory holding every body, created if absent | `artifacts.artifact_path` | v0.4.0 |
 | `delete_for_job` | `(conn, data_dir: Path, job_id: str) -> int` | Removes a job's files and rows together | `retention.apply`, `retention.delete_collection` | v0.4.0 |
 | `get_artifact` | `(conn, artifact_id: str) -> Artifact \| None` | One artifact's metadata | `routes.collect.download_artifact`, `routes.jobs` | v0.4.0 |
-| `human_bytes` | `(size: int) -> str` | A byte count as something to put on a page | `Artifact.size_human`, retention, `job_collect` | unreleased |
+| `human_bytes` | `(size: int) -> str` | A byte count as something to put on a page | `Artifact.size_human`, retention, `job_collect` | v0.6.0 |
 | `list_for_job` | `(conn, job_id: str) -> list[Artifact]` | Everything one job produced | `routes.jobs`, `job_inventory` | v0.4.0 |
 | `read_json` | `(data_dir: Path, artifact: Artifact) -> object` | Reads a JSON artifact's body back | `job_inventory.inventory_from_job` | v0.4.0 |
-| `store_file` | `(conn, data_dir, *, job_id, name, media_type, source, move=True) -> Artifact` | Takes a file on disk into the store, hashing in chunks | collection, later | v0.4.0 |
+| `store_file` | `(conn, data_dir, *, job_id, name, media_type, source, move=True) -> Artifact` | Takes a file on disk into the store, hashing in chunks | `job_collect`, `job_redact` | v0.4.0 |
 | `store_json` | `(conn, data_dir, *, job_id, name, payload) -> Artifact` | Stores a JSON result | `job_inventory.run` | v0.4.0 |
 
 `store_file` hashes by reading in chunks and moves rather than copies by
@@ -357,7 +355,7 @@ password, and `mac` before `ipv6` because a MAC is also colon-separated hex.
 | --- | --- | --- | --- | --- |
 | `active_rules` | `(enabled: frozenset[str] \| set[str] \| None = None) -> tuple[Rule, ...]` | The rules to apply, in order; `None` means all | `redact_line`, `redact_text` | v0.5.0 |
 | `enabled_rules` | `(conn: sqlite3.Connection) -> frozenset[str]` | The names of the rules currently switched on | `routes.redaction` | v0.5.1 |
-| `redact_line` | `(line: str, enabled=None) -> str` | Masks one line — the unit a streaming repack uses | `redact_text`, collection later | v0.5.0 |
+| `redact_line` | `(line: str, enabled=None) -> str` | Masks one line — the unit a streaming repack uses | `redact_text`, `job_collect` | v0.5.0 |
 | `redact_text` | `(text: str, enabled=None) -> tuple[str, dict[str, int]]` | Masks a block and counts hits per rule | `routes.redaction` | v0.5.0 |
 | `rule_by_name` | `(name: str) -> Rule \| None` | One rule by name | `set_enabled_rules` | v0.5.0 |
 | `set_enabled_rules` | `(conn: sqlite3.Connection, names: Iterable[str]) -> frozenset[str]` | Switches on exactly the named rules, off the rest | `routes.redaction` | v0.5.1 |
@@ -392,11 +390,11 @@ on databases written before it did.
 | `settings_test` | `(request, username) -> Response` | `POST /settings/test` — tests and reports reach | router | v0.2.0 |
 | `start_inventory_refresh` | `(request, username) -> Response` | `POST /jobs/refresh-inventory` — queues a refresh | router | v0.4.0 |
 | `start_redaction` | `(request, username, artifact_id) -> Response` | `POST /jobs/redact` — queues a redaction of one stored file | router | v0.5.2 |
-| `collect_page` | `(request, username, keep_days, keep_count) -> Response` | `GET /collect` — hosts, stored collections, retention preview | router | unreleased |
-| `delete_collection` | `(job_id, request, username) -> Response` | `POST /collect/{id}/delete` — deletes one collection | router | unreleased |
-| `download_artifact` | `(artifact_id, request, username) -> Response` | `GET /collect/download/{id}` — streams a stored file from disk | router | unreleased |
-| `run_cleanup` | `(request, username, keep_days, keep_count) -> Response` | `POST /collect/cleanup` — applies the retention limits | router | unreleased |
-| `start_collection` | `(request, username, host_id) -> Response` | `POST /collect` — queues a collection for one host | router | unreleased |
+| `collect_page` | `(request, username, keep_days, keep_count) -> Response` | `GET /collect` — hosts, stored collections, retention preview | router | v0.6.0 |
+| `delete_collection` | `(job_id, request, username) -> Response` | `POST /collect/{id}/delete` — deletes one collection | router | v0.6.0 |
+| `download_artifact` | `(artifact_id, request, username) -> Response` | `GET /collect/download/{id}` — streams a stored file from disk | router | v0.6.0 |
+| `run_cleanup` | `(request, username, keep_days, keep_count) -> Response` | `POST /collect/cleanup` — applies the retention limits | router | v0.6.0 |
+| `start_collection` | `(request, username, host_id) -> Response` | `POST /collect` — queues a collection for one host | router | v0.6.0 |
 
 ## `app/hashpw.py` — password hash helper
 

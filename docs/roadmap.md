@@ -131,100 +131,7 @@ No new capability; the quick start works as written on a server.
   deployment's own compose file untouched
 - The sample is named `docker-compose.yml.example`
 
----
-
-## Next
-
-### Self-update from the UI
-
-*Needs: published container images — done, `ghcr.io/acebmxer/xcp_pulse`.*
-
-Tells you when a new version is out, and applies it from the UI, so anyone
-testing along does not have to pull and recreate by hand each time.
-
-The design is in [Self-update](#self-update--up-next) below, where the details
-worth copying from `beacon_pxe` are recorded.
-
----
-
-## Planned — free to pick up in any order
-
-Nothing below blocks anything else. Order is a choice about what is most useful.
-
-### Documentation in the web UI
-
-Read the documentation without leaving XCP Pulse.
-
-- A **Docs** section in the navigation, rendering the pages under `docs/`
-- Docs ship inside the image, so they match the version you are running
-- Search across pages, and deep links from the UI to the relevant section
-- Markdown reformatted where it renders badly outside GitHub: `[!NOTE]` and
-  `[!WARNING]` callouts become styled blocks, the `[← back to the README]`
-  header lines give way to real navigation, and links between pages are
-  rewritten to UI routes
-
-The source files stay canonical and stay readable on GitHub; the UI is a second
-view of them, not a fork.
-
-### Built-in HTTPS
-
-Serve XCP Pulse over HTTPS without putting your own reverse proxy in front.
-
-- Optional and off by default: a deployment that already has a proxy in front
-  of it carries on unchanged, with no second TLS terminator competing for the
-  port
-- Either a certificate and key you mount in, or one obtained automatically —
-  which means a public DNS name, a reachable port and somewhere on the data
-  volume to persist it across restarts
-- `XCP_PULSE_HTTPS` stops being something you set by hand: when XCP Pulse is
-  terminating TLS itself it knows the browser is on HTTPS and can set the
-  cookie's `Secure` flag without being told
-- A plain-HTTP listener that redirects, so an old bookmark still lands
-
-Most self-hosted deployments already run a proxy — nginx-proxy-manager, Caddy,
-Traefik — and for those this is redundant. It is for the deployment that has
-none, where standing one up is more work than the app it would front.
-
-### Multiple users
-
-More than one person can use XCP Pulse, with their own credentials.
-
-- A user table replacing the single admin account from the environment; the
-  environment variables become the **bootstrap** for the first account only
-- Roles: **admin** (manage users, connections, settings) and **viewer**
-  (collect and read, but not reconfigure)
-- Per-user sessions, password changes, and deactivation without deletion
-- An activity log recording who collected, downloaded or deleted what — bundles
-  contain credential-adjacent data, so "who took a copy" is a real question
-- Optional TOTP two-factor
-
-Migration is automatic: the existing environment-configured admin becomes the
-first row in the user table and continues to work.
-
-## Planned — has prerequisites
-
-The order inside this group is forced. Each item says what must come first.
-
-### Redaction — done
-
-*Prerequisite for: any downloadable bundle. Has none of its own.*
-
-**Shipped in full: the rules and the preview page in v0.5.0, per-rule enable and
-disable in v0.5.1, the redaction report in v0.5.2.** Nothing here blocks
-collection any more.
-
-> [!IMPORTANT]
-> This comes **before** the first downloadable bundle, not after. A real bundle
-> contains internal addresses, usernames and session tokens, and the point of
-> the download button is sending that file to Vates. Shipping collection first
-> would mean a release whose headline feature leaks credentials.
-
-Testable with no Xen Orchestra connection at all, which is what makes it easy to
-do early.
-
-### Collect the full bundle — in progress
-
-*Needs: the job system, and redaction. Both shipped.*
+### v0.6.0 — Collect the full bundle
 
 Collect a host's logs and download them, redacted.
 
@@ -297,10 +204,81 @@ this plainly, rather than surfacing a bare `403`.
 > Enterprise.** Role-based access control is not available on the lower XOA
 > tiers. Installations from the sources are not restricted.
 
+---
+
+## Next
+
+### Self-update from the UI
+
+*Needs: published container images — done, `ghcr.io/acebmxer/xcp_pulse`.*
+
+Tells you when a new version is out, and applies it from the UI, so anyone
+testing along does not have to pull and recreate by hand each time.
+
+The design is in [Self-update](#self-update--up-next) below, where the details
+worth copying from `beacon_pxe` are recorded.
+
+## Planned — free to pick up in any order
+
+Nothing below blocks anything else. Order is a choice about what is most useful.
+
+### Documentation in the web UI
+
+Read the documentation without leaving XCP Pulse.
+
+- A **Docs** section in the navigation, rendering the pages under `docs/`
+- Docs ship inside the image, so they match the version you are running
+- Search across pages, and deep links from the UI to the relevant section
+- Markdown reformatted where it renders badly outside GitHub: `[!NOTE]` and
+  `[!WARNING]` callouts become styled blocks, the `[← back to the README]`
+  header lines give way to real navigation, and links between pages are
+  rewritten to UI routes
+
+The source files stay canonical and stay readable on GitHub; the UI is a second
+view of them, not a fork.
+
+### Built-in HTTPS
+
+Serve XCP Pulse over HTTPS without putting your own reverse proxy in front.
+
+- Optional and off by default: a deployment that already has a proxy in front
+  of it carries on unchanged, with no second TLS terminator competing for the
+  port
+- Either a certificate and key you mount in, or one obtained automatically —
+  which means a public DNS name, a reachable port and somewhere on the data
+  volume to persist it across restarts
+- `XCP_PULSE_HTTPS` stops being something you set by hand: when XCP Pulse is
+  terminating TLS itself it knows the browser is on HTTPS and can set the
+  cookie's `Secure` flag without being told
+- A plain-HTTP listener that redirects, so an old bookmark still lands
+
+Most self-hosted deployments already run a proxy — nginx-proxy-manager, Caddy,
+Traefik — and for those this is redundant. It is for the deployment that has
+none, where standing one up is more work than the app it would front.
+
+### Multiple users
+
+More than one person can use XCP Pulse, with their own credentials.
+
+- A user table replacing the single admin account from the environment; the
+  environment variables become the **bootstrap** for the first account only
+- Roles: **admin** (manage users, connections, settings) and **viewer**
+  (collect and read, but not reconfigure)
+- Per-user sessions, password changes, and deactivation without deletion
+- An activity log recording who collected, downloaded or deleted what — bundles
+  contain credential-adjacent data, so "who took a copy" is a real question
+- Optional TOTP two-factor
+
+Migration is automatic: the existing environment-configured admin becomes the
+first row in the user table and continues to work.
+
+## Planned — has prerequisites
+
+The order inside this group is forced. Each item says what must come first.
 
 ### Date ranges
 
-*Needs: full-bundle collection — in progress.*
+*Needs: full-bundle collection — shipped in v0.6.0.*
 
 Ask for the window you care about instead of everything on the host.
 
@@ -325,7 +303,7 @@ large saving on what you keep and send.
 
 ### Collect individual categories
 
-*Needs: full-bundle collection — in progress.*
+*Needs: full-bundle collection — shipped in v0.6.0.*
 
 Download only the log families you want, without collecting again.
 
@@ -352,7 +330,7 @@ A findings report without collecting anything.
 
 ### Findings from the logs
 
-*Needs: full-bundle collection — in progress.*
+*Needs: full-bundle collection — shipped in v0.6.0.*
 
 - Storage repository failures, multipath flapping, XAPI exceptions,
   out-of-memory events, HA fencing, clock skew — with counts and first/last seen
@@ -360,7 +338,7 @@ A findings report without collecting anything.
 
 ### Vates support package
 
-*Needs: redaction (shipped), collection (in progress), and findings.*
+*Needs: redaction (shipped), collection (shipped), and findings.*
 
 One file to attach to a support ticket.
 

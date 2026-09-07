@@ -188,9 +188,9 @@ def run_cleanup(
         human_bytes(applied.freed_bytes),
     )
     freed = human_bytes(applied.freed_bytes).replace(" ", "+")
-    return redirect(
-        f"/collect?notice=Deleted+{len(applied.delete)}+collection(s),+freeing+{freed}."
-    )
+    count = len(applied.delete)
+    noun = "collection" if count == 1 else "collections"
+    return redirect(f"/collect?notice=Deleted+{count}+{noun},+freeing+{freed}.")
 
 
 def _known_inventory(db, data_dir) -> Inventory:
