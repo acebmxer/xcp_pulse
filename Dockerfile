@@ -2,7 +2,7 @@
 #
 # Single stage: the dependency set is small and pure-Python wheels, so a
 # builder stage would add complexity without saving meaningful size.
-FROM python:3.13-slim
+FROM python:3.14-slim
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
