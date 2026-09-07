@@ -107,15 +107,19 @@ Turn an individual redaction rule off when it is masking something you need.
 
 ## Next
 
-### Redaction report
+### Redaction report — in progress
 
 A record of what was masked, alongside what was produced.
 
 - Per-rule hit counts for a whole redaction run, not just a pasted snippet
 - Kept with the artifact, so a bundle can say what came out of it
+- A switched-off rule reads as **off**, not as zero hits, because "nothing was
+  found" and "nothing was looked for" are different answers
+- The file is read a line at a time and never held, so the same job serves a
+  few hundred bytes now and a 433 MB bundle once collection lands
 
-`redact_text` already returns per-rule counts; what is missing is somewhere to
-put them once redaction runs over a real bundle rather than a paste.
+The masking is the same `active_rules` and `Rule.apply` the preview page uses,
+in the same order, so the two cannot diverge.
 
 It comes **before** the first downloadable bundle, for the reason in
 [Redaction](#redaction-1) below.
@@ -191,8 +195,8 @@ The order inside this group is forced. Each item says what must come first.
 *Prerequisite for: any downloadable bundle. Has none of its own.*
 
 **The rules and the preview page shipped in v0.5.0; per-rule enable and disable
-shipped in v0.5.1.** What remains is a redaction report with per-rule hit
-counts, listed under [Next](#next).
+shipped in v0.5.1.** The redaction report is in progress — see
+[Next](#next).
 
 > [!IMPORTANT]
 > This comes **before** the first downloadable bundle, not after. A real bundle

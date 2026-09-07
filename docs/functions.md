@@ -35,6 +35,7 @@ columns; those are a reviewer's job.
 | Encrypt or decrypt a stored secret | `app/crypto.py` |
 | Queue, read or cancel a background job | `app/jobs.py` |
 | Add a new kind of background job | `app/job_inventory.py` as the worked example; register it in `app/job_runner.py` and import it in `app/main.py` |
+| Redact a stored file and report what was masked | `app/job_redact.py` |
 | Store or read what a job produced | `app/artifacts.py` |
 | Mask an address, token or credential out of text | `app/redact.py` |
 
@@ -239,6 +240,32 @@ job lands on them.
 `inventory_from_job` drops unknown keys and leaves missing ones at their
 dataclass default, so an artifact written by an older version still loads.
 
+## `app/job_redact.py` — the Redact artifact job
+
+Masks one stored artifact into a redacted copy and writes a report of what was
+masked. It reads a line at a time and never holds the file, which is what lets
+the same job serve a few hundred bytes of `inventory.json` today and a 433 MB
+log bundle later.
+
+The masking is `app/redact.py`'s — `active_rules` and `Rule.apply`, in the same
+order as `redact_text` — so the preview page and a real run cannot diverge.
+
+| Function | Signature | Does | Used by | Since |
+| --- | --- | --- | --- | --- |
+| `build_report` | `(*, source, redacted, enabled, counts, lines) -> dict` | The report as plain JSON | `job_redact.run` | unreleased |
+| `redacted_name` | `(name: str) -> str` | The name a redacted copy is stored under | `job_redact.run` | unreleased |
+| `report_from_job` | `(conn, data_dir, job_id: str) -> dict \| None` | Reads back the report a job stored | `routes.jobs` | unreleased |
+| `report_rows` | `(report: dict) -> list[dict]` | The report's per-rule rows, filled out from `RULES` | `routes.jobs` | unreleased |
+| `run` | `(context: JobContext) -> None` | Redacts the named artifact, storing the copy and the report | `job_runner`, via `register` | unreleased |
+
+Every rule appears in the report, including ones that matched nothing and ones
+that were switched off — "was this masked?" is the question someone about to
+send a bundle is asking, and a report listing only what fired cannot answer it.
+
+`report_rows` fills each row from `RULES` where the stored report has no entry,
+and keeps a stored rule this version no longer has, so an older report renders
+without losing counts the run recorded.
+
 ## `app/artifacts.py` — what a job produced
 
 Bodies are files on the data volume; only metadata is in the database. That
@@ -307,6 +334,7 @@ on databases written before it did.
 | `settings_save` | `(request, username, url, token, account_type, verify_tls) -> Response` | `POST /settings` — stores the connection | router | v0.2.0 |
 | `settings_test` | `(request, username) -> Response` | `POST /settings/test` — tests and reports reach | router | v0.2.0 |
 | `start_inventory_refresh` | `(request, username) -> Response` | `POST /jobs/refresh-inventory` — queues a refresh | router | v0.4.0 |
+| `start_redaction` | `(request, username, artifact_id) -> Response` | `POST /jobs/redact` — queues a redaction of one stored file | router | unreleased |
 
 ## `app/hashpw.py` — password hash helper
 

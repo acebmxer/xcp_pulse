@@ -10,6 +10,33 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+### Added
+
+- **A redaction report saying what was masked in a whole file.** A new
+  "Redact a stored file" job (`app/job_redact.py`, kind `redact_artifact`)
+  masks a stored artifact and keeps two results against the job: a redacted
+  copy, named so the suffix stays last (`xensource.log` becomes
+  `xensource.redacted.log`, so it still opens as a log), and
+  `redaction-report.json` holding the per-rule hit counts for the run, the
+  line count, and the name, size and SHA-256 of both files — without those
+  hashes the counts have nothing to attach them to once the bundle is copied
+  elsewhere. The jobs page renders the report as a table, with a switched-off
+  rule shown as **off** rather than as zero hits, because "nothing was found"
+  and "nothing was looked for" are the two answers a person about to send a
+  bundle to Vates must be able to tell apart. Rules that matched nothing get a
+  row too, for the same reason.
+
+  The file is read a line at a time and never held in memory, which is what
+  lets the same job serve a few hundred bytes of `inventory.json` now and a
+  433 MB log bundle once collection lands. The masking itself is
+  `app/redact.py`'s existing `active_rules` and `Rule.apply`, applied in the
+  same order as `redact_text`, so the preview page and a real run cannot
+  diverge; a test asserts the stored copy is byte-for-byte what `redact_text`
+  produces on the same input. Line endings and malformed bytes both survive
+  the round trip untouched — a redacted log whose CRLFs were rewritten no
+  longer matches the file it came from, and one bad byte in a real log must
+  not lose the whole run.
+
 ## [0.5.1] - 2026-09-07
 
 ### Added

@@ -620,3 +620,47 @@ textarea {
 .rule .check { margin-top: 0; display: inline-flex; }
 .rule-title { font-weight: 600; }
 .rule-desc { margin: 0.2rem 0 0 1.65rem; }
+
+/* ---- redaction report ---- */
+
+.report {
+  width: 100%;
+  margin-top: 0.85rem;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+}
+
+.report th, .report td {
+  padding: 0.35rem 0.5rem;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+
+.report thead th {
+  color: var(--text-dim);
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.report tbody th { font-weight: 500; }
+.report .num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* A switched-off rule is dimmed rather than hidden: "this was not masked" is
+   the fact someone about to send a bundle needs to see. */
+.report .rule-off th, .report .rule-off td { color: var(--text-dim); }
+.report .rule-off .num { color: var(--danger-text); font-weight: 600; }
+
+/* A label a screen reader announces and nobody else sees. Used where the
+   visible column heading or button already says what the control is. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
