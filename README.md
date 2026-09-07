@@ -20,8 +20,8 @@ Vates support ticket.
 
 > [!NOTE]
 > XCP Pulse is being built in stages. **v0.1.0 ships the container and the login
-> screen.** Connecting to Xen Orchestra arrives in v0.2.0; log collection in
-> v0.4.0. See [the roadmap](docs/roadmap.md) for what is planned and what is done.
+> screen.** Connecting to Xen Orchestra is next, then log collection. See
+> [the roadmap](docs/roadmap.md) for what is planned and what is done.
 
 ## Read next
 
@@ -57,8 +57,9 @@ Then open <http://localhost:8080> and sign in.
 ## Requirements
 
 - Docker with Compose v2
-- A Xen Orchestra instance reachable over HTTP(S) — from v0.2.0
-- Disk for collected bundles — roughly **450 MB per host per collection**, from v0.4.0
+- A Xen Orchestra instance reachable over HTTP(S) — once the XO connection ships
+- Disk for collected bundles — roughly **450 MB per host per collection**, once
+  log collection ships
 
 ## What it will do
 

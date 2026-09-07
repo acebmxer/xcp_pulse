@@ -33,8 +33,8 @@ Signs session cookies. Leave it blank and one is generated on first boot and
 stored at `/data/secret_key` with owner-only permissions, so sessions survive a
 restart without the secret ever being baked into the image.
 
-Changing it logs everyone out. From v0.2.0 it also derives the key that encrypts
-the stored Xen Orchestra token, so changing it then also invalidates that.
+Changing it logs everyone out. It will also derive the key that encrypts the
+stored Xen Orchestra token, so changing it will then also invalidate that.
 
 ### `XCP_PULSE_HTTPS`
 
@@ -71,8 +71,23 @@ own logging, not the XCP-ng logs it collects.
 
 ## Arriving later
 
-Xen Orchestra connection settings (v0.2.0) are entered in the web UI and stored
-encrypted in the database, not set here — a token in an environment variable
-ends up in `docker inspect` output and shell history.
+Xen Orchestra connection settings are entered in the web UI and stored encrypted
+in the database, not set here — a token in an environment variable ends up in
+`docker inspect` output and shell history. The URL, the API token and the
+account type (admin or restricted) are given together, and which XO account to
+use is covered in [the roadmap](roadmap.md#which-xen-orchestra-account-to-use).
 
-Retention settings for collected bundles arrive in v0.4.0.
+> [!IMPORTANT]
+> **Log collection may need an admin XO account.** Downloading a host's logs
+> requires the `export:logs` privilege. Xen Orchestra defines it, but some
+> instances carry a privilege catalogue seeded before it was added and cannot
+> grant it to a restricted account — on such an instance, log collection needs
+> an admin account. XCP Pulse checks the connected instance and tells you which
+> case you are in. A restricted account always works for inventory and
+> API-based findings.
+>
+> Separately, **XOA below the Essential+ tier has no role-based access control
+> at all**, so those users must use an admin account regardless. Installations
+> from the sources are not restricted.
+
+Retention settings for collected bundles arrive with log collection.

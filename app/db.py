@@ -1,8 +1,8 @@
 """SQLite access and schema management.
 
 One connection factory, one schema definition, one migration path. Later
-stages add tables here (xo_connection in v0.2.0, jobs and artifacts in
-v0.4.0) by appending a migration, never by editing an applied one.
+stages add tables here (xo_connection for the XO link; jobs and artifacts for
+collection) by appending a migration, never by editing an applied one.
 """
 
 from __future__ import annotations
@@ -32,14 +32,36 @@ _MIGRATIONS: list[str] = [
     );
     CREATE INDEX idx_login_attempts_ip_time ON login_attempts (ip, attempted_at);
     """,
+    # 1 -> 2: the Xen Orchestra connection.
+    #
+    # A single row, pinned by a CHECK to id = 1: XCP Pulse talks to one XO at a
+    # time, and enforcing that in the schema means no code path has to decide
+    # which of several rows is current.
+    #
+    # The token is stored encrypted (see app/crypto.py); the column name says so
+    # to stop anything writing a plaintext token into it.
+    """
+    CREATE TABLE xo_connection (
+        id                  INTEGER PRIMARY KEY CHECK (id = 1),
+        url                 TEXT NOT NULL,
+        token_encrypted     TEXT NOT NULL,
+        account_type        TEXT NOT NULL,
+        verify_tls          INTEGER NOT NULL DEFAULT 1,
+        created_at          REAL NOT NULL,
+        updated_at          REAL NOT NULL,
+        last_tested_at      REAL,
+        last_test_ok        INTEGER,
+        last_test_message   TEXT
+    );
+    """,
 ]
 
 
 def connect(db_path: Path) -> sqlite3.Connection:
     """Open a connection with the pragmas this app depends on.
 
-    WAL keeps reads from blocking during the long writes that arrive in
-    v0.4.0; foreign_keys is off by default in SQLite and has to be asked for.
+    WAL keeps reads from blocking during the long writes that arrive with log
+    collection; foreign_keys is off by default in SQLite and has to be asked for.
     """
     conn = sqlite3.connect(db_path, timeout=30.0, check_same_thread=False)
     conn.row_factory = sqlite3.Row

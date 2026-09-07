@@ -14,9 +14,22 @@ release rather than being backported.
 
 Read this before deciding where to run XCP Pulse.
 
-**What it holds.** From v0.2.0, a Xen Orchestra API token that can read every
-log on your pool. From v0.4.0, collected log bundles containing internal IP
-addresses, hostnames, usernames, XAPI session tokens and audit trails. A single
+**What it holds.** Once connected, a Xen Orchestra API token that can read every
+log on your pool. **On many instances that token has to be an admin one**, and
+so holds full control of the pool rather than merely read access: the log
+download requires a privilege those instances cannot grant to a restricted
+account, leaving full host administration as the only way. Assume the token is
+equivalent to pool admin credentials when deciding where to run XCP Pulse,
+unless you have confirmed otherwise for your instance.
+
+A restricted account is enough for inventory and API-based findings, and is
+worth using where log collection is not needed. XOA below the Essential+ tier
+has no role-based access control at all. Details are in
+[the roadmap](docs/roadmap.md#which-xen-orchestra-account-to-use).
+
+Once log collection ships, it also holds collected log bundles containing
+internal IP addresses, hostnames, usernames, XAPI session tokens and audit
+trails. A single
 real `xensource.log` measured during development contained 8,359 lines matching
 password, secret or session-id patterns.
 

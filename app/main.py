@@ -14,6 +14,7 @@ from app.db import init_db
 from app.dependencies import STATIC_DIR, RedirectToLogin
 from app.logging_conf import configure_logging
 from app.routes import auth, dashboard, health
+from app.routes import settings as settings_routes
 from app.security import purge_expired_sessions, purge_old_login_attempts
 
 
@@ -65,6 +66,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(health.router)
     app.include_router(auth.router)
     app.include_router(dashboard.router)
+    app.include_router(settings_routes.router)
     return app
 
 

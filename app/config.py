@@ -78,8 +78,8 @@ def _load_or_create_secret_key(data_dir: Path) -> str:
 
     generated = secrets.token_urlsafe(48)
     key_file.write_text(generated, encoding="utf-8")
-    # The key signs session cookies; from v0.2.0 it also derives the key that
-    # encrypts the stored XO token. Owner-only, always.
+    # The key signs session cookies; it will also derive the key that encrypts
+    # the stored XO token. Owner-only, always.
     key_file.chmod(0o600)
     return generated
 

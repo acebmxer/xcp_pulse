@@ -14,9 +14,9 @@ worker or broker.
 ```
 browser ──▶ uvicorn ──▶ FastAPI ──▶ SQLite  (/data/xcp-pulse.db)
                           │
-                          └──▶ Xen Orchestra REST API   (v0.2.0)
+                          └──▶ Xen Orchestra REST API   (planned)
                                         │
-                                        └──▶ artifact store  (v0.4.0)
+                                        └──▶ artifact store  (planned)
 ```
 
 ## Why Python
@@ -57,8 +57,8 @@ out cannot be bypassed by then supplying the correct password.
 
 ## Database
 
-SQLite in WAL mode, so reads do not block during the long writes that arrive in
-v0.4.0. Migrations are an **append-only list** in `app/db.py`, applied in order
+SQLite in WAL mode, so reads do not block during the long writes that arrive
+with log collection. Migrations are an **append-only list** in `app/db.py`, applied in order
 at startup and recorded in `schema_version`. Editing an applied migration leaves
 existing databases behind, so new changes always go on the end.
 
@@ -89,11 +89,11 @@ transform during repacking, so a 56 MB log is never held in memory. This is why
 redaction is scheduled before the first downloadable bundle.
 
 **Jobs before they are needed.** A 101-second download needs background
-execution, progress and cancellation. That machinery is introduced in v0.2.0
-against endpoints that answer in milliseconds, so v0.4.0 adds a slow job type to
-a proven system rather than inventing the system under load.
+execution, progress and cancellation. That machinery is introduced with the XO
+connection, against endpoints that answer in milliseconds, so collection later
+adds a slow job type to a proven system rather than inventing it under load.
 
 **Compression is not worth it on the whole bundle.** Measured: 418 MB of the
 433 MB is already-gzipped rotated logs, so repacking gains about 4%. The real
 saving is dropping rotated history — current logs only, recompressed, come to
-about 35 MB. That becomes the default shape of a support bundle in v0.5.0.
+about 35 MB. That becomes the default shape of a support bundle.

@@ -1,7 +1,7 @@
 """Logging for XCP Pulse itself.
 
 This concerns the application's own diagnostics. The XCP-ng and Xen Orchestra
-logs the product collects are handled separately from v0.4.0.
+logs the product collects are handled separately.
 """
 
 from __future__ import annotations
