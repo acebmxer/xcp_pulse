@@ -10,6 +10,8 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-07
+
 ### Added
 
 - **A redaction engine and a preview page, so what gets masked can be seen
@@ -306,7 +308,9 @@ must extract from a locally cached bundle rather than making a smaller request;
 and real bundles contain internal addresses and session tokens, which is why
 redaction is scheduled before the first downloadable bundle rather than after.
 
-[Unreleased]: https://github.com/acebmxer/xcp_pulse/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/acebmxer/xcp_pulse/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/acebmxer/xcp_pulse/compare/v0.4.0...v0.5.0
+[0.4.0]: https://github.com/acebmxer/xcp_pulse/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/acebmxer/xcp_pulse/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/acebmxer/xcp_pulse/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/acebmxer/xcp_pulse/releases/tag/v0.1.0
