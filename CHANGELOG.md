@@ -10,6 +10,37 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-09-08
+
+### Added
+
+- **A Download button beside every file the jobs page lists.** A redaction
+  stored its redacted copy and its report as real artifacts on the data volume
+  and named both on the page, but rendered them as plain text with no link —
+  so a file redacted from the jobs page could not be fetched from it. The
+  download route already existed and already served any artifact by id; only
+  the Collect page linked to it. The two pages now share one
+  `serve_artifact` helper rather than a copy each.
+
+- **A Delete button on each finished redaction.** The redacted copy and the
+  report go together, along with the job row, the same way deleting a
+  collection works. Restricted to redaction jobs: a collection is deleted from
+  the Collect page, where its size and which copy is which are on screen,
+  rather than hidden behind a button in a job list.
+
+### Changed
+
+- **Redacting the same file twice with the same rules is refused.** An
+  identical run produces a byte-identical copy and an identical report, so it
+  spends the source file's whole size again on the data volume and answers
+  nothing the first run did not. The refusal names the run that already answers
+  it — when it ran and which rules were off — so the operator can tell whether
+  they want a different result or already have the one they need, rather than
+  scrolling the history to find out whether the earlier copy is still stored. A
+  different set of rules is a different result and is still allowed. The check
+  reads the reports already stored — each records its source artifact and every
+  rule's on/off state — so it needs no new table.
+
 ## [0.6.2] - 2026-09-07
 
 ### Changed
@@ -674,7 +705,8 @@ must extract from a locally cached bundle rather than making a smaller request;
 and real bundles contain internal addresses and session tokens, which is why
 redaction is scheduled before the first downloadable bundle rather than after.
 
-[Unreleased]: https://github.com/acebmxer/xcp_pulse/compare/v0.6.2...HEAD
+[Unreleased]: https://github.com/acebmxer/xcp_pulse/compare/v0.6.3...HEAD
+[0.6.3]: https://github.com/acebmxer/xcp_pulse/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/acebmxer/xcp_pulse/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/acebmxer/xcp_pulse/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/acebmxer/xcp_pulse/compare/v0.5.3...v0.6.0

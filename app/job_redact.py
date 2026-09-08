@@ -28,7 +28,7 @@ from app.artifacts import (
     store_json,
 )
 from app.job_runner import register
-from app.jobs import JobContext, get_job
+from app.jobs import SUCCEEDED, Job, JobContext, get_job, list_jobs
 from app.redact import RULES, active_rules, enabled_rules, rule_by_name
 
 KIND = "redact_artifact"
@@ -58,6 +58,57 @@ def redacted_name(name: str) -> str:
     if not dot:
         return f"{name}.{REDACTED_MARKER}"
     return f"{stem}.{REDACTED_MARKER}.{suffix}"
+
+
+# How far back the duplicate check looks. A redaction store deep enough to hold
+# more than this has long since been thinned by retention.
+_DUPLICATE_SCAN_LIMIT = 200
+
+
+def existing_redaction(
+    conn,
+    data_dir,
+    artifact_id: str,
+    enabled,
+) -> Job | None:
+    """A finished redaction of this file with these same rules, or None.
+
+    Redacting the same artifact twice with the same rules switched on produces
+    a byte-identical copy and an identical report: two files, no new answer,
+    and a data volume the size of the bundle spent on it. A *different* set of
+    rules is a different result and is allowed.
+
+    Returns the job rather than its id so a caller refusing a duplicate can say
+    *which* run it means — when it ran, and what it left behind. A refusal
+    naming nothing sends the operator to scroll the history to find out whether
+    the earlier copy is even still stored.
+
+    Read from the stored reports rather than a new table: the report already
+    records the source artifact id and each rule's enabled state, so what is
+    needed to answer this is on disk already.
+    """
+    wanted = set(enabled)
+    for job in list_jobs(conn, kind=KIND, limit=_DUPLICATE_SCAN_LIMIT):
+        if job.state != SUCCEEDED:
+            continue
+        report = report_from_job(conn, data_dir, job.id)
+        if report is None:
+            continue
+        source = report.get("source")
+        if not isinstance(source, dict) or source.get("artifact_id") != artifact_id:
+            continue
+        if _report_enabled(report) == wanted:
+            return job
+    return None
+
+
+def _report_enabled(report: dict[str, Any]) -> set[str]:
+    """The rule names a stored report says were switched on for that run."""
+    return {
+        row["name"]
+        for row in report.get("rules", [])
+        if isinstance(row, dict) and isinstance(row.get("name"), str) and row.get("enabled")
+    }
 
 
 def run(context: JobContext) -> None:

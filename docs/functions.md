@@ -99,6 +99,7 @@ genuinely invalidates rather than merely asking the browser to forget.
 | `age` | `(timestamp: float \| None) -> str` | A timestamp as how long ago it was, for a stored result | `dashboard.html`, as the `age` filter | v0.4.0 |
 | `redirect` | `(url: str, status_code: int = 303) -> RedirectResponse` | Redirect, defaulting to see-other | `routes/auth` | v0.1.0 |
 | `wake_worker` | `(request) -> None` | Tells the job worker to look now rather than at its next poll | every route that enqueues a job | v0.6.0 |
+| `serve_artifact` | `(request, artifact_id: str, *, on_error: str) -> Response` | Streams one stored artifact to the browser, shared by every page that lists artifacts | `routes.collect.download_artifact`, `routes.jobs.download_job_artifact` | v0.6.3 |
 
 `templates` is the shared Jinja environment; `RedirectToLogin` is the exception
 `login_required` raises, handled in `main.create_app`.
@@ -258,6 +259,7 @@ order as `redact_text` — so the preview page and a real run cannot diverge.
 | Function | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
 | `build_report` | `(*, source, redacted, enabled, counts, lines) -> dict` | The report as plain JSON | `job_redact.run` | v0.5.2 |
+| `existing_redaction` | `(conn, data_dir, artifact_id: str, enabled) -> Job \| None` | A finished redaction of this file with these same rules, or None | `routes.jobs.start_redaction` | v0.6.3 |
 | `redacted_name` | `(name: str) -> str` | The name a redacted copy is stored under | `job_redact.run` | v0.5.2 |
 | `report_from_job` | `(conn, data_dir, job_id: str) -> dict \| None` | Reads back the report a job stored | `routes.jobs` | v0.5.2 |
 | `report_rows` | `(report: dict) -> list[dict]` | The report's per-rule rows, filled out from `RULES` | `routes.jobs` | v0.5.2 |
@@ -312,7 +314,8 @@ cleanup that has not been previewed.
 | --- | --- | --- | --- | --- |
 | `apply` | `(conn, data_dir, *, keep_days, keep_count) -> Plan` | Deletes what `plan` names, returning what actually went | `routes.collect.run_cleanup` | v0.6.0 |
 | `collections` | `(conn) -> list[Collection]` | Every stored collection, newest first | `plan`, `delete_collection` | v0.6.0 |
-| `delete_collection` | `(conn, data_dir, job_id: str) -> bool` | Deletes one collection outright | `routes.collect.delete_collection` | v0.6.0 |
+| `delete_collection` | `(conn, data_dir, job_id: str) -> bool` | Deletes one collection outright, via `delete_job` | `routes.collect.delete_collection` | v0.6.0 |
+| `delete_job` | `(conn, data_dir, job_id: str, *, kind: str \| None = None) -> bool` | Deletes one job and its files outright, optionally restricted to a kind | `retention.delete_collection`, `routes.jobs.delete_redaction` | v0.6.3 |
 | `plan` | `(conn, *, keep_days, keep_count) -> Plan` | What a cleanup would delete, without deleting it | the collect page, `apply` | v0.6.0 |
 
 Two limits apply together: the newest `keep_count` collections are kept
@@ -396,6 +399,8 @@ on databases written before it did.
 | `collect_page` | `(request, username, keep_days, keep_count) -> Response` | `GET /collect` — hosts, stored collections, retention preview | router | v0.6.0 |
 | `delete_collection` | `(job_id, request, username) -> Response` | `POST /collect/{id}/delete` — deletes one collection | router | v0.6.0 |
 | `download_artifact` | `(artifact_id, request, username) -> Response` | `GET /collect/download/{id}` — streams a stored file from disk | router | v0.6.0 |
+| `delete_redaction` | `(job_id, request, username) -> Response` | `POST /jobs/{id}/delete` — deletes one redaction and its files | router | v0.6.3 |
+| `download_job_artifact` | `(artifact_id, request, username) -> Response` | `GET /jobs/download/{id}` — streams a stored file from the jobs page | router | v0.6.3 |
 | `run_cleanup` | `(request, username, keep_days, keep_count) -> Response` | `POST /collect/cleanup` — applies the retention limits | router | v0.6.0 |
 | `start_collection` | `(request, username, host_id, include_audit) -> Response` | `POST /collect` — queues a collection for one host | router | v0.6.0 |
 

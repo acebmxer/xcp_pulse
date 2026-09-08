@@ -10,10 +10,11 @@ import time
 from pathlib import Path
 
 from fastapi import Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.templating import Jinja2Templates
 
 from app import __version__
+from app.artifacts import artifact_path, get_artifact
 from app.security import current_user
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -114,3 +115,32 @@ def redirect(url: str, status_code: int = 303) -> RedirectResponse:
     method up to the client.
     """
     return RedirectResponse(url=url, status_code=status_code)
+
+
+def serve_artifact(request: Request, artifact_id: str, *, on_error: str) -> Response:
+    """Stream one stored artifact to the browser as a download.
+
+    Shared by every page that lists artifacts, rather than one copy per router:
+    the collect page and the jobs page offer the same files from the same store,
+    and two implementations would mean a fix to one leaving the other wrong.
+
+    ``FileResponse`` streams from disk, so a 433 MB bundle is never held in
+    memory. The name the browser saves under comes from the artifact row, not
+    from the path — the file on disk is a uuid, which is what stops a name from
+    Xen Orchestra reaching the filesystem at all.
+
+    ``on_error`` is the page to send the operator back to, so the message lands
+    where they pressed the button.
+    """
+    db = request.app.state.db
+    data_dir = request.app.state.settings.data_dir
+
+    artifact = get_artifact(db, artifact_id)
+    if artifact is None:
+        return redirect(f"{on_error}?error=That+file+is+no+longer+stored.")
+
+    path = artifact_path(data_dir, artifact.job_id, artifact.id)
+    if not path.is_file():
+        return redirect(f"{on_error}?error=That+file+is+missing+from+the+data+volume.")
+
+    return FileResponse(path, media_type=artifact.media_type, filename=artifact.name)

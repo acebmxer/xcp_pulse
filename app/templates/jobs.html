@@ -133,10 +133,23 @@
       {% for artifact in produced %}
       <li>
         <span class="mono">{{ artifact.name }}</span>
-        <span class="artifact-size">{{ artifact.size_human }}</span>
+        <span class="artifact-size">
+          {{ artifact.size_human }}
+          <a class="btn btn-quiet" href="/jobs/download/{{ artifact.id }}">Download</a>
+        </span>
       </li>
       {% endfor %}
     </ul>
+    {% endif %}
+
+    {#
+      Only redactions are deletable here. A collection is deleted from the
+      Collect page, where its size and which copy is which are on screen.
+    #}
+    {% if job.kind == redact_kind and not job.is_active %}
+    <form method="post" action="/jobs/{{ job.id }}/delete" class="inline">
+      <button type="submit" class="btn btn-quiet">Delete</button>
+    </form>
     {% endif %}
   </li>
   {% endfor %}

@@ -9,7 +9,7 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
-from app.artifacts import list_for_job
+from app.artifacts import artifact_path, list_for_job
 from app.job_inventory import KIND as INVENTORY_KIND
 from app.job_redact import KIND as REDACT_KIND
 from app.jobs import claim_next, enqueue, get_job, list_jobs, mark_failed, mark_succeeded
@@ -266,3 +266,203 @@ def test_the_redaction_form_is_disabled_when_nothing_can_be_redacted(
     logged_in: TestClient,
 ) -> None:
     assert 'name="artifact_id" disabled' in logged_in.get("/jobs").text
+
+
+def test_every_stored_file_has_a_download_link(connected: TestClient) -> None:
+    """A file the page names but cannot hand over is a result nobody can use.
+
+    Both artifacts a redaction produces are checked, because the redacted copy
+    is the point of the run and the report is what says what it masked.
+    """
+    app = connected.app  # type: ignore[attr-defined]
+    connected.post("/jobs/redact", data={"artifact_id": _inventory_artifact(app)})
+    run_pending_jobs(app)
+
+    body = connected.get("/jobs").text
+    job = list_jobs(app.state.db, kind=REDACT_KIND)[0]
+    produced = list_for_job(app.state.db, job.id)
+
+    assert len(produced) == 2
+    for artifact in produced:
+        assert f'href="/jobs/download/{artifact.id}"' in body
+
+
+def test_downloading_a_stored_file_serves_its_bytes(connected: TestClient) -> None:
+    """The name the browser saves under is the artifact's, not the uuid on disk."""
+    app = connected.app  # type: ignore[attr-defined]
+    connected.post("/jobs/redact", data={"artifact_id": _inventory_artifact(app)})
+    run_pending_jobs(app)
+
+    job = list_jobs(app.state.db, kind=REDACT_KIND)[0]
+    report = next(
+        item for item in list_for_job(app.state.db, job.id) if item.name == "redaction-report.json"
+    )
+
+    response = connected.get(f"/jobs/download/{report.id}")
+    assert response.status_code == 200
+    assert "redaction-report.json" in response.headers["content-disposition"]
+    assert response.json()["source"]["name"] == "inventory.json"
+
+
+def test_downloading_a_file_that_is_gone_says_so(connected: TestClient) -> None:
+    response = connected.get("/jobs/download/no-such-artifact", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert "no+longer+stored" in response.headers["location"]
+
+
+def test_deleting_a_redaction_removes_its_files_and_its_row(connected: TestClient) -> None:
+    """The copy and the report go together — half a redaction is not a result."""
+    app = connected.app  # type: ignore[attr-defined]
+    connected.post("/jobs/redact", data={"artifact_id": _inventory_artifact(app)})
+    run_pending_jobs(app)
+
+    job = list_jobs(app.state.db, kind=REDACT_KIND)[0]
+    paths = [
+        artifact_path(app.state.settings.data_dir, job.id, item.id)
+        for item in list_for_job(app.state.db, job.id)
+    ]
+    assert paths and all(path.is_file() for path in paths)
+
+    response = connected.post(f"/jobs/{job.id}/delete")
+
+    assert "Redaction+deleted" in response.headers["location"]
+    assert list_jobs(app.state.db, kind=REDACT_KIND) == []
+    assert list_for_job(app.state.db, job.id) == []
+    assert not any(path.exists() for path in paths)
+
+
+def test_the_delete_button_shows_only_on_redactions(connected: TestClient) -> None:
+    """A collection is deleted from the Collect page, where its size is shown."""
+    app = connected.app  # type: ignore[attr-defined]
+    _inventory_artifact(app)
+    inventory_job = list_jobs(app.state.db, kind=INVENTORY_KIND)[0]
+
+    body = connected.get("/jobs").text
+    assert f'action="/jobs/{inventory_job.id}/delete"' not in body
+
+    connected.post("/jobs/redact", data={"artifact_id": _inventory_artifact(app)})
+    run_pending_jobs(app)
+    redact_job = list_jobs(app.state.db, kind=REDACT_KIND)[0]
+
+    body = connected.get("/jobs").text
+    assert f'action="/jobs/{redact_job.id}/delete"' in body
+    assert f'action="/jobs/{inventory_job.id}/delete"' not in body
+
+
+def test_deleting_a_job_that_is_not_a_redaction_is_refused(connected: TestClient) -> None:
+    """The route must not become a way to delete a 2.3 GiB collection unseen."""
+    app = connected.app  # type: ignore[attr-defined]
+    _inventory_artifact(app)
+    job = list_jobs(app.state.db, kind=INVENTORY_KIND)[0]
+
+    response = connected.post(f"/jobs/{job.id}/delete")
+
+    assert "no+such+redaction" in response.headers["location"]
+    assert len(list_jobs(app.state.db, kind=INVENTORY_KIND)) == 1
+
+
+def test_redacting_the_same_file_with_the_same_rules_is_refused(connected: TestClient) -> None:
+    """A second identical run costs a second copy and answers nothing new."""
+    app = connected.app  # type: ignore[attr-defined]
+    artifact_id = _inventory_artifact(app)
+    connected.post("/jobs/redact", data={"artifact_id": artifact_id})
+    run_pending_jobs(app)
+
+    response = connected.post("/jobs/redact", data={"artifact_id": artifact_id})
+
+    assert "already+redacted" in response.headers["location"]
+    assert len(list_jobs(app.state.db, kind=REDACT_KIND)) == 1
+
+
+def test_redacting_the_same_file_with_different_rules_is_allowed(connected: TestClient) -> None:
+    """A different set of rules is a different result, which is the point.
+
+    The negative half of the guard above: a check that only refuses proves
+    nothing about a condition that could be stuck on.
+    """
+    app = connected.app  # type: ignore[attr-defined]
+    artifact_id = _inventory_artifact(app)
+    connected.post("/jobs/redact", data={"artifact_id": artifact_id})
+    run_pending_jobs(app)
+
+    set_enabled_rules(app.state.db, [rule.name for rule in RULES if rule.name != "uuid"])
+    response = connected.post("/jobs/redact", data={"artifact_id": artifact_id})
+
+    assert response.status_code == 303
+    assert "already+redacted" not in response.headers["location"]
+    assert len(list_jobs(app.state.db, kind=REDACT_KIND)) == 2
+
+
+def test_a_different_file_with_the_same_rules_is_allowed(connected: TestClient) -> None:
+    """The guard is per file, not a global "one redaction with these rules"."""
+    app = connected.app  # type: ignore[attr-defined]
+    first = _inventory_artifact(app)
+    connected.post("/jobs/redact", data={"artifact_id": first})
+    run_pending_jobs(app)
+
+    second = _inventory_artifact(app)
+    response = connected.post("/jobs/redact", data={"artifact_id": second})
+
+    assert response.status_code == 303
+    assert "already+redacted" not in response.headers["location"]
+    assert len(list_jobs(app.state.db, kind=REDACT_KIND)) == 2
+
+
+def test_redacting_again_is_allowed_once_the_first_result_is_deleted(
+    connected: TestClient,
+) -> None:
+    """The refusal points at a stored result; with none stored there is none."""
+    app = connected.app  # type: ignore[attr-defined]
+    artifact_id = _inventory_artifact(app)
+    connected.post("/jobs/redact", data={"artifact_id": artifact_id})
+    run_pending_jobs(app)
+
+    job = list_jobs(app.state.db, kind=REDACT_KIND)[0]
+    connected.post(f"/jobs/{job.id}/delete")
+
+    response = connected.post("/jobs/redact", data={"artifact_id": artifact_id})
+
+    assert response.status_code == 303
+    assert "already+redacted" not in response.headers["location"]
+    assert len(list_jobs(app.state.db, kind=REDACT_KIND)) == 1
+
+
+def test_the_refusal_names_the_redaction_that_already_answers_it(
+    connected: TestClient,
+) -> None:
+    """A refusal naming nothing sends the operator to scroll the history.
+
+    Checked on the rendered banner rather than the redirect, because what
+    matters is the sentence the operator reads.
+    """
+    app = connected.app  # type: ignore[attr-defined]
+    artifact_id = _inventory_artifact(app)
+    set_enabled_rules(app.state.db, [rule.name for rule in RULES if rule.name != "uuid"])
+    connected.post("/jobs/redact", data={"artifact_id": artifact_id})
+    run_pending_jobs(app)
+
+    body = connected.post(
+        "/jobs/redact", data={"artifact_id": artifact_id}, follow_redirects=True
+    ).text
+    banner = " ".join(re.search(r'alert-error">(.*?)</div>', body, re.S).group(1).split())
+
+    assert "already redacted just now" in banner
+    # Which rule was off, so the operator can tell what a rerun would change.
+    assert "UUIDs switched off" in banner
+    assert "delete that redaction" in banner
+
+
+def test_the_refusal_says_when_every_rule_was_on(connected: TestClient) -> None:
+    """The all-on case has no rule to name, and must not read as a bug."""
+    app = connected.app  # type: ignore[attr-defined]
+    artifact_id = _inventory_artifact(app)
+    connected.post("/jobs/redact", data={"artifact_id": artifact_id})
+    run_pending_jobs(app)
+
+    body = connected.post(
+        "/jobs/redact", data={"artifact_id": artifact_id}, follow_redirects=True
+    ).text
+    banner = " ".join(re.search(r'alert-error">(.*?)</div>', body, re.S).group(1).split())
+
+    assert "with every rule switched on" in banner
