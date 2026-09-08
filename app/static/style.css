@@ -699,3 +699,123 @@ textarea {
 .alert .artifacts li {
   padding: 0.1rem 0;
 }
+
+/* ---- findings ---- */
+
+/* Severity is the one thing that has to be readable before anything else on
+   this page, so it gets a colour and a shape rather than only a word. The
+   three tokens are the existing danger/accent/dim ones — a fourth palette for
+   one page would drift from the rest of the UI the first time either moved. */
+.sev-summary {
+  list-style: none;
+  display: flex;
+  gap: 1.5rem;
+  margin: 1rem 0 0;
+  padding: 0;
+}
+
+.sev-count { display: flex; flex-direction: column; }
+
+.sev-number {
+  font-size: 1.6rem;
+  font-weight: 700;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.sev-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+}
+
+.sev-count.sev-critical .sev-number { color: var(--danger-text); }
+.sev-count.sev-warning .sev-number { color: var(--accent); }
+
+/* A zero is dimmed rather than hidden. "No critical findings" is the answer
+   someone opens this page for, and an absent row does not say it. */
+.sev-count.is-zero .sev-number { color: var(--text-dim); font-weight: 500; }
+
+.sev-tag {
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.sev-tag.sev-critical {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+  color: var(--danger-text);
+}
+
+.sev-tag.sev-warning {
+  background: transparent;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.findings { list-style: none; margin: 1.25rem 0 0; padding: 0; }
+.findings > li + li { margin-top: 0.85rem; }
+
+/* The left edge carries the severity a second time, so the list can be
+   skimmed down the margin without reading a single tag. */
+.finding { border-left: 3px solid var(--border); }
+.finding-critical { border-left-color: var(--danger-text); }
+.finding-warning { border-left-color: var(--accent); }
+
+.finding-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.finding-title { margin: 0; font-size: 1rem; }
+
+.finding-count {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.finding-meta {
+  margin: 0.3rem 0 0;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+/* Evidence wraps rather than scrolling sideways. A stack trace or a message
+   body is long, and a line running off the right edge of the card is a line
+   nobody reads — the same failure the collect page's log lines had. */
+.finding-evidence {
+  margin: 0.7rem 0 0;
+  padding: 0.6rem 0.75rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.finding-action { margin: 0.7rem 0 0; font-size: 0.9rem; }
+
+/* The sources table gained two prose columns, so it can no longer shrink to
+   fit a phone. Scrolling it inside its own card beats wrapping every cell to
+   two words — the same rule the collect page's wide tables follow. */
+.source-note { margin-top: 0; }
+
+.card:has(> .source-note) { overflow-x: auto; }
+
+.card > .source-note + .report {
+  min-width: 34rem;
+}

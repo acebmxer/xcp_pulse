@@ -10,6 +10,76 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+### Added
+
+- **Findings from the Xen Orchestra API.** A new **Findings** page and
+  background job read seven API routes — XAPI messages, alarms, tasks, missing
+  patches per pool, backup runs, restore runs and the pool dashboard — and turn
+  what they report into findings, each with a severity, a title, the evidence
+  behind it, a suggested action and the source it came from. It downloads
+  nothing and needs no `export:logs` privilege, so it answers "is anything
+  wrong?" in a second or two rather than the two minutes a log collection
+  takes.
+
+  Repeated events are grouped into one finding with a count and the most recent
+  occurrence's evidence, since four messages about one storage repository are
+  one problem that happened four times. Routine VM lifecycle events are dropped:
+  measured on a live pool, `VM_SNAPSHOTTED`, `VM_STARTED`, `VM_SHUTDOWN` and
+  `VM_MIGRATED` were 3,381 of 3,472 messages, and a report including them buries
+  everything worth reading. Failed logins are dropped from the task source for
+  the same reason — 13 of 16 task failures on that pool were bad passwords,
+  which say nothing about the pool.
+
+  One source failing never fails the run: a restricted account is refused the
+  pool dashboard and can still read messages and tasks, so each source is tried
+  and a refusal is recorded against it with its reason. A source that was
+  refused is shown as **not read** rather than as clean, because an XOA without
+  a support subscription cannot list patches, and reporting that as "no missing
+  patches" would be a false statement about the pool.
+
+  **The Markdown report is plain ASCII.** An em dash is three UTF-8 bytes, and
+  anything opening the file as Latin-1 renders it as `â` — which happened to a
+  real downloaded report even though the file on disk was valid UTF-8 and the
+  download header said `charset=utf-8`. A report is emailed, pasted into
+  ticketing systems and opened by other people's tools, so it now emits nothing
+  that can break that way, and a test holds the whole generated document to
+  ASCII.
+
+  The sources table says **where each source comes from** and **what it holds**.
+  Xen Orchestra serves all seven routes but originates only three of them — the
+  rest it relays from the XCP-ng hosts — and which it is decides where to go to
+  act on a finding: a XAPI message means log in to the host, a failed task means
+  look in Xen Orchestra. A count of zero is written as what was checked rather
+  than as a bare `0`, because "no alarms exist" and "nothing was examined" are
+  different facts that a zero cannot tell apart; the patch check names the pools
+  it asked, since "none missing" is its answer rather than an absence of data.
+
+  Evidence is masked with the redaction rules switched on at the time, through
+  the same `redact_line` a collected bundle uses, and the report **names any
+  rule that was switched off** — on the page, above the findings, and in the
+  Markdown before the first one. An unmasked value and a value no rule ever
+  looked for read identically, so a report that does not say which rules were
+  off cannot be judged safe to send. XO task properties carry
+  usernames and the caller's IP address, so only the task's name and its failure
+  message are read out of one. The report is stored as two artifacts — JSON,
+  which the page renders, and Markdown, which is what goes into a support
+  ticket — both downloadable from the page.
+
+### Fixed
+
+- **The Xen Orchestra event routes are bounded by a time filter, not by
+  `limit`.** Measured against XO CE: `limit` is applied to the *oldest* records
+  rather than the newest, so asking `/messages` for 2,000 of a pool's 3,472 rows
+  returned everything from the first month and nothing from the last — hiding
+  every recent event behind a parameter that looked like it was working.
+  `sort` and `order` are accepted and silently ignored. The window is now
+  expressed as a `filter`, which XO applies server-side, so the response shrinks
+  with the window instead of growing with pool age. The filter is built in one
+  place because the two timestamp scales differ — XAPI messages and alarms carry
+  seconds, XO tasks and backup runs carry milliseconds — and filtering a
+  millisecond field with a seconds value matches every record, which is a bug
+  indistinguishable from a working filter.
+
 ### Changed
 
 - **Hit counts and job summary lines are thousands-separated.** A report puts

@@ -27,6 +27,51 @@ genuinely has to come first:
 
 ---
 
+## In progress
+
+### Findings from the API
+
+*Built, not yet released. Does not need a collected bundle.*
+
+A findings report without collecting anything — seconds rather than the two
+minutes a log collection takes, and no `export:logs` privilege.
+
+- Seven sources: XAPI messages, alarms, tasks, missing patches per pool, backup
+  runs, restore runs, and the pool dashboard
+- Each finding: severity, title, evidence, suggested action, source — and a
+  count, because four messages about one storage repository are one problem
+- Repeated events grouped, routine VM lifecycle events dropped: measured on a
+  live pool, `VM_SNAPSHOTTED`, `VM_STARTED`, `VM_SHUTDOWN` and `VM_MIGRATED`
+  were 3,381 of 3,472 messages
+- Stored as JSON for the page and Markdown for a support ticket, both
+  downloadable
+- The sources table names where each source comes from — the **XCP-ng hosts**
+  or **Xen Orchestra itself** — because that decides where to go to act on a
+  finding. Missing patches are XCP-ng host updates, not XO's own version.
+
+**A refused source is reported as unread, never as clean.** A restricted
+account is refused the pool dashboard and can still read messages and tasks, so
+one source failing does not fail the run. An XOA without a support subscription
+cannot list patches, and reporting that as "no missing patches" would be a false
+statement about the pool.
+
+Evidence is masked with the redaction rules switched on at the time, and the
+report names any rule that was **switched off** — an unmasked value and a value
+no rule looked for read identically, so a report that does not say which rules
+were off cannot be judged safe to send. Xen Orchestra task properties carry
+usernames and the caller's IP address, so only the task's name and its failure
+message are read out of one.
+
+> [!NOTE]
+> **Xen Orchestra applies `limit` to the oldest records, not the newest**, and
+> ignores `sort` and `order`. Asking `/messages` for 2,000 of 3,472 rows
+> returned the first month and hid every recent event. The window is a `filter`
+> instead, applied server-side. Messages and alarms carry seconds while tasks
+> and backup runs carry milliseconds — filtering one with the other's scale
+> matches everything, which looks exactly like a working filter.
+
+---
+
 ## Shipped
 
 ### v0.1.0 — Log in
@@ -211,17 +256,6 @@ this plainly, rather than surfacing a bare `403`.
 Nothing below blocks anything else. Order is a choice about what is most
 useful.
 
-### Findings from the API
-
-*Prerequisite met: an XO connection, shipped in v0.2.0. Does not need a
-collected bundle.*
-
-A findings report without collecting anything.
-
-- Failed tasks with stack traces, alarms, XAPI messages, missing patches,
-  backup and restore results, pool dashboard
-- Each finding: severity, title, evidence, suggested action, source
-
 ### Findings from the logs
 
 *Prerequisite met: full-bundle collection shipped in v0.6.0.*
@@ -379,7 +413,8 @@ One item is still waiting on something that does not exist yet.
 
 ### Vates support package
 
-*Still waiting on: findings. Redaction and collection have shipped.*
+*Waiting on: findings from the logs. API findings, redaction and collection are
+built.*
 
 One file to attach to a support ticket.
 

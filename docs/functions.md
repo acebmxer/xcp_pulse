@@ -37,6 +37,7 @@ columns; those are a reviewer's job.
 | Add a new kind of background job | `app/job_inventory.py` as the worked example; register it in `app/job_runner.py` and import it in `app/main.py` |
 | Redact a stored file and report what was masked | `app/job_redact.py` |
 | Collect a host's logs and redact them | `app/job_collect.py` |
+| Ask the API what is wrong | `app/findings.py`, run by `app/job_findings.py` |
 | Decide what stored collections to delete | `app/retention.py` — always `plan` before `apply` |
 | Show a byte count on a page | `app/artifacts.py` — `human_bytes` |
 | Store or read what a job produced | `app/artifacts.py` |
@@ -143,6 +144,8 @@ stored URL, token and TLS setting are applied in one place.
 
 | Method | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
+| `XoClient.alarms` | `(since: float) -> list[dict]` | Alarms raised since a Unix time | `findings.collect_findings` | unreleased |
+| `XoClient.backup_logs` | `(since: float) -> list[dict]` | Backup job runs since a Unix time | `findings.collect_findings` | unreleased |
 | `XoClient.check_log_export` | `(*, is_admin: bool) -> LogExportSupport` | Whether this account can download host logs, and why not | `test_connection`, settings page | v0.2.0 |
 | `XoClient.grantable_host_actions` | `() -> set[str]` | Host actions this instance can grant to a role | `check_log_export` | v0.2.0 |
 | `XoClient.download_audit` | `(host_id, destination, *, on_chunk=None) -> int` | Streams a host's XAPI audit trail to a file | `job_collect.run` | v0.6.0 |
@@ -150,6 +153,11 @@ stored URL, token and TLS setting are applied in one place.
 | `XoClient.download_to` | `(path, destination, *, on_chunk=None) -> int` | Streams any XO route to a file, never holding the body | `download_logs`, `download_audit` | v0.6.0 |
 | `XoClient.inventory` | `() -> Inventory` | Pools and hosts with their details, for the dashboard | `job_inventory.run` | v0.3.0 |
 | `XoClient.is_admin` | `() -> bool` | Whether the account has XO administrator permission | `test_connection` | v0.2.0 |
+| `XoClient.messages` | `(since: float) -> list[dict]` | XAPI messages since a Unix time | `findings.collect_findings` | unreleased |
+| `XoClient.missing_patches` | `(pool_id: str) -> list[dict]` | Patches XO reports missing on one pool | `findings.collect_findings` | unreleased |
+| `XoClient.pool_dashboard` | `() -> dict` | The dashboard totals: patches, backups, storage, host state | `findings.collect_findings` | unreleased |
+| `XoClient.restore_logs` | `(since: float) -> list[dict]` | Restore runs since a Unix time | `findings.collect_findings` | unreleased |
+| `XoClient.tasks` | `(since: float) -> list[dict]` | XO tasks since a Unix time, with failure results | `findings.collect_findings` | unreleased |
 | `XoClient.list_hosts` | `() -> list[str]` | Host hrefs this account can see, for counting only | `test_connection` | v0.2.0 |
 | `XoClient.list_pools` | `() -> list[str]` | Pool hrefs this account can see, for counting only | `test_connection` | v0.2.0 |
 | `XoClient.test_connection` | `() -> ConnectionTest` | Checks URL and token, reports what the account reaches | `routes.settings.settings_test` | v0.2.0 |
@@ -165,6 +173,14 @@ it directly. `ConnectionTest` and `LogExportSupport` are frozen dataclasses.
 `/hosts`, not a 403.** Treating a successful request as a usable connection is
 therefore wrong, which is why `test_connection` reports what was visible rather
 than only whether the call succeeded.
+
+**The event routes are bounded by `filter`, never by `limit`.** Measured: XO
+applies `limit` to the *oldest* records, so asking `/messages` for 2000 of 3472
+rows returned the first month and hid every recent finding; `sort` and `order`
+are accepted and ignored. `_events` builds the time filter for all five event
+routes in one place, because messages and alarms carry seconds while tasks and
+backup runs carry milliseconds — and filtering a millisecond field with a
+seconds value matches everything, which looks exactly like a working filter.
 
 ## `app/xo_connection.py` — the stored connection
 
@@ -306,6 +322,69 @@ The raw bundle is kept alongside the redacted one because the redacted copy is
 lossy, and a question about what was masked can only be answered against the
 original. The collect page marks which is which.
 
+## `app/findings.py` — what the API says is wrong
+
+Turns seven Xen Orchestra reads into findings: severity, title, evidence,
+suggested action, source. No HTTP of its own — every call goes through
+`XoClient`, and every finding is built by `_finding`, which is the only
+constructor and redacts the evidence on the way in.
+
+| Function | Signature | Does | Used by | Since |
+| --- | --- | --- | --- | --- |
+| `collect_findings` | `(client, pools, *, enabled=None, window_days=30, now=None, progress=None) -> Report` | Reads every source and builds the report | `job_findings.run` | unreleased |
+| `disabled_rule_titles` | `(enabled) -> list[str]` | The titles of the redaction rules switched off, for the report | `collect_findings` | unreleased |
+| `sort_findings` | `(findings: list[Finding]) -> list[Finding]` | Worst first, then most recent, then by title | `collect_findings`, `job_findings.report_from_job` | unreleased |
+
+`Finding`, `SourceInfo`, `SourceResult` and `Report` are dataclasses. `SOURCES`
+holds each source's title, origin, what it holds and the unit it is counted in
+— origin because Xen Orchestra *serves* all seven routes but *originates* only
+three, and a XAPI message means log in to the host while a failed task means
+look in XO. `SourceResult.examined_text` phrases the count, so a zero says what
+was checked rather than reading as "nothing was examined". `Report.sources`
+records every source that was tried, so a source that was **refused** is told
+apart from one that was read and found nothing — the same distinction the
+redaction report draws between a rule with no hits and a rule switched off.
+
+**One source failing never fails the run.** A restricted account is refused the
+pool dashboard and can still read messages and tasks, and a report covering
+four sources is worth more than an error.
+
+**Evidence is masked before it is stored**, by `redact.redact_line` under the
+rules switched on at the time — not by a second masking implementation for
+short strings. XO task `properties` carry usernames and client IP addresses,
+so only `properties.name` and the failure message are read out of a task.
+
+Message classification is two tables: `MESSAGE_RULES` matched exactly, then
+`MESSAGE_PREFIX_RULES` matched by prefix for vendor families. Anything in
+neither is routine and is dropped — measured, VM lifecycle events alone were
+3,381 of 3,472 messages on one pool.
+
+## `app/job_findings.py` — the API findings job
+
+Runs `collect_findings` and stores the report twice: JSON, which the page reads
+back, and Markdown, which is what goes into a support ticket.
+
+| Function | Signature | Does | Used by | Since |
+| --- | --- | --- | --- | --- |
+| `report_from_job` | `(conn, data_dir, job_id: str) -> Report \| None` | Rebuilds the Report a job stored | `routes.findings.findings_page` | unreleased |
+| `run` | `(context: JobContext) -> None` | Reads every source and stores the report | `job_runner`, via `register` | unreleased |
+| `to_markdown` | `(report: Report) -> str` | The report as Markdown, for a support ticket | `job_findings.run` | unreleased |
+| `to_payload` | `(report: Report) -> dict` | The report as plain JSON | `job_findings.run` | unreleased |
+
+`report_from_job` drops unknown keys and leaves missing ones at their dataclass
+default, so a report written by an older version still renders.
+
+The Markdown is **plain ASCII**. The file on disk is valid UTF-8 and is served
+with `charset=utf-8`, and a real downloaded report still arrived with `â` where
+its em dashes were — a report is emailed and opened by other people's tools, so
+the reliable fix is to emit nothing that can mis-decode. `test_job_findings.py`
+holds the generated document to ASCII.
+
+The Markdown copy is written through `artifacts.store_file` rather than
+`store_json`, which would wrap the text in JSON quotes. It is the one text
+artifact written, and it still goes through the same store, hash and delete
+path as a 433 MB bundle.
+
 ## `app/retention.py` — what to delete, previewed first
 
 A collection is about 433 MB, so a data volume fills quickly. Every caller asks
@@ -405,6 +484,9 @@ on databases written before it did.
 | `download_job_artifact` | `(artifact_id, request, username) -> Response` | `GET /jobs/download/{id}` — streams a stored file from the jobs page | router | v0.6.3 |
 | `run_cleanup` | `(request, username, keep_days, keep_count) -> Response` | `POST /collect/cleanup` — applies the retention limits | router | v0.6.0 |
 | `start_collection` | `(request, username, host_id, include_audit) -> Response` | `POST /collect` — queues a collection for one host | router | v0.6.0 |
+| `findings_page` | `(request, username) -> Response` | `GET /findings` — the latest stored findings report | router | unreleased |
+| `start_findings` | `(request, username) -> Response` | `POST /findings` — queues a findings run | router | unreleased |
+| `download_findings` | `(artifact_id, request, username) -> Response` | `GET /findings/download/{id}` — streams the stored JSON or Markdown | router | unreleased |
 
 ## `app/hashpw.py` — password hash helper
 

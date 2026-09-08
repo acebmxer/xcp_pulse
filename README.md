@@ -7,11 +7,11 @@
 [![Issues](https://img.shields.io/github/issues/acebmxer/xcp_pulse)](https://github.com/acebmxer/xcp_pulse/issues)
 [![Stars](https://img.shields.io/github/stars/acebmxer/xcp_pulse)](https://github.com/acebmxer/xcp_pulse/stargazers)
 [![Forks](https://img.shields.io/github/forks/acebmxer/xcp_pulse)](https://github.com/acebmxer/xcp_pulse/forks)
-[![Unique cloners](https://img.shields.io/badge/unique%20cloners-0-lightgrey)](https://github.com/acebmxer/xcp_pulse/graphs/traffic)
+[![Unique cloners](https://img.shields.io/badge/unique%20cloners-104-brightgreen)](https://github.com/acebmxer/xcp_pulse/graphs/traffic)
 [![Python](https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white)](pyproject.toml)
 [![Docker](https://img.shields.io/badge/docker-compose-2496ED?logo=docker&logoColor=white)](docker-compose.yml.example)
 [![Platform: Linux](https://img.shields.io/badge/platform-linux-333333?logo=linux&logoColor=white)](#requirements)
-[![Tests](https://img.shields.io/badge/tests-314%20unit-informational)](https://github.com/acebmxer/xcp_pulse/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-413%20unit-informational)](https://github.com/acebmxer/xcp_pulse/actions/workflows/ci.yml)
 [![Ruff](https://img.shields.io/badge/ruff-clean-brightgreen)](https://github.com/acebmxer/xcp_pulse/actions/workflows/ci.yml)
 
 Collects XCP-ng and Xen Orchestra logs, bundles them for download, analyses
@@ -22,7 +22,8 @@ Vates support ticket.
 > XCP Pulse is being built in stages. **Log collection shipped in v0.6.0: it
 > downloads a host's full log bundle, keeps the raw copy, and produces a
 > redacted copy to send — with a report of what was masked.**
-> Findings from the logs and a Vates support package come next. See
+> Findings from the API are built and awaiting release. Findings from the logs
+> and a Vates support package come next. See
 > [the roadmap](docs/roadmap.md) for what is planned and what is done.
 
 ## Read next
@@ -89,12 +90,19 @@ rather than estimated:
 - **Keep the disk in check** — a retention policy that shows exactly which
   collections it would delete before you press the button.
 
+Built and awaiting release:
+
+- **Report findings from the API** — failed tasks, alarms, XAPI messages,
+  missing patches, backup and restore results and the pool dashboard, each with
+  the evidence behind it and what to do about it. Nothing is downloaded, so it
+  answers in seconds rather than two minutes.
+
 Still to come, on [the roadmap](docs/roadmap.md):
 
 - **Collect individual categories** — storage, XAPI, audit, security, kernel and
   the rest — extracted from the cached bundle without downloading again.
-- **Report findings** — failed tasks, missing patches, storage errors, HA events
-  — with the evidence behind each one.
+- **Findings from the logs** — storage failures, multipath flapping, XAPI
+  exceptions and HA fencing, correlated with the API's own event record.
 
 ## Configuration
 
