@@ -466,3 +466,41 @@ def test_the_refusal_says_when_every_rule_was_on(connected: TestClient) -> None:
     banner = " ".join(re.search(r'alert-error">(.*?)</div>', body, re.S).group(1).split())
 
     assert "with every rule switched on" in banner
+
+
+def test_hit_counts_are_thousands_separated() -> None:
+    """A rule column spanning 12 to 464,679 is unreadable without separators.
+
+    Both ends are asserted: a large count must gain separators, and a small one
+    must not gain anything, since a check on only the large case passes just as
+    well against a filter that mangles short numbers.
+    """
+    from app.dependencies import count
+
+    assert count(464679) == "464,679"
+    assert count(12) == "12"
+    assert count(0) == "0"
+    assert count(1000) == "1,000"
+
+
+def test_stored_progress_lines_are_separated_on_render() -> None:
+    """A job's step text is frozen at write time, so it is formatted on render.
+
+    Formatting it in the f-string that writes it would leave every row recorded
+    by an earlier version unseparated for good, which is most of the history a
+    page shows. Byte sizes must survive untouched: "863.1 MiB" is not an
+    integer to separate, and mangling it would misreport a bundle's size.
+    """
+    from app.dependencies import counts_in
+
+    assert (
+        counts_in("xcp-ng-host1: 471729 value(s) masked, 863.1 MiB stored")
+        == "xcp-ng-host1: 471,729 value(s) masked, 863.1 MiB stored"
+    )
+    assert counts_in("756 value(s) masked in 3500461 line(s)") == (
+        "756 value(s) masked in 3,500,461 line(s)"
+    )
+    # Short counts and byte sizes are left exactly as they were.
+    assert counts_in("6 value(s) masked in 39 line(s)") == "6 value(s) masked in 39 line(s)"
+    assert counts_in("2.3 GiB stored") == "2.3 GiB stored"
+    assert counts_in(None) == ""

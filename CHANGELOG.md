@@ -10,6 +10,34 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+### Changed
+
+- **Hit counts and job summary lines are thousands-separated.** A report puts
+  every rule's count in one column, and on a two-host pool that column spans six
+  orders of magnitude: XAPI writes a `trackid` each time the toolstack
+  authenticates to itself, so session tokens reach 471,729 on a single
+  collection while email addresses reach 12. Unseparated, those two are the same
+  shape at a glance, and the small counts are the ones worth reading before a
+  bundle is sent. Both the report table and the summary line above it are
+  formatted when the page renders rather than when the job runs — a job's step
+  text is stored in the database, so formatting it at write time would have left
+  every previously recorded run unseparated for good. Byte sizes are left
+  untouched.
+
+- **The container image no longer ships pip, setuptools or wheel.** The
+  Dockerfile now installs dependencies into a virtualenv in a build stage and
+  copies only that virtualenv into the runtime image, and the base image's own
+  pip is removed. A vulnerability scan of the published image reported two
+  findings — `CVE-2025-47273` in setuptools 70.3.0 and `GHSA-6v7p-g79w-8964` in
+  msgpack 1.1.2 — that came from pip's vendored bundle rather than from any
+  dependency this project declares. Neither was reachable: the vendored
+  setuptools ships only `pkg_resources`, without the `PackageIndex` class the
+  advisory concerns, and the vendored msgpack is the pure-Python fallback,
+  where the reported crash is in the C extension. They are now absent rather
+  than argued about, and an image with no package manager cannot be made to
+  install one. Nothing about the application changes; the base image's own
+  Debian packages are unaffected and still track upstream.
+
 ## [0.6.3] - 2026-09-08
 
 ### Added

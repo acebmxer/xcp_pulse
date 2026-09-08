@@ -6,6 +6,7 @@ app, which would be a circular import.
 
 from __future__ import annotations
 
+import re
 import time
 from pathlib import Path
 
@@ -71,7 +72,44 @@ def age(timestamp: float | None) -> str:
     return "over a month ago"
 
 
+def count(value: int) -> str:
+    """A hit count as something to read at a glance.
+
+    Thousands separators, because a redaction report puts rule counts in one
+    column and their range is enormous: session tokens run to six figures on a
+    two-host pool — the toolstack logs a `trackid` every time it authenticates
+    to itself — while email addresses run to a dozen. Unseparated, 464679 and
+    12 are the same shape at a glance, and the small counts are the ones an
+    operator is actually checking before sending a bundle out.
+    """
+    return f"{value:,}"
+
+
+def counts_in(text: str | None) -> str:
+    """Thousands-separate the bare integers in a stored progress line.
+
+    A job's step text is written into the database when the job runs, so
+    formatting it at write time leaves every row recorded before that change
+    unseparated for good — and those rows are most of what the page shows.
+    Separating here instead means one code path, applied on every render, and
+    the history reads consistently regardless of which version wrote it.
+
+    Only runs of four or more digits are touched, and only whole ones: a byte
+    size ("858.0 MiB") and a duration keep their own formatting because the
+    digits either side of a dot are not a standalone integer.
+    """
+    if not text:
+        return ""
+    return re.sub(
+        r"(?<![\d.])\d{4,}(?![\d.])",
+        lambda m: f"{int(m.group(0)):,}",
+        text,
+    )
+
+
 templates.env.filters["age"] = age
+templates.env.filters["count"] = count
+templates.env.filters["counts_in"] = counts_in
 
 
 class RedirectToLogin(Exception):

@@ -97,6 +97,8 @@ genuinely invalidates rather than merely asking the browser to forget.
 | --- | --- | --- | --- | --- |
 | `login_required` | `(request) -> str` | FastAPI dependency; 303s anonymous callers | every protected route | v0.1.0 |
 | `age` | `(timestamp: float \| None) -> str` | A timestamp as how long ago it was, for a stored result | `dashboard.html`, as the `age` filter | v0.4.0 |
+| `count` | `(value: int) -> str` | A hit count with thousands separators, for a report column whose range spans six orders of magnitude | `jobs.html`, `collect.html`, `redaction.html`, as the `count` filter | unreleased |
+| `counts_in` | `(text: str \| None) -> str` | Thousands-separates the integers in a stored progress line, leaving byte sizes alone | `jobs.html`, `collect.html`, as the `counts_in` filter | unreleased |
 | `redirect` | `(url: str, status_code: int = 303) -> RedirectResponse` | Redirect, defaulting to see-other | `routes/auth` | v0.1.0 |
 | `wake_worker` | `(request) -> None` | Tells the job worker to look now rather than at its next poll | every route that enqueues a job | v0.6.0 |
 | `serve_artifact` | `(request, artifact_id: str, *, on_error: str) -> Response` | Streams one stored artifact to the browser, shared by every page that lists artifacts | `routes.collect.download_artifact`, `routes.jobs.download_job_artifact` | v0.6.3 |

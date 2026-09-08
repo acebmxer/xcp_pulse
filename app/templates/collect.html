@@ -103,12 +103,12 @@
          aria-valuemin="0" aria-valuemax="100">
       <div class="progress-bar" style="width: {{ job.progress }}%"></div>
     </div>
-    <p class="job-step">{{ job.step or 'Waiting to start' }} — {{ job.progress }}%</p>
+    <p class="job-step">{{ job.step | counts_in or 'Waiting to start' }} — {{ job.progress }}%</p>
     <form method="post" action="/jobs/{{ job.id }}/cancel" class="inline">
       <button type="submit" class="btn btn-quiet">Cancel</button>
     </form>
     {% elif job.step %}
-    <p class="job-step">{{ job.step }}</p>
+    <p class="job-step">{{ job.step | counts_in }}</p>
     {% endif %}
 
     {% if job.error %}
@@ -159,7 +159,7 @@
           <th scope="row">{{ row.title }}</th>
           <td><code>{{ row.placeholder }}</code></td>
           <td class="num">
-            {% if row.enabled %}{{ row.hits }}{% else %}off{% endif %}
+            {% if row.enabled %}{{ row.hits | count }}{% else %}off{% endif %}
           </td>
         </tr>
         {% endfor %}

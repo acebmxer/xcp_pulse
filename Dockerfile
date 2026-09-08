@@ -1,22 +1,50 @@
 # XCP Pulse container image.
 #
-# Single stage: the dependency set is small and pure-Python wheels, so a
-# builder stage would add complexity without saving meaningful size.
-FROM python:3.14-slim
+# Two stages: dependencies are installed into a virtualenv in the build stage
+# and only that virtualenv is copied forward. The runtime image therefore
+# carries no pip, no setuptools and no wheel — a container that cannot install
+# packages cannot be made to install one, and pip's vendored bundle stops
+# appearing in vulnerability scans of the published image.
+FROM python:3.14-slim AS build
 
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    XCP_PULSE_DATA_DIR=/data
+ENV PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
 WORKDIR /srv/xcp-pulse
+
+# The virtualenv is built at the same path it will occupy at runtime, so the
+# shebangs and the recorded prefix stay correct after the copy.
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
 
 # Dependencies first: this layer is rebuilt only when pyproject.toml changes,
 # not on every source edit.
 COPY pyproject.toml README.md LICENSE ./
 COPY app/__init__.py ./app/
 RUN pip install --no-cache-dir .
+
+# Nothing installs packages after this point, so the tooling that does is
+# removed rather than copied forward.
+RUN pip uninstall --yes pip setuptools wheel 2>/dev/null || true
+
+
+FROM python:3.14-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PATH="/opt/venv/bin:$PATH" \
+    XCP_PULSE_DATA_DIR=/data
+
+WORKDIR /srv/xcp-pulse
+
+# The base image ships its own pip; this app never installs anything at
+# runtime, so it goes too.
+RUN python -m pip uninstall --yes pip 2>/dev/null || true \
+    && rm -rf /usr/local/lib/python3.14/site-packages/pip \
+              /usr/local/lib/python3.14/site-packages/pip-*.dist-info \
+              /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.14
+
+COPY --from=build /opt/venv /opt/venv
 
 COPY app/ ./app/
 
