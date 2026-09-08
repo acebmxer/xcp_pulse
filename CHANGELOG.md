@@ -12,6 +12,20 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ### Added
 
+- **Status panels on the dashboard.** Beneath the inventory, four panels report
+  the state of what has been built: the severity counts from the latest findings
+  report, how many redaction rules are switched off, how much the data volume is
+  holding and what the next cleanup would free, and the last five jobs with their
+  outcome. Each reads the same stored result the owning page renders, so the
+  dashboard cannot disagree with Findings, Redaction, Collect or Jobs, and none
+  of it calls Xen Orchestra.
+
+  The panels are summaries with a link, not second copies of those pages. A
+  feature earns a panel only when it changes whether an operator has to act — a
+  findings run with unread sources, masking that was partly off, a failed
+  collection — which is why having a page is not on its own a reason to appear
+  here.
+
 - **Findings from the Xen Orchestra API.** A new **Findings** page and
   background job read seven API routes — XAPI messages, alarms, tasks, missing
   patches per pool, backup runs, restore runs and the pool dashboard — and turn

@@ -213,7 +213,7 @@ through the `JobContext` it is handed.
 | `has_active` | `(conn, kind: str) -> bool` | True when a job of this kind is queued or running | `routes.jobs`, `routes.dashboard` | v0.4.0 |
 | `latest_job` | `(conn, kind: str) -> Job \| None` | The newest job of a kind, whatever its state | `routes.dashboard` | v0.4.0 |
 | `latest_successful` | `(conn, kind: str) -> Job \| None` | The newest job of a kind that succeeded | `routes.dashboard` | v0.4.0 |
-| `list_jobs` | `(conn, *, kind: str \| None = None, limit: int = 50) -> list[Job]` | Recent jobs, newest first | `routes.jobs.jobs_page` | v0.4.0 |
+| `list_jobs` | `(conn, *, kind: str \| None = None, limit: int = 50) -> list[Job]` | Recent jobs, newest first | `routes.jobs.jobs_page`, `routes.dashboard` | v0.4.0 |
 | `mark_cancelled` | `(conn, job_id: str) -> None` | Records that a job stopped on request | `job_runner.JobWorker.run_one` | v0.4.0 |
 | `mark_failed` | `(conn, job_id: str, error: str) -> None` | Records a failure and its reason | `job_runner.JobWorker.run_one` | v0.4.0 |
 | `mark_succeeded` | `(conn, job_id: str, step: str = "") -> None` | Records completion | `job_runner.JobWorker.run_one` | v0.4.0 |
@@ -366,7 +366,7 @@ back, and Markdown, which is what goes into a support ticket.
 
 | Function | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
-| `report_from_job` | `(conn, data_dir, job_id: str) -> Report \| None` | Rebuilds the Report a job stored | `routes.findings.findings_page` | unreleased |
+| `report_from_job` | `(conn, data_dir, job_id: str) -> Report \| None` | Rebuilds the Report a job stored | `routes.findings.findings_page`, `routes.dashboard` | unreleased |
 | `run` | `(context: JobContext) -> None` | Reads every source and stores the report | `job_runner`, via `register` | unreleased |
 | `to_markdown` | `(report: Report) -> str` | The report as Markdown, for a support ticket | `job_findings.run` | unreleased |
 | `to_payload` | `(report: Report) -> dict` | The report as plain JSON | `job_findings.run` | unreleased |
@@ -397,7 +397,7 @@ cleanup that has not been previewed.
 | `collections` | `(conn) -> list[Collection]` | Every stored collection, newest first | `plan`, `delete_collection` | v0.6.0 |
 | `delete_collection` | `(conn, data_dir, job_id: str) -> bool` | Deletes one collection outright, via `delete_job` | `routes.collect.delete_collection` | v0.6.0 |
 | `delete_job` | `(conn, data_dir, job_id: str, *, kind: str \| None = None) -> bool` | Deletes one job and its files outright, optionally restricted to a kind | `retention.delete_collection`, `routes.jobs.delete_redaction` | v0.6.3 |
-| `plan` | `(conn, *, keep_days, keep_count) -> Plan` | What a cleanup would delete, without deleting it | the collect page, `apply` | v0.6.0 |
+| `plan` | `(conn, *, keep_days, keep_count) -> Plan` | What a cleanup would delete, without deleting it | the collect page, the dashboard storage panel, `apply` | v0.6.0 |
 
 Two limits apply together: the newest `keep_count` collections are kept
 whatever their age, and only what remains is judged against `keep_days`. That
@@ -422,7 +422,7 @@ name coming from Xen Orchestra can never choose a path.
 | `artifacts_dir` | `(data_dir: Path) -> Path` | The directory holding every body, created if absent | `artifacts.artifact_path` | v0.4.0 |
 | `delete_for_job` | `(conn, data_dir: Path, job_id: str) -> int` | Removes a job's files and rows together | `retention.apply`, `retention.delete_collection` | v0.4.0 |
 | `get_artifact` | `(conn, artifact_id: str) -> Artifact \| None` | One artifact's metadata | `routes.collect.download_artifact`, `routes.jobs` | v0.4.0 |
-| `human_bytes` | `(size: int) -> str` | A byte count as something to put on a page | `Artifact.size_human`, retention, `job_collect` | v0.6.0 |
+| `human_bytes` | `(size: int) -> str` | A byte count as something to put on a page | `Artifact.size_human`, retention, `job_collect`, `routes.dashboard` | v0.6.0 |
 | `list_for_job` | `(conn, job_id: str) -> list[Artifact]` | Everything one job produced | `routes.jobs`, `job_inventory` | v0.4.0 |
 | `read_json` | `(data_dir: Path, artifact: Artifact) -> object` | Reads a JSON artifact's body back | `job_inventory.inventory_from_job` | v0.4.0 |
 | `store_file` | `(conn, data_dir, *, job_id, name, media_type, source, move=True) -> Artifact` | Takes a file on disk into the store, hashing in chunks | `job_collect`, `job_redact` | v0.4.0 |
@@ -441,7 +441,7 @@ password, and `mac` before `ipv6` because a MAC is also colon-separated hex.
 | Function | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
 | `active_rules` | `(enabled: frozenset[str] \| set[str] \| None = None) -> tuple[Rule, ...]` | The rules to apply, in order; `None` means all | `redact_line`, `redact_text` | v0.5.0 |
-| `enabled_rules` | `(conn: sqlite3.Connection) -> frozenset[str]` | The names of the rules currently switched on | `routes.redaction` | v0.5.1 |
+| `enabled_rules` | `(conn: sqlite3.Connection) -> frozenset[str]` | The names of the rules currently switched on | `routes.redaction`, `routes.dashboard` | v0.5.1 |
 | `redact_line` | `(line: str, enabled=None) -> str` | Masks one line — the unit a streaming repack uses | `redact_text`, `job_collect` | v0.5.0 |
 | `redact_text` | `(text: str, enabled=None) -> tuple[str, dict[str, int]]` | Masks a block and counts hits per rule | `routes.redaction` | v0.5.0 |
 | `rule_by_name` | `(name: str) -> Rule \| None` | One rule by name | `set_enabled_rules` | v0.5.0 |
@@ -461,7 +461,7 @@ on databases written before it did.
 | Function | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
 | `cancel_job` | `(job_id, request, username) -> Response` | `POST /jobs/{id}/cancel` — asks a job to stop | router | v0.4.0 |
-| `dashboard` | `(request, username) -> Response` | `GET /` — shows the inventory the last refresh stored | router | v0.1.0 |
+| `dashboard` | `(request, username) -> Response` | `GET /` — the inventory the last refresh stored, plus findings, redaction, storage and recent-job panels | router | v0.1.0 |
 | `healthz` | `() -> dict[str, str]` | `GET /healthz` — unauthenticated liveness | router, compose healthcheck | v0.1.0 |
 | `login_form` | `(request, next: str = "/") -> Response` | `GET /login` | router | v0.1.0 |
 | `login_submit` | `(request, username, password, next) -> Response` | `POST /login` | router | v0.1.0 |

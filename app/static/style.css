@@ -301,6 +301,81 @@ button:focus-visible {
 
 /* ---- roadmap ---- */
 
+/* --- Dashboard status panels ------------------------------------------- */
+
+/* A responsive grid rather than fixed columns: the panels each hold a few
+   figures, so they tile at whatever width is available and stack on a phone
+   without a breakpoint per layout. */
+.status-panels {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 1rem;
+  margin-top: 1.75rem;
+}
+
+/* The heading spans the grid so it sits above the tiles, not beside them. */
+.status-panels .section-title {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.panel { padding: 1.25rem; }
+
+/* Recent activity holds rows rather than a figure, so it takes the full width
+   under the tiles when there is room for more than one column. */
+.panel-wide { grid-column: 1 / -1; }
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.panel-head h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+/* The one number a panel exists to show, sized to be read across the room in
+   the same way .sev-number is, so a panel with a figure and one with the
+   severity summary sit at the same visual weight. */
+.panel-figure {
+  margin: 0;
+  font-size: 1.6rem;
+  font-weight: 700;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.panel-figure-warn { color: var(--danger-text); }
+
+.panel .note { margin: 0.5rem 0 0; }
+
+.panel .sev-summary { margin-top: 0; }
+
+.panel-jobs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.4rem;
+}
+
+.panel-jobs li {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.88rem;
+}
+
+.panel-job-age {
+  margin-left: auto;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
 .roadmap { margin-top: 2rem; }
 .roadmap h2 { font-size: 1rem; color: var(--text-dim); margin: 0 0 0.75rem; }
 

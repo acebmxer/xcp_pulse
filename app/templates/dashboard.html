@@ -117,6 +117,136 @@
 {% endif %}
 
 {#
+  The status panels.
+
+  Each one reads a stored result and links to the page that owns it. They are
+  here to answer "is anything wrong, and did the last thing I started work?" —
+  not to restate Findings or Jobs, which is why each is a few numbers and a
+  link rather than a table.
+
+  ADDING TO THIS AS FEATURES SHIP: a new feature earns a panel only when it
+  changes that answer. Having a page is not a reason to appear here. If an
+  operator who read only this page would still act correctly without it, it
+  does not belong — a dashboard that lists everything is one nobody reads.
+#}
+{% if connection %}
+<section class="status-panels">
+  <h2 class="section-title">Status</h2>
+
+  {#
+    Findings first: it is the one panel that says something is wrong with the
+    pool rather than with XCP Pulse.
+  #}
+  <div class="card panel">
+    <div class="panel-head">
+      <h3>Findings</h3>
+      <a class="btn btn-quiet" href="/findings">Open</a>
+    </div>
+    {% if report %}
+    {% set counts = report.counts %}
+    <ul class="sev-summary">
+      {% for severity in severities %}
+      <li class="sev-count sev-{{ severity }}{{ ' is-zero' if not counts[severity] }}">
+        <span class="sev-number">{{ counts[severity] }}</span>
+        <span class="sev-label">{{ severity }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    <p class="note">
+      {% if report.is_clean %}
+      Nothing found, read {{ report.created_at | age }}.
+      {% else %}
+      Read {{ report.created_at | age }}, covering the last {{ report.window_days }} days.
+      {% endif %}
+      {% if report.unread_sources %}
+      {{ report.unread_sources | length }} source{{ '' if report.unread_sources | length == 1 else 's' }}
+      could not be read, so this is not a complete picture.
+      {% endif %}
+    </p>
+    {% else %}
+    <p class="note">
+      Nothing has been read yet. A findings run takes seconds and needs no log
+      collection — <a href="/findings">run one</a>.
+    </p>
+    {% endif %}
+  </div>
+
+  {#
+    Redaction, because a bundle collected with rules off is indistinguishable
+    from one where nothing matched, and that has to be known before anything is
+    sent to Vates.
+  #}
+  <div class="card panel">
+    <div class="panel-head">
+      <h3>Redaction</h3>
+      <a class="btn btn-quiet" href="/redaction">Open</a>
+    </div>
+    {% if rules_off %}
+    <p class="panel-figure panel-figure-warn">{{ rules_off | length }} of {{ rule_total }} rules off</p>
+    <p class="note">
+      {{ rules_off | join(', ') }} — anything collected or reported now is
+      masked only by the rules still on.
+    </p>
+    {% else %}
+    <p class="panel-figure">All {{ rule_total }} rules on</p>
+    <p class="note">Everything collected or reported is fully masked.</p>
+    {% endif %}
+  </div>
+
+  {#
+    Storage, because the data volume is where this app gets expensive — one
+    collection is about 860 MB — and the next cleanup is worth seeing before
+    it runs rather than after.
+  #}
+  <div class="card panel">
+    <div class="panel-head">
+      <h3>Storage</h3>
+      <a class="btn btn-quiet" href="/collect">Open</a>
+    </div>
+    {% set stored_count = plan.delete | length + plan.keep | length %}
+    <p class="panel-figure">{{ human_bytes(plan.stored_bytes) }}</p>
+    <p class="note">
+      {% if stored_count %}
+      Across {{ stored_count }} collection{{ '' if stored_count == 1 else 's' }}.
+      {% if plan.is_empty %}
+      The next cleanup would delete nothing.
+      {% else %}
+      The next cleanup would delete {{ plan.delete | length }}, freeing
+      {{ human_bytes(plan.freed_bytes) }}.
+      {% endif %}
+      {% else %}
+      No collections stored yet.
+      {% endif %}
+    </p>
+  </div>
+
+  {#
+    Recent activity last: it reports on XCP Pulse rather than on the pool, and
+    a failed job is the thing that makes every figure above stale.
+  #}
+  <div class="card panel panel-wide">
+    <div class="panel-head">
+      <h3>Recent activity</h3>
+      <a class="btn btn-quiet" href="/jobs">Open</a>
+    </div>
+    {% if recent_jobs %}
+    <ul class="panel-jobs">
+      {% for job in recent_jobs %}
+      <li>
+        <span class="job-kind">{{ job.kind.replace('_', ' ') }}</span>
+        <span class="job-state job-state-{{ job.state }}">{{ job.state }}</span>
+        <span class="panel-job-age">{{ (job.finished_at or job.created_at) | age }}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="note">Nothing has run yet.</p>
+    {% endif %}
+  </div>
+</section>
+{% endif %}
+
+{#
   "What is coming" is a KEEPER, not scaffolding.
 
   Nick asked for this to stay on the dashboard until he decides it is no longer
@@ -141,6 +271,9 @@
   <ol class="stages">
     <li class="stage">
       <span class="stage-name">Findings from the logs</span>
+    </li>
+    <li class="stage">
+      <span class="stage-name">Finalise the dashboard and the UI</span>
     </li>
     <li class="stage">
       <span class="stage-name">Collect individual log categories</span>

@@ -256,6 +256,23 @@ this plainly, rather than surfacing a bare `403`.
 Nothing below blocks anything else. Order is a choice about what is most
 useful.
 
+### Finalise the dashboard and the UI
+
+The dashboard shows status panels for findings, redaction, storage and recent
+activity. What is left is the pass over the whole interface once the features
+it reports on have stopped moving.
+
+- Review every page for layout, spacing and wording as a set, rather than each
+  one as it was built
+- Decide which panels stay: a feature earns a panel only when it changes
+  whether an operator needs to act, not because it has a page
+- Panels for later features where that test is met — log findings, update
+  availability, the support package
+- Settle what **What is coming** becomes once the list is short
+
+This is deliberately last among the free-to-pick-up items. Tuning an interface
+around features that are still being added means doing it twice.
+
 ### Findings from the logs
 
 *Prerequisite met: full-bundle collection shipped in v0.6.0.*
