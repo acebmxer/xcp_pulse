@@ -13,11 +13,11 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, Depends, Form, Request
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import HTMLResponse, Response
 
 from app import retention
-from app.artifacts import artifact_path, get_artifact, human_bytes, list_for_job
-from app.dependencies import login_required, redirect, templates, wake_worker
+from app.artifacts import get_artifact, human_bytes, list_for_job
+from app.dependencies import login_required, redirect, serve_artifact, templates, wake_worker
 from app.job_collect import KIND as COLLECT_KIND
 from app.job_inventory import KIND as INVENTORY_KIND
 from app.job_inventory import inventory_from_job
@@ -133,30 +133,11 @@ def download_artifact(
     request: Request,
     username: str = Depends(login_required),
 ) -> Response:
-    """Serve one stored artifact as a download.
-
-    ``FileResponse`` streams from disk, so a 433 MB bundle is never held in
-    memory. The name the browser saves under comes from the artifact row, not
-    from the path — the file on disk is a uuid, which is what stops a name from
-    Xen Orchestra reaching the filesystem at all.
-    """
-    db = request.app.state.db
-    data_dir = request.app.state.settings.data_dir
-
-    artifact = get_artifact(db, artifact_id)
-    if artifact is None:
-        return redirect("/collect?error=That+file+is+no+longer+stored.")
-
-    path = artifact_path(data_dir, artifact.job_id, artifact.id)
-    if not path.is_file():
-        return redirect("/collect?error=That+file+is+missing+from+the+data+volume.")
-
-    log.info("%s downloaded %s (%s)", username, artifact.name, artifact.size_human)
-    return FileResponse(
-        path,
-        media_type=artifact.media_type,
-        filename=artifact.name,
-    )
+    """Serve one stored artifact as a download."""
+    artifact = get_artifact(request.app.state.db, artifact_id)
+    if artifact is not None:
+        log.info("%s downloaded %s (%s)", username, artifact.name, artifact.size_human)
+    return serve_artifact(request, artifact_id, on_error="/collect")
 
 
 @router.post("/collect/{job_id}/delete")

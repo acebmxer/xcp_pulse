@@ -9,16 +9,32 @@ minute.
 from __future__ import annotations
 
 import logging
+from urllib.parse import quote_plus
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
+from app import retention
 from app.artifacts import get_artifact, list_for_job
-from app.dependencies import login_required, redirect, templates, wake_worker
+from app.dependencies import (
+    age,
+    login_required,
+    redirect,
+    serve_artifact,
+    templates,
+    wake_worker,
+)
 from app.job_inventory import KIND as INVENTORY_KIND
 from app.job_redact import KIND as REDACT_KIND
-from app.job_redact import REDACTED_MARKER, REPORT_ARTIFACT, report_from_job, report_rows
+from app.job_redact import (
+    REDACTED_MARKER,
+    REPORT_ARTIFACT,
+    existing_redaction,
+    report_from_job,
+    report_rows,
+)
 from app.jobs import enqueue, get_job, has_active, list_jobs, request_cancel
+from app.redact import RULES, enabled_rules
 from app.xo_connection import get_connection
 
 router = APIRouter()
@@ -96,10 +112,53 @@ def start_redaction(
     if has_active(db, REDACT_KIND):
         return redirect("/jobs?notice=A+redaction+is+already+running.")
 
+    # Same file, same rules, same answer. Refused rather than warned: the
+    # duplicate costs a second copy of the source's whole size on the data
+    # volume and tells the operator nothing the first run did not.
+    data_dir = request.app.state.settings.data_dir
+    enabled = enabled_rules(db)
+    earlier = existing_redaction(db, data_dir, artifact_id, enabled)
+    if earlier is not None:
+        return redirect(f"/jobs?error={quote_plus(_duplicate_message(earlier, enabled))}")
+
     job = enqueue(db, REDACT_KIND, {"artifact_id": artifact_id})
     wake_worker(request)
     log.info("queued %s job %s for %s", REDACT_KIND, job.id, username)
     return redirect("/jobs?notice=Redaction+queued.")
+
+
+@router.get("/jobs/download/{artifact_id}")
+def download_job_artifact(
+    artifact_id: str,
+    request: Request,
+    username: str = Depends(login_required),
+) -> Response:
+    """Serve one stored artifact as a download."""
+    artifact = get_artifact(request.app.state.db, artifact_id)
+    if artifact is not None:
+        log.info("%s downloaded %s (%s)", username, artifact.name, artifact.size_human)
+    return serve_artifact(request, artifact_id, on_error="/jobs")
+
+
+@router.post("/jobs/{job_id}/delete")
+def delete_redaction(
+    job_id: str,
+    request: Request,
+    username: str = Depends(login_required),
+) -> Response:
+    """Delete one redaction and the files it produced.
+
+    Restricted to redaction jobs: a collection is deleted from the collect
+    page, which shows its size and what the copy is for, and deleting one from
+    here would hide a 2.3 GiB removal behind a button in a job list.
+    """
+    db = request.app.state.db
+    data_dir = request.app.state.settings.data_dir
+
+    if retention.delete_job(db, data_dir, job_id, kind=REDACT_KIND):
+        log.info("%s deleted redaction %s", username, job_id)
+        return redirect("/jobs?notice=Redaction+deleted.")
+    return redirect("/jobs?error=There+is+no+such+redaction+to+delete.")
 
 
 @router.post("/jobs/{job_id}/cancel")
@@ -125,6 +184,30 @@ def job_status(job_id: str, request: Request, username: str = Depends(login_requ
             "error": job.error,
             "active": job.is_active,
         }
+    )
+
+
+def _duplicate_message(earlier, enabled) -> str:
+    """Why a redaction was refused, naming the run that already answers it.
+
+    Says when it ran and which rules were off, because those are what decide
+    whether the operator wants a different result or already has the one they
+    need. A refusal naming nothing makes them scroll the history to find out
+    whether the earlier copy is even still stored.
+    """
+    off = [rule.title for rule in RULES if rule.name not in enabled]
+    if not off:
+        rules = "every rule switched on"
+    elif len(off) == 1:
+        rules = f"{off[0]} switched off"
+    else:
+        rules = f"{len(off)} rules switched off ({', '.join(off)})"
+
+    return (
+        f"That file was already redacted {age(earlier.finished_at)}, with {rules} — "
+        f"the same rules as now, so a second run would produce an identical copy. "
+        f"Its files are in the history below. Change a rule in Redaction, or delete "
+        f"that redaction, to run it again."
     )
 
 

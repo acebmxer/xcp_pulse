@@ -165,27 +165,44 @@ def apply(
     return applied
 
 
-def delete_collection(conn: sqlite3.Connection, data_dir: Path, job_id: str) -> bool:
-    """Delete one collection outright. True when there was one to delete.
+def delete_job(
+    conn: sqlite3.Connection,
+    data_dir: Path,
+    job_id: str,
+    *,
+    kind: str | None = None,
+) -> bool:
+    """Delete one job and its files outright. True when there was one to delete.
 
     Separate from the policy above because "this one, now" is a different
     question from "everything past the limits", and an operator who has just
     sent a bundle to Vates wants the first one.
 
+    ``kind`` restricts what a page may delete, so the collect page cannot be
+    made to remove a redaction and vice versa; ``None`` accepts any kind.
+
     Deliberately not ``collections()``: that lists only *successful* jobs,
-    because a failed one has no result to retain — but a failed collection is
+    because a failed one has no result to retain — but a failed job is
     precisely what an operator most wants to clear away, and looking it up
     there made the button silently do nothing. Only an active job is refused,
     since deleting the files a running download is still writing would leave
     the worker writing to a path nothing owns.
     """
-    row = conn.execute(
-        "SELECT id FROM jobs WHERE id = ? AND kind = ? AND state NOT IN (?, ?)",
-        (job_id, COLLECT_KIND, QUEUED, RUNNING),
-    ).fetchone()
+    sql = "SELECT id FROM jobs WHERE id = ? AND state NOT IN (?, ?)"
+    params: list[object] = [job_id, QUEUED, RUNNING]
+    if kind is not None:
+        sql += " AND kind = ?"
+        params.append(kind)
+
+    row = conn.execute(sql, params).fetchone()
     if row is None:
         return False
     delete_for_job(conn, data_dir, job_id)
     conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
     conn.commit()
     return True
+
+
+def delete_collection(conn: sqlite3.Connection, data_dir: Path, job_id: str) -> bool:
+    """Delete one collection outright. True when there was one to delete."""
+    return delete_job(conn, data_dir, job_id, kind=COLLECT_KIND)
