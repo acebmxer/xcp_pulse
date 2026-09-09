@@ -47,6 +47,7 @@ streaming download.
 | `app/job_collect.py` | The **Collect logs** job: downloads a host's bundle (and optionally its audit trail), keeps raw and redacted copies. |
 | `app/findings.py` | Turns Xen Orchestra API reads into findings: severity, title, evidence, action, source. |
 | `app/job_findings.py` | The **API findings** job: runs the sources, stores the report as JSON and Markdown. |
+| `app/job_log_findings.py` | The **log findings** job: reads a stored `*-logs.tgz` bundle, stores the report as JSON and Markdown. |
 | `app/retention.py` | What stored collections to delete, always previewed before it acts. |
 | `app/artifacts.py` | What a job produced: files on the volume, metadata in the database. |
 | `app/redact.py` | The masking rules. The **only** place a redaction pattern is written. |
@@ -195,6 +196,14 @@ a server-side `filter` on time, which also shrinks the response as the window
 narrows. Messages and alarms carry seconds; tasks and backup runs carry
 milliseconds — filtering one with the other's scale matches every record, so the
 conversion lives in a single helper.
+
+**Log findings read the cache, not Xen Orchestra.** The Findings page selects a
+stored `*-logs.tgz` artifact produced by collection and queues `log_findings`.
+The worker scans the archive locally, groups repeated matches by detected
+condition, redacts representative evidence, and stores `log-findings.json` and
+`log-findings.md` beside the job. A failed or truncated archive is recorded as
+a failed job. API and log reports remain separate until a later correlation
+layer can match timestamps, host identity, and event details reliably.
 
 **Redaction sits between the cache and anything sent onward.** Real bundles
 contain internal addresses, usernames and session tokens, so the redacted copy

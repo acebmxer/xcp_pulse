@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, Response
 
 from app.artifacts import get_artifact, list_for_job
@@ -24,7 +24,10 @@ from app.dependencies import login_required, redirect, serve_artifact, templates
 from app.findings import DEFAULT_WINDOW_DAYS, SEVERITIES
 from app.job_findings import FINDINGS_ARTIFACT, FINDINGS_MARKDOWN, report_from_job
 from app.job_findings import KIND as FINDINGS_KIND
-from app.jobs import enqueue, has_active, latest_successful
+from app.job_log_findings import LOG_FINDINGS_ARTIFACT, report_from_job as log_report_from_job
+from app.job_log_findings import KIND as LOG_FINDINGS_KIND
+from app.job_collect import KIND as COLLECT_KIND
+from app.jobs import enqueue, has_active, latest_successful, list_jobs
 from app.xo_connection import get_connection
 
 router = APIRouter()
@@ -40,6 +43,14 @@ def findings_page(request: Request, username: str = Depends(login_required)) -> 
     job = latest_successful(db, FINDINGS_KIND)
     report = report_from_job(db, data_dir, job.id) if job is not None else None
     artifacts = list_for_job(db, job.id) if job is not None else []
+    log_job = latest_successful(db, LOG_FINDINGS_KIND)
+    log_report = log_report_from_job(db, data_dir, log_job.id) if log_job is not None else None
+    log_artifacts = [
+        artifact
+        for collect_job in list_jobs(db, kind=COLLECT_KIND, limit=100)
+        for artifact in list_for_job(db, collect_job.id)
+        if artifact.name.endswith("-logs.tgz")
+    ]
 
     return templates.TemplateResponse(
         request,
@@ -55,10 +66,35 @@ def findings_page(request: Request, username: str = Depends(login_required)) -> 
             "json_name": FINDINGS_ARTIFACT,
             "markdown_name": FINDINGS_MARKDOWN,
             "running": has_active(db, FINDINGS_KIND),
+            "log_job": log_job,
+            "log_report": log_report,
+            "log_artifacts": log_artifacts,
+            "log_running": has_active(db, LOG_FINDINGS_KIND),
+            "log_error": log_job.error if log_job is not None and log_job.state == "failed" else None,
+            "log_findings_artifact": LOG_FINDINGS_ARTIFACT,
             "notice": request.query_params.get("notice"),
             "error": request.query_params.get("error"),
         },
     )
+
+
+@router.post("/findings/from-logs")
+def start_log_findings(
+    request: Request,
+    artifact_id: str = Form(...),
+    username: str = Depends(login_required),
+) -> Response:
+    """Queue findings from one stored collected log bundle."""
+    db = request.app.state.db
+    artifact = get_artifact(db, artifact_id)
+    if artifact is None or not artifact.name.endswith("-logs.tgz"):
+        return redirect("/findings?error=That+log+bundle+is+no+longer+stored.")
+    if has_active(db, LOG_FINDINGS_KIND):
+        return redirect("/findings?notice=A+log+findings+run+is+already+going.")
+    job = enqueue(db, LOG_FINDINGS_KIND, {"artifact_id": artifact_id})
+    wake_worker(request)
+    log.info("queued %s job %s for %s", LOG_FINDINGS_KIND, job.id, username)
+    return redirect("/findings?notice=Reading+findings+from+the+stored+logs.")
 
 
 @router.post("/findings")

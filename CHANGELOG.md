@@ -12,6 +12,15 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ### Added
 
+- **Findings from collected logs.** The Findings page can analyze a stored
+  `*-logs.tgz` bundle without downloading it again. The background job checks
+  for storage failures, multipath path failures, XAPI exceptions, and HA
+  fencing or heartbeat failures, groups repeated matches by condition, masks
+  evidence with the active redaction rules, and stores JSON and Markdown
+  reports as downloadable artifacts. The page refreshes while the job runs and
+  reports a failed or truncated bundle instead of leaving an ambiguous running
+  state.
+
 - **Status panels on the dashboard.** Beneath the inventory, four panels report
   the state of what has been built: the severity counts from the latest findings
   report, how many redaction rules are switched off, how much the data volume is

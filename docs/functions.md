@@ -38,6 +38,7 @@ columns; those are a reviewer's job.
 | Redact a stored file and report what was masked | `app/job_redact.py` |
 | Collect a host's logs and redact them | `app/job_collect.py` |
 | Ask the API what is wrong | `app/findings.py`, run by `app/job_findings.py` |
+| Ask a stored log bundle what is wrong | `app/findings.py`, run by `app/job_log_findings.py` |
 | Decide what stored collections to delete | `app/retention.py` — always `plan` before `apply` |
 | Show a byte count on a page | `app/artifacts.py` — `human_bytes` |
 | Store or read what a job produced | `app/artifacts.py` |
@@ -332,6 +333,7 @@ constructor and redacts the evidence on the way in.
 | Function | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
 | `collect_findings` | `(client, pools, *, enabled=None, window_days=30, now=None, progress=None) -> Report` | Reads every source and builds the report | `job_findings.run` | unreleased |
+| `collect_log_findings` | `(bundle_path, *, enabled=None) -> Report` | Reads a stored tar bundle, groups storage, multipath, XAPI and HA matches, and builds the report | `job_log_findings.run` | unreleased |
 | `disabled_rule_titles` | `(enabled) -> list[str]` | The titles of the redaction rules switched off, for the report | `collect_findings` | unreleased |
 | `sort_findings` | `(findings: list[Finding]) -> list[Finding]` | Worst first, then most recent, then by title | `collect_findings`, `job_findings.report_from_job` | unreleased |
 
@@ -359,6 +361,12 @@ Message classification is two tables: `MESSAGE_RULES` matched exactly, then
 neither is routine and is dropped — measured, VM lifecycle events alone were
 3,381 of 3,472 messages on one pool.
 
+Log classification uses four source rules. Matching lines are counted once per
+source and repeated matches become one finding with a count; the latest
+matching line is retained as representative evidence. The rules are narrower
+than a generic error search: an XAPI error is not automatically a storage
+failure.
+
 ## `app/job_findings.py` — the API findings job
 
 Runs `collect_findings` and stores the report twice: JSON, which the page reads
@@ -384,6 +392,20 @@ The Markdown copy is written through `artifacts.store_file` rather than
 `store_json`, which would wrap the text in JSON quotes. It is the one text
 artifact written, and it still goes through the same store, hash and delete
 path as a 433 MB bundle.
+
+## `app/job_log_findings.py` — the log findings job
+
+Reads one stored `*-logs.tgz` artifact selected on the Findings page and writes
+`log-findings.json` for rendering plus `log-findings.md` for download or a
+support ticket. It never calls Xen Orchestra and does not create a new log
+collection.
+
+| Function | Signature | Does | Used by | Since |
+| --- | --- | --- | --- | --- |
+| `report_from_job` | `(conn, data_dir, job_id: str) -> Report \| None` | Rebuilds the stored log report | `routes.findings.findings_page` | unreleased |
+| `run` | `(context: JobContext) -> None` | Reads the selected local bundle and stores both report artifacts | `job_runner`, via `register` | unreleased |
+| `to_markdown` | `(report: Report, source_name: str) -> str` | Formats a log report for a support ticket | `job_log_findings.run` | unreleased |
+| `to_payload` | `(report: Report, source_id: str) -> dict` | Serializes a log report as JSON | `job_log_findings.run` | unreleased |
 
 ## `app/retention.py` — what to delete, previewed first
 

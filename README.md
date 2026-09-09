@@ -22,8 +22,8 @@ Vates support ticket.
 > XCP Pulse is being built in stages. **Log collection shipped in v0.6.0: it
 > downloads a host's full log bundle, keeps the raw copy, and produces a
 > redacted copy to send — with a report of what was masked.**
-> Findings from the API are built and awaiting release. Findings from the logs
-> and a Vates support package come next. See
+> Findings from the API and findings from collected logs are built and awaiting
+> release. See
 > [the roadmap](docs/roadmap.md) for what is planned and what is done.
 
 ## Read next
@@ -97,12 +97,22 @@ Built and awaiting release:
   the evidence behind it and what to do about it. Nothing is downloaded, so it
   answers in seconds rather than two minutes.
 
+- **Report findings from collected logs** — select a stored `*-logs.tgz` bundle
+  and analyze it locally for storage failures, multipath path failures, XAPI
+  exceptions and HA fencing or heartbeat failures. The run downloads nothing,
+  groups repeated matches by condition, redacts evidence, and stores JSON and
+  Markdown reports beside the job.
+
+  This is complementary to API findings rather than a second copy of them.
+  The two reports are currently shown separately and are not yet correlated
+  into one combined incident.
+
 Still to come, on [the roadmap](docs/roadmap.md):
 
 - **Collect individual categories** — storage, XAPI, audit, security, kernel and
   the rest — extracted from the cached bundle without downloading again.
-- **Findings from the logs** — storage failures, multipath flapping, XAPI
-  exceptions and HA fencing, correlated with the API's own event record.
+- **Correlate findings across the API and logs** — match structured API events
+  to host log evidence and present one incident with both sources attached.
 
 ## Configuration
 

@@ -32,6 +32,7 @@ one masking implementation, not a second one for short strings.
 from __future__ import annotations
 
 import re
+import tarfile
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -59,6 +60,10 @@ SOURCE_PATCHES = "patches"
 SOURCE_BACKUPS = "backups"
 SOURCE_RESTORES = "restores"
 SOURCE_DASHBOARD = "dashboard"
+SOURCE_LOGS_STORAGE = "logs_storage"
+SOURCE_LOGS_MULTIPATH = "logs_multipath"
+SOURCE_LOGS_XAPI = "logs_xapi"
+SOURCE_LOGS_HA = "logs_ha"
 
 # Where a source's data physically comes from. Xen Orchestra serves all seven
 # routes, but it *originates* only three of them — the rest it relays from the
@@ -142,6 +147,30 @@ SOURCES = {
         origin=ORIGIN_HOSTS,
         holds="pool totals XO computes from the hosts",
         unit="sections",
+    ),
+    SOURCE_LOGS_STORAGE: SourceInfo(
+        title="Storage logs",
+        origin=ORIGIN_HOSTS,
+        holds="storage and filesystem errors in the collected bundle",
+        unit="log lines",
+    ),
+    SOURCE_LOGS_MULTIPATH: SourceInfo(
+        title="Multipath logs",
+        origin=ORIGIN_HOSTS,
+        holds="multipath path changes and failures",
+        unit="log lines",
+    ),
+    SOURCE_LOGS_XAPI: SourceInfo(
+        title="XAPI logs",
+        origin=ORIGIN_HOSTS,
+        holds="XAPI exceptions and backtraces",
+        unit="log lines",
+    ),
+    SOURCE_LOGS_HA: SourceInfo(
+        title="HA logs",
+        origin=ORIGIN_HOSTS,
+        holds="HA heartbeat and fencing events",
+        unit="log lines",
     ),
 }
 
@@ -494,6 +523,103 @@ def sort_findings(findings: list[Finding]) -> list[Finding]:
     return sorted(
         findings,
         key=lambda f: (f.severity_rank, -(f.at or 0.0), f.title.lower()),
+    )
+
+
+LOG_FINDING_RULES: tuple[tuple[str, str, str, str, re.Pattern[str]], ...] = (
+    (
+        SOURCE_LOGS_MULTIPATH,
+        WARNING,
+        "Multipath reported a path failure",
+        "Check every storage path and the switch ports serving it.",
+        re.compile(r"multipath.*(?:fail|flap|down)|(?:path|checker).*fail", re.IGNORECASE),
+    ),
+    (
+        SOURCE_LOGS_HA,
+        CRITICAL,
+        "High availability reported a fencing or heartbeat failure",
+        "Check host reachability, the management network, and the HA heartbeat SR.",
+        re.compile(r"(?:ha|heartbeat).*(?:fenc|fail|lost)|fenc(?:e|ed|ing)", re.IGNORECASE),
+    ),
+    (
+        SOURCE_LOGS_STORAGE,
+        CRITICAL,
+        "The logs contain a storage failure",
+        "Check the storage repository and its backing device before the failure spreads.",
+        re.compile(
+            r"(?:storage|storage repository|filesystem|file system|device-mapper|scsi|"
+            r"\bsr[_.: -]).*(?:error|fail|full|read-only)|"
+            r"(?:i/o error|no space left|read-only)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        SOURCE_LOGS_XAPI,
+        WARNING,
+        "The logs contain an XAPI exception",
+        "Read the surrounding XAPI traceback and correlate it with the API findings.",
+        re.compile(r"(?:xapi|xenopsd).*(?:error|exception|traceback)|backtrace", re.IGNORECASE),
+    ),
+)
+
+
+def collect_log_findings(bundle_path, *, enabled=None) -> Report:
+    """Inspect a collected tar bundle without contacting Xen Orchestra."""
+    grouped: dict[tuple[str, str], dict[str, Any]] = {}
+    examined = {source: 0 for source, *_ in LOG_FINDING_RULES}
+
+    with tarfile.open(bundle_path, mode="r:*") as bundle:
+        for member in bundle:
+            if not member.isfile():
+                continue
+            handle = bundle.extractfile(member)
+            if handle is None:
+                continue
+            for raw_line in handle:
+                line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
+                for source, severity, title, action, pattern in LOG_FINDING_RULES:
+                    if not pattern.search(line):
+                        continue
+                    examined[source] += 1
+                    # Log lines usually carry a timestamp, process id, or
+                    # changing object detail. Those values make identical
+                    # failures look different, so group by the detected
+                    # condition and keep the latest matching line as evidence.
+                    key = source
+                    item = grouped.get(key)
+                    if item is None:
+                        grouped[key] = {
+                            "severity": severity,
+                            "title": title,
+                            "evidence": line,
+                            "action": action,
+                            "source": source,
+                            "count": 1,
+                        }
+                    else:
+                        item["count"] += 1
+                        item["evidence"] = line
+
+    findings = [_finding(enabled=enabled, **item) for item in grouped.values()]
+    sources = [
+        SourceResult(
+            source,
+            read=True,
+            examined=examined[source],
+            detail=(
+                f"{examined[source]:,} matching line(s)"
+                if examined[source]
+                else "checked - no matching lines"
+            ),
+        )
+        for source, *_ in LOG_FINDING_RULES
+    ]
+    return Report(
+        findings=sort_findings(findings),
+        sources=sources,
+        window_days=0,
+        created_at=time.time(),
+        rules_disabled=disabled_rule_titles(enabled),
     )
 
 

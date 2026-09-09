@@ -70,6 +70,27 @@ message are read out of one.
 > and backup runs carry milliseconds — filtering one with the other's scale
 > matches everything, which looks exactly like a working filter.
 
+### Findings from collected logs
+
+*Built, not yet released. Reads an existing collected bundle; it does not
+download logs again.*
+
+- The Findings page offers stored `*-logs.tgz` artifacts for analysis.
+- Four local sources are reported: storage, multipath, XAPI, and HA.
+- Repeated matching lines are grouped by condition with an occurrence count and
+  representative evidence, rather than becoming one finding per timestamped
+  line.
+- Evidence is redacted before it is stored, using the same active rules as log
+  collection.
+- The job stores JSON for the page and Markdown for a support ticket, and the
+  page refreshes automatically while analysis runs.
+- A truncated or unreadable archive fails visibly and does not masquerade as a
+  clean report.
+
+The log and API reports are currently separate. They can describe the same
+incident from different evidence, but no correlation layer yet merges them or
+labels one as confirmed by the other.
+
 ---
 
 ## Shipped

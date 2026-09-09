@@ -14,6 +14,7 @@ warning stuck permanently on gets shipped.
 from __future__ import annotations
 
 import time
+import tarfile
 
 import pytest
 
@@ -23,6 +24,7 @@ from app.findings import (
     WARNING,
     Finding,
     collect_findings,
+    collect_log_findings,
 )
 from app.xo_client import Pool, XoError
 
@@ -518,6 +520,59 @@ def test_progress_is_reported_at_every_source() -> None:
     """
     seen: list[tuple[int, str]] = []
     collect_findings(FakeXo(), [POOL], now=NOW, progress=lambda p, s: seen.append((p, s)))
+
+
+def test_log_findings_reads_a_bundle_and_groups_repeated_lines(tmp_path) -> None:
+    log = tmp_path / "xensource.log"
+    log.write_text(
+        "\n".join(
+            [
+                "multipathd reports failed path",
+                "multipathd reports failed path",
+                "HA fencing after heartbeat lost",
+                "Storage SR reports I/O error",
+                "XAPI internal error and backtrace",
+            ]
+        )
+    )
+    bundle = tmp_path / "logs.tar.gz"
+    with tarfile.open(bundle, "w:gz") as archive:
+        archive.add(log, arcname="var/log/xensource.log")
+
+    report = collect_log_findings(bundle)
+
+    assert {source.name for source in report.sources} == {
+        "logs_storage",
+        "logs_multipath",
+        "logs_xapi",
+        "logs_ha",
+    }
+    assert len(report.findings) == 4
+    assert sorted(finding.count for finding in report.findings) == [1, 1, 1, 2]
+
+
+def test_log_findings_redact_evidence(tmp_path) -> None:
+    log = tmp_path / "xensource.log"
+    log.write_text("Storage SR reports I/O error from 10.20.30.41")
+    bundle = tmp_path / "logs.tar.gz"
+    with tarfile.open(bundle, "w:gz") as archive:
+        archive.add(log, arcname="var/log/xensource.log")
+
+    report = collect_log_findings(bundle)
+
+    assert "10.20.30.41" not in report.findings[0].evidence
+
+
+def test_generic_xapi_error_is_not_reported_as_storage_failure(tmp_path) -> None:
+    log = tmp_path / "xensource.log"
+    log.write_text("xapi: Unexpected exception in message hook")
+    bundle = tmp_path / "logs.tar.gz"
+    with tarfile.open(bundle, "w:gz") as archive:
+        archive.add(log, arcname="var/log/xensource.log")
+
+    report = collect_log_findings(bundle)
+
+    assert [finding.source for finding in report.findings] == ["logs_xapi"]
 
     assert len(seen) == 7
     assert [percent for percent, _ in seen] == sorted(percent for percent, _ in seen)

@@ -6,7 +6,7 @@
   While a run is going the page reloads itself so the result appears without
   the operator pressing anything, and stops once it has landed.
 #}
-{% if running %}
+{% if running or log_running %}
 <meta http-equiv="refresh" content="3">
 {% endif %}
 
@@ -39,6 +39,84 @@
   </p>
   {% endif %}
 </div>
+
+<div class="card">
+  <div class="job-actions">
+    <div>
+      <h2>Findings from collected logs</h2>
+      <p class="note">
+        Read a stored log bundle locally for storage failures, multipath
+        changes, XAPI exceptions, and HA fencing. Nothing is downloaded.
+      </p>
+    </div>
+    {% if log_artifacts %}
+    <form method="post" action="/findings/from-logs" class="inline">
+      <label for="log-artifact">Bundle</label>
+      <select id="log-artifact" name="artifact_id"{% if log_running %} disabled{% endif %}>
+        {% for artifact in log_artifacts %}
+        <option value="{{ artifact.id }}">{{ artifact.name }} — {{ artifact.size_human }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit" class="btn btn-primary"{% if log_running %} disabled{% endif %}>
+        {% if log_running %}Running…{% else %}Analyze logs{% endif %}
+      </button>
+    </form>
+    {% else %}
+    <p class="note">Collect a host log bundle first. Stored <code>*-logs.tgz</code> files will appear here.</p>
+    {% endif %}
+  </div>
+</div>
+
+{% if log_report %}
+<div class="card">
+  <div class="inventory-head">
+    <h2>Findings from logs</h2>
+    <p class="inventory-source">Read {{ log_report.created_at | age }}</p>
+  </div>
+  <ul class="sev-summary">
+    {% for severity in severities %}
+    <li class="sev-count sev-{{ severity }}{{ ' is-zero' if not log_report.counts[severity] }}">
+      <span class="sev-number">{{ log_report.counts[severity] }}</span>
+      <span class="sev-label">{{ severity }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% if log_report.is_clean %}
+  <p class="note">No matching log findings were found.</p>
+  {% else %}
+  <ul class="findings">
+    {% for finding in log_report.findings %}
+    <li class="card finding finding-{{ finding.severity }}">
+      <div class="finding-head">
+        <span class="sev-tag sev-{{ finding.severity }}">{{ finding.severity }}</span>
+        <h2 class="finding-title">{{ finding.title }}</h2>
+        {% if finding.count > 1 %}<span class="finding-count">{{ finding.count }}×</span>{% endif %}
+      </div>
+      <p class="finding-meta">{{ finding.source_title }}</p>
+      <pre class="finding-evidence">{{ finding.evidence }}</pre>
+      <p class="finding-action"><strong>What to do:</strong> {{ finding.action }}</p>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  <h3>Log sources</h3>
+  <table class="report">
+    <thead><tr><th>Source</th><th>Result</th></tr></thead>
+    <tbody>
+      {% for source in log_report.sources %}
+      <tr><th>{{ source.title }}</th><td>{{ source.examined_text }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% if log_error %}
+<div class="alert alert-error">
+  <strong>Log analysis failed.</strong> {{ log_error }}
+  The selected bundle may be incomplete; collect it again before retrying.
+</div>
+{% endif %}
 
 {% if not report %}
 <div class="card empty-state">

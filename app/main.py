@@ -19,6 +19,7 @@ from app.dependencies import STATIC_DIR, RedirectToLogin
 from app.job_collect import KIND as _COLLECT_KIND  # noqa: F401
 from app.job_findings import KIND as _FINDINGS_KIND  # noqa: F401
 from app.job_inventory import KIND as _INVENTORY_KIND  # noqa: F401
+from app.job_log_findings import KIND as _LOG_FINDINGS_KIND  # noqa: F401
 from app.job_redact import KIND as _REDACT_KIND  # noqa: F401
 from app.job_runner import JobWorker
 from app.jobs import reset_orphans
