@@ -27,127 +27,6 @@ genuinely has to come first:
 
 ---
 
-## In progress
-
-### Findings from the API
-
-*Built and complete, not yet released. Does not need a collected bundle.*
-
-A findings report without collecting anything — seconds rather than the two
-minutes a log collection takes, and no `export:logs` privilege.
-
-- Seven sources: XAPI messages, alarms, tasks, missing patches per pool, backup
-  runs, restore runs, and the pool dashboard
-- Each finding: severity, title, evidence, suggested action, source — and a
-  count, because four messages about one storage repository are one problem
-- Repeated events grouped, routine VM lifecycle events dropped: measured on a
-  live pool, `VM_SNAPSHOTTED`, `VM_STARTED`, `VM_SHUTDOWN` and `VM_MIGRATED`
-  were 3,381 of 3,472 messages
-- Stored as JSON for the page and Markdown for a support ticket, both
-  downloadable
-- The sources table names where each source comes from — the **XCP-ng hosts**
-  or **Xen Orchestra itself** — because that decides where to go to act on a
-  finding. Missing patches are XCP-ng host updates, not XO's own version.
-
-**A refused source is reported as unread, never as clean.** A restricted
-account is refused the pool dashboard and can still read messages and tasks, so
-one source failing does not fail the run. An XOA without a support subscription
-cannot list patches, and reporting that as "no missing patches" would be a false
-statement about the pool.
-
-Evidence is masked with the redaction rules switched on at the time, and the
-report names any rule that was **switched off** — an unmasked value and a value
-no rule looked for read identically, so a report that does not say which rules
-were off cannot be judged safe to send. Xen Orchestra task properties carry
-usernames and the caller's IP address, so only the task's name and its failure
-message are read out of one.
-
-> [!NOTE]
-> **Xen Orchestra applies `limit` to the oldest records, not the newest**, and
-> ignores `sort` and `order`. Asking `/messages` for 2,000 of 3,472 rows
-> returned the first month and hid every recent event. The window is a `filter`
-> instead, applied server-side. Messages and alarms carry seconds while tasks
-> and backup runs carry milliseconds — filtering one with the other's scale
-> matches everything, which looks exactly like a working filter.
-
-### Findings from collected logs
-
-*Built and complete, not yet released. Reads an existing collected bundle; it
-does not download logs again.*
-
-- The Findings page offers stored `*-logs.tgz` artifacts for analysis.
-- Six local sources are reported: storage, multipath, XAPI, HA, out-of-memory
-  events, and clock sync failures.
-- Repeated matching lines are grouped by condition with an occurrence count and
-  representative evidence, rather than becoming one finding per timestamped
-  line.
-- Evidence is redacted before it is stored, using the same active rules as log
-  collection.
-- The job stores JSON for the page and Markdown for a support ticket, and the
-  page shows a progress bar while analysis runs.
-- A truncated archive keeps the findings read before the break and says the
-  bundle ended early rather than masquerading as a clean report; one that
-  cannot be read at all still fails the job.
-
-The log and API reports are two independent runs, often taken hours apart. A
-correlation pass on the Findings page matches them by condition family — HA,
-storage, XAPI, clock skew, multipath — and, when both findings are timed, a
-one-hour window. A match marks each finding as confirmed by the other, so an
-HA fencing event that shows up in both reads as one incident rather than two
-unrelated findings on two different pages.
-
-### Collect individual categories
-
-*Built and complete, not yet released. Extracts from an already-downloaded
-bundle; it does not ask Xen Orchestra for less.*
-
-Pull only the log families you want out of a collected bundle, without
-downloading it again — Xen Orchestra's `logs.tgz` accepts no category filter
-and no date range (confirmed against a real bundle, 609 files, all of
-`/var/log`), so this can only ever be extraction from a bundle already on the
-data volume, never a smaller download.
-
-- Ten categories: XAPI, storage, audit, security, kernel, system, high
-  availability, xenstore, RRD plugins, network — every real file in a measured
-  bundle classifies into one of them, and anything not seen in that
-  measurement falls into System rather than being silently dropped.
-- Two ways to ask for it: tick categories on the Collect form before starting a
-  collection (extracted right after, from the bundle just downloaded — no
-  second transfer), or tick them against any already-stored collection's raw
-  bundle on the Collect page.
-- "Current logs only" (the default) or "include rotated history" — rotated
-  copies are the bulk of a bundle, so they are opt-in the same way the audit
-  trail is.
-- Several categories picked together come back as **one combined archive**,
-  not one file per category.
-- Redaction is always the rules active at the moment of extraction, read
-  fresh — there is no separate rule choice for an extraction. To change what
-  gets masked, change the rules on the Redaction page, then extract.
-- An extraction is its own stored job with its own report, downloadable and
-  deletable independently of the collection it was drawn from.
-
-### Vates support package
-
-*Built and complete, not yet released.*
-
-One archive to attach to a support ticket, instead of gathering several
-downloads by hand: the redacted log bundle, findings in Markdown and JSON, the
-redaction report, and the inventory, plus a manifest listing what's included
-and what was masked.
-
-- Two ways to start one: **Package** an already-stored collection, or **Collect
-  + Package** a host with nothing stored yet — either way the result is built
-  the same way.
-- Never ships with a gap it could have filled itself: building a package
-  always runs a fresh findings check and a fresh inventory refresh alongside
-  the collection, rather than reusing whatever last happened to be stored.
-- The manifest's masked-rules list is read straight from the redaction report
-  packaged beside it, so the two can never disagree.
-- Its own page — `/support-package` — lists what's been built, same as the
-  Collect page lists collections, with download and delete per package.
-
----
-
 ## Shipped
 
 ### v0.1.0 — Log in
@@ -251,6 +130,48 @@ No new capability; the quick start works as written on a server.
 - Building from a clone uses a `docker-compose.dev.yml` overlay, leaving the
   deployment's own compose file untouched
 - The sample is named `docker-compose.yml.example`
+
+### v0.7.0 — Findings, category extraction and the support package
+
+Know what's wrong without collecting anything, pull just the logs you need,
+and hand a support ticket one archive instead of several downloads.
+
+- **Findings from the API**: a report built from seven XO/XCP-ng routes —
+  messages, alarms, tasks, missing patches, backup runs, restore runs, the
+  pool dashboard — in seconds, with no `export:logs` privilege needed.
+  Repeated events are grouped by count; routine VM lifecycle events and failed
+  logins are dropped as noise. A refused source (a restricted account denied
+  the pool dashboard, an XOA without a support subscription) is reported as
+  **unread**, never as clean.
+- **Findings from collected logs**: the same report built from a stored
+  `*-logs.tgz`, covering storage, multipath, XAPI, HA, out-of-memory and clock
+  sync failures. A truncated bundle keeps what it read before the break rather
+  than failing outright.
+- **Correlation between the two**: a finding in both an API report and a log
+  report — matched by condition family and, when timed, a one-hour window —
+  is marked as confirmed by the other, so one incident doesn't read as two.
+- **Extract individual log categories** from a bundle already on the data
+  volume, into one combined archive — ten categories, current logs by default
+  with rotated history opt-in. No smaller download exists to ask Xen Orchestra
+  for; `logs.tgz` has no category filter.
+- **Vates support package**: one `.tgz` — redacted bundle, findings in
+  Markdown and JSON, the redaction report, the inventory, and a manifest —
+  built from a stored collection or from a fresh **Collect + Package** run.
+  Never ships with a gap it could have filled itself: building one always
+  runs a fresh findings check and inventory refresh alongside the collection.
+
+Both findings reports mask evidence with the redaction rules switched on at
+the time, and name any rule that was switched off — an unmasked value and a
+value no rule looked for read identically, so a report that doesn't say which
+rules were off cannot be judged safe to send.
+
+> [!NOTE]
+> **Xen Orchestra applies `limit` to the oldest records, not the newest**, and
+> ignores `sort` and `order`. Asking `/messages` for 2,000 of 3,472 rows
+> returned the first month and hid every recent event. The window is a
+> `filter` instead, applied server-side. Messages and alarms carry seconds
+> while tasks and backup runs carry milliseconds — filtering one with the
+> other's scale matches everything, which looks exactly like a working filter.
 
 ### v0.6.0 — Collect the full bundle
 
