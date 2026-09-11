@@ -10,6 +10,8 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-09-11
+
 ### Fixed
 
 - **The log bundle picker on the Findings page could not tell two collections
