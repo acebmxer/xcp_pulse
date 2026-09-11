@@ -37,6 +37,7 @@ columns; those are a reviewer's job.
 | Add a new kind of background job | `app/job_inventory.py` as the worked example; register it in `app/job_runner.py` and import it in `app/main.py` |
 | Redact a stored file and report what was masked | `app/job_redact.py` |
 | Collect a host's logs and redact them | `app/job_collect.py` |
+| Extract selected log categories from a stored bundle | `app/job_extract.py`; the category map is `app/log_categories.py` |
 | Ask the API what is wrong | `app/findings.py`, run by `app/job_findings.py` |
 | Ask a stored log bundle what is wrong | `app/findings.py`, run by `app/job_log_findings.py` |
 | Decide what stored collections to delete | `app/retention.py` — always `plan` before `apply` |
@@ -323,6 +324,56 @@ The raw bundle is kept alongside the redacted one because the redacted copy is
 lossy, and a question about what was masked can only be answered against the
 original. The collect page marks which is which.
 
+## `app/log_categories.py` — which log family a bundle member belongs to
+
+The map that makes "download only the storage logs" possible. Xen Orchestra's
+log routes accept no category filter and no date range — `logs.tgz` is
+`xen-bugtool`'s whole `/var/log`, 609 files on a real host measured
+2026-09-11 — so a category can only be answered by picking apart a bundle
+already on disk. Every prefix in `CATEGORIES` is a real path from that
+measured bundle; a path matching nothing falls into `"system"` rather than
+being dropped, so a file not seen in that one measurement — an older or newer
+XCP-ng release adds and removes a few — is still accounted for.
+
+| Function | Signature | Does | Used by | Since |
+| --- | --- | --- | --- | --- |
+| `canonical_name` | `(member_path: str) -> str` | Strips `var/log/` and a rotation suffix (`.N`, `.gz`) so every rotation of a log matches the same rule | `classify`, `job_extract.run` | unreleased |
+| `category_by_key` | `(key: str) -> Category \| None` | One category by its key | `routes.collect`, `job_extract` | unreleased |
+| `category_keys` | `() -> tuple[str, ...]` | Every valid category key, in display order | tests | unreleased |
+| `classify` | `(member_path: str) -> str` | The category key a bundle member belongs to; never an unknown key | `job_extract.run` | unreleased |
+
+## `app/job_extract.py` — the Extract categories job
+
+Pulls the selected log families out of an already-stored raw bundle into one
+combined `.tgz` — no second download, because there is nothing XO could filter
+server-side to make a second download smaller. Reuses
+`job_collect._redact_tarball`'s streaming/salvage/masking loop via its
+`member_filter` parameter rather than a second copy of it: a category
+extraction and the full redacted copy a collection makes are the same
+operation with a different answer to which members belong in the output.
+
+Redaction is always the rules active *now* — there is no per-extraction rule
+picker. To change what gets masked, change the rules on the Redaction page
+first, then extract.
+
+| Function | Signature | Does | Used by | Since |
+| --- | --- | --- | --- | --- |
+| `build_report` | `(*, source, extracted, categories, matched, include_rotated, enabled, counts) -> dict` | The extraction's report as plain JSON, extending `job_redact.build_report` | `job_extract.run` | unreleased |
+| `report_from_job` | `(conn, data_dir, job_id: str) -> dict \| None` | Reads back a stored extraction report | `routes.collect` | unreleased |
+| `run` | `(context: JobContext) -> None` | Extracts the selected categories, storing the archive and the report | `job_runner`, via `register` | unreleased |
+
+`run` accepts either `artifact_id` (extracting from an already-stored
+collection) or `source_job_id` (queued alongside a fresh collection, before its
+bundle exists yet — resolved once that collection has actually finished,
+relying on the FIFO queue and single-worker run to guarantee it has). A failed
+or cancelled source collection fails the extraction with a clear reason rather
+than a confusing "artifact not found".
+
+Rotated history is opt-in, the same choice `job_collect` makes about the audit
+trail — current logs only unless `include_rotated` is set. A category that
+matches nothing in a given bundle is not an error: the archive is still stored
+empty and the report and job step say why.
+
 ## `app/findings.py` — what the API says is wrong
 
 Turns seven Xen Orchestra reads into findings: severity, title, evidence,
@@ -516,7 +567,9 @@ on databases written before it did.
 | `delete_redaction` | `(job_id, request, username) -> Response` | `POST /jobs/{id}/delete` — deletes one redaction and its files | router | v0.6.3 |
 | `download_job_artifact` | `(artifact_id, request, username) -> Response` | `GET /jobs/download/{id}` — streams a stored file from the jobs page | router | v0.6.3 |
 | `run_cleanup` | `(request, username, keep_days, keep_count) -> Response` | `POST /collect/cleanup` — applies the retention limits | router | v0.6.0 |
-| `start_collection` | `(request, username, host_id, include_audit) -> Response` | `POST /collect` — queues a collection for one host | router | v0.6.0 |
+| `start_collection` | `(request, username, host_id, include_audit, categories, include_rotated) -> Response` | `POST /collect` — queues a collection for one host, and an extraction after it if categories are ticked | router | unreleased |
+| `start_extraction` | `(job_id, request, username, categories, include_rotated) -> Response` | `POST /collect/{id}/extract` — queues an extraction from an already-stored collection's raw bundle | router | unreleased |
+| `delete_extraction` | `(job_id, request, username) -> Response` | `POST /collect/extractions/{id}/delete` — deletes one extraction and its file | router | unreleased |
 | `findings_page` | `(request, username) -> Response` | `GET /findings` — the latest stored findings report | router | unreleased |
 | `start_findings` | `(request, username) -> Response` | `POST /findings` — queues a findings run | router | unreleased |
 | `start_log_findings` | `(request, artifact_id, username) -> Response` | `POST /findings/from-logs` — queues findings from one stored log bundle | router | unreleased |

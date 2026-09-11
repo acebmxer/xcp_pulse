@@ -96,6 +96,36 @@ one-hour window. A match marks each finding as confirmed by the other, so an
 HA fencing event that shows up in both reads as one incident rather than two
 unrelated findings on two different pages.
 
+### Collect individual categories
+
+*Built and complete, not yet released. Extracts from an already-downloaded
+bundle; it does not ask Xen Orchestra for less.*
+
+Pull only the log families you want out of a collected bundle, without
+downloading it again — Xen Orchestra's `logs.tgz` accepts no category filter
+and no date range (confirmed against a real bundle, 609 files, all of
+`/var/log`), so this can only ever be extraction from a bundle already on the
+data volume, never a smaller download.
+
+- Ten categories: XAPI, storage, audit, security, kernel, system, high
+  availability, xenstore, RRD plugins, network — every real file in a measured
+  bundle classifies into one of them, and anything not seen in that
+  measurement falls into System rather than being silently dropped.
+- Two ways to ask for it: tick categories on the Collect form before starting a
+  collection (extracted right after, from the bundle just downloaded — no
+  second transfer), or tick them against any already-stored collection's raw
+  bundle on the Collect page.
+- "Current logs only" (the default) or "include rotated history" — rotated
+  copies are the bulk of a bundle, so they are opt-in the same way the audit
+  trail is.
+- Several categories picked together come back as **one combined archive**,
+  not one file per category.
+- Redaction is always the rules active at the moment of extraction, read
+  fresh — there is no separate rule choice for an extraction. To change what
+  gets masked, change the rules on the Redaction page, then extract.
+- An extraction is its own stored job with its own report, downloadable and
+  deletable independently of the collection it was drawn from.
+
 ---
 
 ## Shipped
@@ -281,23 +311,6 @@ this plainly, rather than surfacing a bare `403`.
 
 Nothing below blocks anything else. Order is a choice about what is most
 useful.
-
-### Collect individual categories
-
-*Prerequisite met: full-bundle collection shipped in v0.6.0.*
-
-Download only the log families you want, without collecting again.
-
-- Categories: XAPI, storage, audit, security, kernel, system, HA, xenstore,
-  RRD plugins, network
-- "Current logs only" or "include rotated history"
-- Extracted from the cached bundle, so it takes seconds rather than 100
-- Current-logs-only bundles come to roughly **35 MB instead of 433 MB**
-
-> [!NOTE]
-> This cannot come first. `logs.tgz` supports no range requests and no
-> server-side filtering, so a request for one category cannot be made smaller —
-> it has to extract from a bundle already on disk.
 
 ### Finalise the dashboard and the UI
 

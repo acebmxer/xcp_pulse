@@ -12,6 +12,37 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ### Added
 
+- **Extract individual log categories from a collected bundle.** Xen
+  Orchestra's `logs.tgz` accepts no category filter and no date range — it is
+  `xen-bugtool`'s whole `/var/log`, 609 files on a real host measured
+  2026-09-11 — so a request for "just the storage logs" can only be answered
+  locally, against a bundle already on the data volume. A new
+  `extract_categories` job reuses `job_collect`'s tarball repack loop (via a
+  new `member_filter` parameter, rather than a second copy of the
+  streaming/salvage/masking logic) to pull only matching members into one
+  combined archive, masked with whichever redaction rules are active at the
+  moment the extraction runs — there is no separate rule choice for an
+  extraction; changing what gets masked means changing the rules on the
+  Redaction page first, then extracting.
+
+  Every real file in the measured bundle classifies into one of ten
+  categories (XAPI, storage, audit, security, kernel, system, high
+  availability, xenstore, RRD plugins, network) in the new
+  `app/log_categories.py`; anything not seen in that measurement falls into
+  System rather than being dropped from an extraction silently. Rotated
+  history is opt-in, the same choice the audit trail already makes — current
+  logs only unless asked for.
+
+  Two ways to start one: tick categories on the Collect form before starting
+  a collection, which queues the extraction right behind it against the
+  bundle just downloaded (no second transfer — the extraction is queued by
+  the collection's job id, since its bundle does not exist yet, and resolved
+  once the collection has actually finished); or tick them against any
+  already-stored collection's raw bundle on the Collect page. An extraction
+  is its own job with its own downloadable report, deletable independently of
+  the collection it came from, and is refused against a redacted copy or
+  anything that is not a collection's raw bundle.
+
 - **Findings from collected logs.** The Findings page can analyze a stored
   `*-logs.tgz` bundle without downloading it again. The background job checks
   for storage failures, multipath path failures, XAPI exceptions, and HA

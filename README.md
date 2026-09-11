@@ -107,8 +107,13 @@ Built and awaiting release:
   The two reports are currently shown separately and are not yet correlated
   into one combined incident.
 
-- **Collect individual categories** — storage, XAPI, audit, security, kernel and
-  the rest — extracted from the cached bundle without downloading again.
+- **Extract individual log categories** — ten families (XAPI, storage, audit,
+  security, kernel, system, high availability, xenstore, RRD plugins, network)
+  pulled from an already-collected bundle, current logs only unless rotated
+  history is asked for too. Xen Orchestra's `logs.tgz` has no category filter
+  of its own, so this extracts locally rather than downloading again — either
+  right after a fresh collection or from any bundle already stored. Several
+  categories at once come back as one combined archive.
 
 Still to come, on [the roadmap](docs/roadmap.md):
 

@@ -17,6 +17,7 @@ from app.dependencies import STATIC_DIR, RedirectToLogin
 # deliberately holds no list of its own. Anything defining a job kind has to be
 # imported here or its jobs fail at run time with "no handler".
 from app.job_collect import KIND as _COLLECT_KIND  # noqa: F401
+from app.job_extract import KIND as _EXTRACT_KIND  # noqa: F401
 from app.job_findings import KIND as _FINDINGS_KIND  # noqa: F401
 from app.job_inventory import KIND as _INVENTORY_KIND  # noqa: F401
 from app.job_log_findings import KIND as _LOG_FINDINGS_KIND  # noqa: F401

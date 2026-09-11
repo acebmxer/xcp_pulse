@@ -700,6 +700,51 @@ textarea {
    label text rather than the box — the same relationship as .rule-desc. */
 .audit-note { margin: 0.2rem 0 0 1.65rem; }
 
+/* ---- log category picker ---- */
+
+.category-picker {
+  margin-top: 0.85rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--border);
+}
+
+/* A report table's last row already draws a bottom border, so a picker right
+   after one does not draw a second line directly beneath it — reported from
+   a real screenshot showing both. */
+.report + .category-picker { border-top: none; padding-top: 0; }
+
+.category-picker summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.category-picker .note { margin-top: 0.4rem; }
+
+.category-grid {
+  list-style: none;
+  margin: 0.6rem 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+  gap: 0.4rem 1rem;
+}
+
+.category-picker > .check { margin-top: 0.7rem; }
+
+/* An extraction card sits inside its collection's own .card — giving it a
+   second full border (the .card look) drew two lines where the two boxes
+   met. A top divider, the same pattern .rule + .rule already uses for one
+   list nested in a bigger one. */
+.extractions { margin-top: 0.85rem; }
+
+.extraction-item {
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--border);
+}
+
+.extraction-item + .extraction-item { margin-top: 0.85rem; }
+
 /* ---- redaction report ---- */
 
 .report {

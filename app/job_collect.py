@@ -260,6 +260,12 @@ def _redact_tarball(
     source: Artifact,
     enabled,
     counts: dict[str, int],
+    *,
+    member_filter=None,
+    working_name: str = "repacking.tmp",
+    store_name: str | None = None,
+    progress_band: tuple[int, int] | None = None,
+    progress_step: str = "Redacting the bundle",
 ) -> Artifact:
     """Repack a ``.tgz`` with every text member masked. Returns the new artifact.
 
@@ -272,15 +278,26 @@ def _redact_tarball(
     Member metadata is copied across unchanged, so the redacted bundle has the
     same layout, names and timestamps as the original and is still readable by
     anything that reads the original.
+
+    ``member_filter(member)``, when given, decides whether a member is kept at
+    all — a directory entry is still offered so a filter matching by path can
+    see it, but is never written unless it passes. This is what lets
+    ``job_extract`` reuse this loop verbatim for "only these categories"
+    instead of a second copy of the streaming/salvage/masking logic: a filtered
+    extraction and a full redacted copy are the same operation with a different
+    answer to "does this member belong in the output?".
     """
     source_path = artifact_path(context.data_dir, source.job_id, source.id)
     if not source_path.is_file():
         raise ValueError(f"The body of {source.name} is missing from the data volume.")
 
-    working = artifact_path(context.data_dir, context.job_id, "repacking.tmp")
+    working = artifact_path(context.data_dir, context.job_id, working_name)
     working.parent.mkdir(parents=True, exist_ok=True)
     rules = active_rules(enabled)
     members = 0
+    kept = 0
+    band = progress_band or (_REDACT_FROM, _REDACT_TO)
+    band_from, band_to = band
 
     # Streaming mode ("r|gz") rather than random access, because a bundle whose
     # end is missing cannot be indexed — and a truncated bundle is the case that
@@ -302,9 +319,13 @@ def _redact_tarball(
                 members += 1
                 if members % _PROGRESS_EVERY_MEMBERS == 0:
                     context.progress(
-                        _REDACT_FROM,
-                        f"Redacting the bundle — {members} file(s)",
+                        band_from,
+                        f"{progress_step} — {members} file(s)",
                     )
+
+                if member_filter is not None and not member_filter(member):
+                    continue
+                kept += 1
 
                 if not member.isfile():
                     # Directories, symlinks and device nodes have no body to
@@ -368,15 +389,15 @@ def _redact_tarball(
 
     if truncated:
         context.progress(
-            _REDACT_TO,
-            f"Redacted {members} file(s) — the bundle ends early",
+            band_to,
+            f"Redacted {kept} file(s) — the bundle ends early",
         )
 
     return store_file(
         context.conn,
         context.data_dir,
         job_id=context.job_id,
-        name=redacted_name(source.name),
+        name=store_name or redacted_name(source.name),
         media_type=source.media_type,
         source=working,
     )
