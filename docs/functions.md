@@ -261,11 +261,15 @@ job lands on them.
 
 | Function | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
-| `inventory_from_job` | `(conn, data_dir, job_id: str) -> Inventory \| None` | Rebuilds the Inventory a job stored | `routes.dashboard.dashboard` | v0.4.0 |
+| `inventory_from_job` | `(conn, data_dir, job_id: str) -> Inventory \| None` | Rebuilds the Inventory a job stored | `routes.dashboard.dashboard`, `known_inventory` | v0.4.0 |
+| `known_inventory` | `(conn, data_dir) -> Inventory` | The last successful refresh's pools and hosts, or an empty Inventory | `routes.collect`, `routes.support_package`, `job_findings.run` | unreleased |
 | `run` | `(context: JobContext) -> None` | Reads XO and stores the inventory as an artifact | `job_runner`, via `register` | v0.4.0 |
 
 `inventory_from_job` drops unknown keys and leaves missing ones at their
 dataclass default, so an artifact written by an older version still loads.
+`known_inventory` is the one place `routes.collect`, `routes.support_package`
+and `job_findings.run` all read the stored inventory from — it replaced three
+copies of the same lookup.
 
 ## `app/job_redact.py` — the Redact artifact job
 
@@ -413,7 +417,7 @@ constructor and redacts the evidence on the way in.
 | `collect_log_findings` | `(bundle_path, *, enabled=None, progress=None) -> Report` | Reads a stored tar bundle, groups storage, multipath, XAPI, HA, out-of-memory and clock-skew matches, and builds the report; a bundle that ends early is salvaged rather than failed | `job_log_findings.run` | v0.7.0 |
 | `disabled_rule_titles` | `(enabled) -> list[str]` | The titles of the redaction rules switched off, for the report | `collect_findings` | v0.7.0 |
 | `sort_findings` | `(findings: list[Finding]) -> list[Finding]` | Worst first, then most recent, then by title | `collect_findings`, `job_findings.report_from_job` | v0.7.0 |
-| `correlate_reports` | `(api_report: Report \| None, log_report: Report \| None) -> None` | Marks findings that appear in both the API report and the log report — same condition family, and within an hour of each other when both are timed — by setting `confirmed_by` on each side | `routes/findings.findings_page` | v0.7.0 |
+| `correlate_reports` | `(api_report: Report \| None, log_report: Report \| None) -> None` | Marks findings that appear in both the API report and the log report — same condition family, within an hour of each other — by setting `confirmed_by` on each side; a log finding with no timestamp of its own is timed by when its report was scanned | `routes/findings.findings_page` | v0.7.0 |
 
 `Finding`, `SourceInfo`, `SourceResult` and `Report` are dataclasses. `SOURCES`
 holds each source's title, origin, what it holds and the unit it is counted in
@@ -448,12 +452,19 @@ error search: an XAPI error is not automatically a storage failure.
 **Correlation is a separate pass, not part of either read.** The API report and
 the log report are two independent runs, often hours apart, so `Finding` has no
 opinion about the other report while either is being built — `correlate_reports`
-runs once both exist, matching by condition family (HA, storage, XAPI, clock
-skew, multipath, via keyword patterns on title and evidence) and, when both
-findings carry a timestamp, a one-hour window. A match sets `confirmed_by` on
-both findings to the other's title, so an operator sees a fencing event that
-shows up in both the API and the logs as one incident instead of two unrelated
-findings on two different pages.
+runs once both exist, matching by condition family and a one-hour window. A
+finding's family (`Finding.family`) is set by the rule that raised it when that
+rule maps cleanly onto a family — `_LOG_SOURCE_FAMILIES` for every
+`LOG_FINDING_RULES` entry, `_MESSAGE_NAME_FAMILIES` for the API message names
+with a log-side counterpart (HA, storage, multipath) — and falls back to a
+keyword-pattern match on title and evidence (`_CORRELATION_FAMILIES`) when it
+is unset, which is every finding stored before this field existed and every API
+source without a clean log-side counterpart (a licence expiring, CBT metadata).
+A log finding rarely carries its own timestamp, so the window compares it
+against when its report was scanned (`Report.created_at`) instead of skipping
+the check. A match sets `confirmed_by` on both findings to the other's title,
+so an operator sees a fencing event that shows up in both the API and the logs
+as one incident instead of two unrelated findings on two different pages.
 
 ## `app/job_findings.py` — the API findings job
 

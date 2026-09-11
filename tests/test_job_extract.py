@@ -25,9 +25,16 @@ HOST_ID = "host-1"
 HOST_NAME = "xcp-ng-host1"
 
 
-def _bundle_bytes(members: dict[str, str]) -> bytes:
+def _bundle_bytes(members: dict[str, str], *, directories: tuple[str, ...] = ()) -> bytes:
+    """Build a tar.gz. ``directories`` adds bare directory entries (no body),
+    the way ``xen-bugtool`` bundles carry them for every real path — needed to
+    test that a filtered extraction preserves them, not just files."""
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+        for name in directories:
+            info = tarfile.TarInfo(name.rstrip("/") + "/")
+            info.type = tarfile.DIRTYPE
+            archive.addfile(info)
         for name, text in members.items():
             body = text.encode("utf-8")
             info = tarfile.TarInfo(name)
@@ -65,7 +72,13 @@ def data_dir(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def _store_bundle(conn, data_dir, members: dict[str, str] | None = None) -> tuple[str, str]:
+def _store_bundle(
+    conn,
+    data_dir,
+    members: dict[str, str] | None = None,
+    *,
+    directories: tuple[str, ...] = (),
+) -> tuple[str, str]:
     """Store a raw collected bundle as ``job_collect`` would, returning its artifact id.
 
     The collection job is enqueued and immediately marked succeeded rather
@@ -77,7 +90,7 @@ def _store_bundle(conn, data_dir, members: dict[str, str] | None = None) -> tupl
     """
     collect_job = enqueue(conn, COLLECT_KIND, {"host_id": HOST_ID, "host_name": HOST_NAME})
     mark_succeeded(conn, collect_job.id)
-    body = _bundle_bytes(members or _MEMBERS)
+    body = _bundle_bytes(members or _MEMBERS, directories=directories)
     working = data_dir / "artifacts" / collect_job.id / "raw.tmp"
     working.parent.mkdir(parents=True, exist_ok=True)
     working.write_bytes(body)
@@ -103,6 +116,14 @@ def _members(path: Path) -> dict[str, str]:
     return out
 
 
+def _all_member_names(path: Path) -> set[str]:
+    """Every member's name, files and directories alike — unlike ``_members``,
+    which only reads file bodies and so cannot see whether a directory entry
+    made it into the output."""
+    with tarfile.open(path, "r:*") as archive:
+        return {member.name for member in archive}
+
+
 def test_extraction_keeps_only_the_selected_categories(
     conn: sqlite3.Connection, worker: JobWorker, data_dir: Path
 ) -> None:
@@ -120,6 +141,37 @@ def test_extraction_keeps_only_the_selected_categories(
     # categories, and the rotated xensource.log.1.gz is excluded by the
     # default "current logs only" behaviour.
     assert set(members) == {"var/log/xensource.log"}
+
+
+def test_extraction_keeps_directory_entries_for_selected_categories(
+    conn: sqlite3.Connection, worker: JobWorker, data_dir: Path
+) -> None:
+    """A directory belonging to a selected category survives extraction.
+
+    Regression test: ``member_filter`` used to reject every non-file member
+    outright, before it ever checked which category a directory belonged to —
+    so an extracted archive never carried directory entries at all, contrary
+    to ``_redact_tarball``'s own documented contract that a directory entry is
+    offered to the filter and kept when it passes (job_collect.py).
+    """
+    members = {**_MEMBERS, "var/log/blktap/tapback.log": "Sep  6 12:33:00 tapback: ok\n"}
+    artifact_id, _ = _store_bundle(conn, data_dir, members, directories=("var/log/blktap",))
+
+    job = enqueue(conn, KIND, {"artifact_id": artifact_id, "categories": ["storage"]})
+    worker.run_one(conn)
+
+    assert get_job(conn, job.id).state == SUCCEEDED
+    produced = list_for_job(conn, job.id)
+    bundle = next(item for item in produced if item.name.endswith(".tgz"))
+    names = _all_member_names(data_dir / "artifacts" / job.id / bundle.id)
+
+    # tarfile itself strips a directory member's trailing "/" on read.
+    assert "var/log/blktap" in names
+    assert "var/log/blktap/tapback.log" in names
+    # SMlog is a different file in the same "storage" category and must still
+    # be present; xensource.log's directory-less top-level path is a different
+    # category and must not leak in.
+    assert "var/log/SMlog" in names
 
 
 def test_include_rotated_pulls_in_rotated_history_too(

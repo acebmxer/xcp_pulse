@@ -236,6 +236,31 @@ def test_the_sources_table_says_how_much_each_source_held(
     assert "XAPI messages" in body
 
 
+def test_the_log_bundle_dropdown_shows_when_each_one_was_collected(
+    logged_in: TestClient,
+) -> None:
+    """Two collections of the same host produce identically-named,
+    identically-sized bundles — the only thing that tells them apart in the
+    dropdown is when each one was collected, so that has to be on screen.
+    """
+    db = logged_in.app.state.db
+
+    for _ in range(2):
+        collect_job = enqueue(db, COLLECT_KIND)
+        store_json(
+            db,
+            logged_in.app.state.settings.data_dir,
+            job_id=collect_job.id,
+            name="host1-logs.tgz",
+            payload={},
+        )
+
+    body = logged_in.get("/findings").text
+
+    assert body.count('value="') >= 2
+    assert " ago</option>" in body or "just now</option>" in body
+
+
 def test_both_stored_copies_are_offered_for_download(logged_in: TestClient) -> None:
     _store(logged_in)
     body = logged_in.get("/findings").text

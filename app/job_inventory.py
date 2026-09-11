@@ -18,7 +18,7 @@ from typing import Any
 
 from app.artifacts import list_for_job, read_json, store_json
 from app.job_runner import register
-from app.jobs import JobContext
+from app.jobs import JobContext, latest_successful
 from app.xo_client import Host, Inventory, Pool
 from app.xo_connection import build_client
 
@@ -92,6 +92,22 @@ def inventory_from_job(conn, data_dir, job_id: str) -> Inventory | None:
         pools=[_build(Pool, record) for record in _records(payload.get("pools"))],
         hosts=[_build(Host, record) for record in _records(payload.get("hosts"))],
     )
+
+
+def known_inventory(conn, data_dir) -> Inventory:
+    """The pools and hosts the last successful refresh stored.
+
+    Read from the stored artifact rather than by calling Xen Orchestra: a page
+    or job that only needs "what does the operator already know about the
+    pool" must not depend on XO being reachable, and the host list shown is
+    the one the operator already saw on the dashboard. The Collect page, a
+    findings run and the Support Package page all want exactly this, so it is
+    the one place any of them read it — do not add a second copy.
+    """
+    job = latest_successful(conn, KIND)
+    if job is None:
+        return Inventory()
+    return inventory_from_job(conn, data_dir, job.id) or Inventory()
 
 
 def _records(value: object) -> list[dict[str, Any]]:

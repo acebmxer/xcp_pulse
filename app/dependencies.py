@@ -96,12 +96,15 @@ def counts_in(text: str | None) -> str:
 
     Only runs of four or more digits are touched, and only whole ones: a byte
     size ("858.0 MiB") and a duration keep their own formatting because the
-    digits either side of a dot are not a standalone integer.
+    digits either side of a dot are not a standalone integer. A digit run
+    glued to a letter on either side — a log bundle member's name, scanned
+    into this same step text verbatim (e.g. "Scanning var/log/sa/sa20250911")
+    — is left alone too, since it is a filename, not a count.
     """
     if not text:
         return ""
     return re.sub(
-        r"(?<![\d.])\d{4,}(?![\d.])",
+        r"(?<![\d.\w])\d{4,}(?![\d.\w])",
         lambda m: f"{int(m.group(0)):,}",
         text,
     )

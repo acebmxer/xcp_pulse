@@ -32,12 +32,10 @@ from app.findings import (
     collect_findings,
     sort_findings,
 )
-from app.job_inventory import KIND as INVENTORY_KIND
-from app.job_inventory import inventory_from_job
+from app.job_inventory import known_inventory
 from app.job_runner import register
-from app.jobs import JobContext, latest_successful
+from app.jobs import JobContext
 from app.redact import enabled_rules
-from app.xo_client import Inventory
 from app.xo_connection import build_client
 
 KIND = "api_findings"
@@ -64,7 +62,7 @@ def run(context: JobContext) -> None:
     # The rules switched on now, so evidence in a findings report is masked the
     # same way a collected bundle is. A report is a thing people send onward.
     enabled = enabled_rules(context.conn)
-    inventory = _known_inventory(context.conn, context.data_dir)
+    inventory = known_inventory(context.conn, context.data_dir)
 
     report = collect_findings(
         client,
@@ -247,19 +245,6 @@ def _store_markdown(context: JobContext, report: Report) -> None:
         )
     finally:
         staging.unlink(missing_ok=True)
-
-
-def _known_inventory(conn, data_dir) -> Inventory:
-    """The pools the last successful refresh stored, or an empty inventory.
-
-    Deliberately the same reader the collect page uses rather than a second
-    one: the pool list a findings run checks for patches is the pool list the
-    operator saw on the dashboard.
-    """
-    job = latest_successful(conn, INVENTORY_KIND)
-    if job is None:
-        return Inventory()
-    return inventory_from_job(conn, data_dir, job.id) or Inventory()
 
 
 def _records(value: object) -> list[dict[str, Any]]:

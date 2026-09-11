@@ -22,12 +22,10 @@ from app.job_collect import KIND as COLLECT_KIND
 from app.job_extract import KIND as EXTRACT_KIND
 from app.job_extract import REPORT_ARTIFACT as EXTRACT_REPORT_ARTIFACT
 from app.job_extract import report_from_job as extract_report_from_job
-from app.job_inventory import KIND as INVENTORY_KIND
-from app.job_inventory import inventory_from_job
+from app.job_inventory import known_inventory
 from app.job_redact import REPORT_ARTIFACT, report_from_job, report_rows
-from app.jobs import enqueue, get_job, has_active, latest_successful, list_jobs
+from app.jobs import enqueue, get_job, has_active, list_jobs
 from app.log_categories import CATEGORIES
-from app.xo_client import Inventory
 from app.xo_connection import get_connection
 
 router = APIRouter()
@@ -65,7 +63,7 @@ def collect_page(
     data_dir = request.app.state.settings.data_dir
 
     connection = get_connection(db)
-    inventory = _known_inventory(db, data_dir)
+    inventory = known_inventory(db, data_dir)
     jobs = list_jobs(db, kind=COLLECT_KIND, limit=PAGE_LIMIT)
     plan = retention.plan(db, keep_days=keep_days, keep_count=keep_count)
     extractions = list_jobs(db, kind=EXTRACT_KIND, limit=PAGE_LIMIT)
@@ -144,7 +142,7 @@ def start_collection(
     if has_active(db, COLLECT_KIND) or has_active(db, EXTRACT_KIND):
         return redirect("/collect?notice=A+collection+is+already+running.")
 
-    inventory = _known_inventory(db, data_dir)
+    inventory = known_inventory(db, data_dir)
     host = next((item for item in inventory.hosts if item.id == host_id), None)
     if host is None:
         return redirect(
@@ -325,20 +323,6 @@ def run_cleanup(
     count = len(applied.delete)
     noun = "collection" if count == 1 else "collections"
     return redirect(f"/collect?notice=Deleted+{count}+{noun},+freeing+{freed}.")
-
-
-def _known_inventory(db, data_dir) -> Inventory:
-    """The pools and hosts the last successful refresh stored.
-
-    Read from the stored artifact rather than by calling Xen Orchestra: the
-    collect page must not depend on XO being reachable to show what was
-    collected, and the host list a collection targets is the one the operator
-    already saw on the dashboard.
-    """
-    job = latest_successful(db, INVENTORY_KIND)
-    if job is None:
-        return Inventory()
-    return inventory_from_job(db, data_dir, job.id) or Inventory()
 
 
 def _reports(db, data_dir, jobs, *, reader=report_from_job) -> dict[str, list[dict]]:
