@@ -10,6 +10,267 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-09-11
+
+### Added
+
+- **Vates support package.** A new `/support-package` page assembles one
+  `.tgz` to attach to a support ticket — the redacted log bundle, findings in
+  Markdown and JSON, the redaction report, the inventory, and a manifest
+  listing what's inside and what was masked — instead of an operator
+  downloading each of those separately. Two ways to start one: **Package** an
+  already-stored collection, or **Collect + Package** a host with nothing
+  stored yet.
+
+  A package never ships with a gap it could have filled itself: building one
+  always queues a fresh `api_findings` run and a fresh `refresh_inventory`
+  alongside the collection, rather than reusing whatever last happened to be
+  stored. The new `support_package` job cannot enqueue those and wait on them
+  itself — the queue is strict FIFO with a single worker thread, so a job
+  waiting on another it enqueued would deadlock forever — so the chain is
+  built by the route instead, the same way `job_extract` already chains an
+  extraction behind a fresh collection: every job it depends on is queued
+  first, addressed by `source_job_id`/`findings_job_id`/`inventory_job_id`
+  rather than an artifact id that does not exist yet, and resolved once the
+  package job is actually claimed. The manifest's masked-rules list is read
+  straight from the redaction report packaged beside it, so the two can never
+  disagree about what was redacted.
+
+  The page itself shows progress throughout the chain, not only once a
+  package job exists: a collection just started by Collect + Package gets its
+  own progress bar, elapsed-time counter and cancel button on the page (not
+  only on Jobs), and the page's auto-refresh now also checks for an active
+  collection or a running findings/inventory job, not only an active
+  `support_package` job — reported from a real screenshot where pressing
+  Collect + Package showed nothing moving on this page at all while the
+  collection was visibly running on Jobs, and a second screenshot where the
+  progress bar moved but no elapsed-time counter did, unlike the same
+  collection on the Collect page.
+
+  A finished package also no longer disappears from the page when its source
+  collection is deleted from the Collect page — that page has no idea support
+  packages exist and will happily remove a collection with a finished package
+  still nested under it. The archive itself does not need the raw collection
+  any more, so it stays on disk and downloadable either way; it now stays
+  listed too, under a new "Built from a since-deleted collection" section.
+
+- **Extract individual log categories from a collected bundle.** Xen
+  Orchestra's `logs.tgz` accepts no category filter and no date range — it is
+  `xen-bugtool`'s whole `/var/log`, 609 files on a real host measured
+  2026-09-11 — so a request for "just the storage logs" can only be answered
+  locally, against a bundle already on the data volume. A new
+  `extract_categories` job reuses `job_collect`'s tarball repack loop (via a
+  new `member_filter` parameter, rather than a second copy of the
+  streaming/salvage/masking logic) to pull only matching members into one
+  combined archive, masked with whichever redaction rules are active at the
+  moment the extraction runs — there is no separate rule choice for an
+  extraction; changing what gets masked means changing the rules on the
+  Redaction page first, then extracting.
+
+  Every real file in the measured bundle classifies into one of ten
+  categories (XAPI, storage, audit, security, kernel, system, high
+  availability, xenstore, RRD plugins, network) in the new
+  `app/log_categories.py`; anything not seen in that measurement falls into
+  System rather than being dropped from an extraction silently. Rotated
+  history is opt-in, the same choice the audit trail already makes — current
+  logs only unless asked for.
+
+  Two ways to start one: tick categories on the Collect form before starting
+  a collection, which queues the extraction right behind it against the
+  bundle just downloaded (no second transfer — the extraction is queued by
+  the collection's job id, since its bundle does not exist yet, and resolved
+  once the collection has actually finished); or tick them against any
+  already-stored collection's raw bundle on the Collect page. An extraction
+  is its own job with its own downloadable report, deletable independently of
+  the collection it came from, and is refused against a redacted copy or
+  anything that is not a collection's raw bundle.
+
+- **Findings from collected logs.** The Findings page can analyze a stored
+  `*-logs.tgz` bundle without downloading it again. The background job checks
+  for storage failures, multipath path failures, XAPI exceptions, and HA
+  fencing or heartbeat failures, groups repeated matches by condition, masks
+  evidence with the active redaction rules, and stores JSON and Markdown
+  reports as downloadable artifacts. The page refreshes while the job runs.
+  Both this run and the API findings run now render the same server-side
+  progress bar and step text `jobs.html` and `collect.html` already use, in
+  place of a bare "Running…" — the Findings page was the one long-job page
+  that had never gotten it. `collect_log_findings` previously only reported
+  10 → 90 → 100 for a whole-tar pass, which would have made the bar jump
+  rather than move; it now takes a `progress` callback and reports roughly
+  once per archive member, driven off bytes consumed against the bundle's
+  file size, which also makes a long log scan cancellable like the API
+  findings job already is.
+
+  A bundle that arrives truncated — measured against a real download cut
+  short by the same Nginx Proxy Manager issue the redacted repack already
+  salvages — used to fail the analysis outright on the `EOFError` its last
+  few missing bytes raised, discarding findings read from every log file
+  before the break. The scan now reads the archive in streaming order rather
+  than seeking, the same reasoning the repack follows, and keeps what it read
+  when the stream ends early: the report is marked as ending early and both
+  the page and the Markdown copy say so, rather than losing an analysis of a
+  464 MB bundle to its last few bytes. An archive that cannot be read at all
+  still fails the job.
+
+- **Two more log sources, and correlation between the API and log reports.**
+  Log findings now also cover the kernel out-of-memory killer and NTP/chrony
+  clock sync failures, alongside the existing storage, multipath, XAPI and HA
+  rules — six local sources in total. These were named in the roadmap as
+  remaining work when log findings first shipped and had no rule at all until
+  now.
+
+  The API findings report and the log findings report are two independent
+  runs, often taken hours apart, and previously had no way to say when they
+  described the same incident. A new `correlate_reports` pass runs whenever
+  the Findings page renders both: it matches findings by condition family — HA,
+  storage, XAPI, clock skew, multipath, detected from title and evidence text —
+  and, when both findings carry a timestamp, requires them within an hour of
+  each other. A match marks each finding as confirmed by the other with a small
+  badge, so an HA fencing event that shows up in both an XO message and a host
+  log reads as one incident rather than two unrelated findings on two pages.
+
+  With both gaps closed, findings from the API and findings from collected
+  logs are built and complete. The dashboard's roadmap panel and
+  `docs/roadmap.md` now say so instead of "in progress" — neither is marked
+  shipped or given a version number yet, since that is a release decision.
+
+- **Status panels on the dashboard.** Beneath the inventory, four panels report
+  the state of what has been built: the severity counts from the latest findings
+  report, how many redaction rules are switched off, how much the data volume is
+  holding and what the next cleanup would free, and the last five jobs with their
+  outcome. Each reads the same stored result the owning page renders, so the
+  dashboard cannot disagree with Findings, Redaction, Collect or Jobs, and none
+  of it calls Xen Orchestra.
+
+  The panels are summaries with a link, not second copies of those pages. A
+  feature earns a panel only when it changes whether an operator has to act — a
+  findings run with unread sources, masking that was partly off, a failed
+  collection — which is why having a page is not on its own a reason to appear
+  here.
+
+- **Findings from the Xen Orchestra API.** A new **Findings** page and
+  background job read seven API routes — XAPI messages, alarms, tasks, missing
+  patches per pool, backup runs, restore runs and the pool dashboard — and turn
+  what they report into findings, each with a severity, a title, the evidence
+  behind it, a suggested action and the source it came from. It downloads
+  nothing and needs no `export:logs` privilege, so it answers "is anything
+  wrong?" in a second or two rather than the two minutes a log collection
+  takes.
+
+  Repeated events are grouped into one finding with a count and the most recent
+  occurrence's evidence, since four messages about one storage repository are
+  one problem that happened four times. Routine VM lifecycle events are dropped:
+  measured on a live pool, `VM_SNAPSHOTTED`, `VM_STARTED`, `VM_SHUTDOWN` and
+  `VM_MIGRATED` were 3,381 of 3,472 messages, and a report including them buries
+  everything worth reading. Failed logins are dropped from the task source for
+  the same reason — 13 of 16 task failures on that pool were bad passwords,
+  which say nothing about the pool.
+
+  One source failing never fails the run: a restricted account is refused the
+  pool dashboard and can still read messages and tasks, so each source is tried
+  and a refusal is recorded against it with its reason. A source that was
+  refused is shown as **not read** rather than as clean, because an XOA without
+  a support subscription cannot list patches, and reporting that as "no missing
+  patches" would be a false statement about the pool.
+
+  **The Markdown report is plain ASCII.** An em dash is three UTF-8 bytes, and
+  anything opening the file as Latin-1 renders it as `â` — which happened to a
+  real downloaded report even though the file on disk was valid UTF-8 and the
+  download header said `charset=utf-8`. A report is emailed, pasted into
+  ticketing systems and opened by other people's tools, so it now emits nothing
+  that can break that way, and a test holds the whole generated document to
+  ASCII.
+
+  The sources table says **where each source comes from** and **what it holds**.
+  Xen Orchestra serves all seven routes but originates only three of them — the
+  rest it relays from the XCP-ng hosts — and which it is decides where to go to
+  act on a finding: a XAPI message means log in to the host, a failed task means
+  look in Xen Orchestra. A count of zero is written as what was checked rather
+  than as a bare `0`, because "no alarms exist" and "nothing was examined" are
+  different facts that a zero cannot tell apart; the patch check names the pools
+  it asked, since "none missing" is its answer rather than an absence of data.
+
+  Evidence is masked with the redaction rules switched on at the time, through
+  the same `redact_line` a collected bundle uses, and the report **names any
+  rule that was switched off** — on the page, above the findings, and in the
+  Markdown before the first one. An unmasked value and a value no rule ever
+  looked for read identically, so a report that does not say which rules were
+  off cannot be judged safe to send. XO task properties carry
+  usernames and the caller's IP address, so only the task's name and its failure
+  message are read out of one. The report is stored as two artifacts — JSON,
+  which the page renders, and Markdown, which is what goes into a support
+  ticket — both downloadable from the page.
+
+### Fixed
+
+- **The in-app truncated-download message now points at a doc recording this
+  as a known, unsolved bug**, rather than only saying "usually a reverse proxy
+  in front of Xen Orchestra." `docs/installation.md` now has "Xen Orchestra
+  behind a reverse proxy (known bug, unsolved)", documenting an investigation
+  against a real Nginx Proxy Manager deployment — recorded so someone with
+  more insight into Nginx/httpx internals, or a setup where it reproduces more
+  cleanly, has a starting point. Neither of the two things tried fixed it:
+  XCP-ng's log bundle is built on the fly, so XO serves it as
+  `Transfer-Encoding: chunked` with no `Content-Length`, and on the tested
+  deployment the proxy's connection to XO intermittently closed before the
+  final chunk arrived — observed directly as `httpx.RemoteProtocolError: peer
+  closed connection without sending complete message body`. **Proxy
+  configuration** (`proxy_buffering off`, `proxy_set_header Connection ""`,
+  and related directives) reduced how often it happened but did not eliminate
+  it — identical code and configuration, run twice in a row, produced one
+  complete download and one truncated at the same byte offset every earlier
+  attempt had also stopped at. **Suppressing `httpx`'s default
+  `Accept-Encoding: gzip, deflate` header** (it was asking the proxy to
+  transport-encode an already-gzipped file) also only reduced the frequency,
+  confirmed by the same back-to-back test, and was not implemented in the
+  codebase since it does not actually fix anything. `proxy_http_version 1.1;`
+  — which looks like the obvious next thing to try alongside `Connection ""`
+  — is documented as something that broke the proxy outright on the
+  deployment it was tested against, for a reason not understood. The honest
+  advice recorded is to retry a collection that reports "the bundle ends
+  early," not that the problem is solved.
+
+- **The Xen Orchestra event routes are bounded by a time filter, not by
+  `limit`.** Measured against XO CE: `limit` is applied to the *oldest* records
+  rather than the newest, so asking `/messages` for 2,000 of a pool's 3,472 rows
+  returned everything from the first month and nothing from the last — hiding
+  every recent event behind a parameter that looked like it was working.
+  `sort` and `order` are accepted and silently ignored. The window is now
+  expressed as a `filter`, which XO applies server-side, so the response shrinks
+  with the window instead of growing with pool age. The filter is built in one
+  place because the two timestamp scales differ — XAPI messages and alarms carry
+  seconds, XO tasks and backup runs carry milliseconds — and filtering a
+  millisecond field with a seconds value matches every record, which is a bug
+  indistinguishable from a working filter.
+
+### Changed
+
+- **Hit counts and job summary lines are thousands-separated.** A report puts
+  every rule's count in one column, and on a two-host pool that column spans six
+  orders of magnitude: XAPI writes a `trackid` each time the toolstack
+  authenticates to itself, so session tokens reach 471,729 on a single
+  collection while email addresses reach 12. Unseparated, those two are the same
+  shape at a glance, and the small counts are the ones worth reading before a
+  bundle is sent. Both the report table and the summary line above it are
+  formatted when the page renders rather than when the job runs — a job's step
+  text is stored in the database, so formatting it at write time would have left
+  every previously recorded run unseparated for good. Byte sizes are left
+  untouched.
+
+- **The container image no longer ships pip, setuptools or wheel.** The
+  Dockerfile now installs dependencies into a virtualenv in a build stage and
+  copies only that virtualenv into the runtime image, and the base image's own
+  pip is removed. A vulnerability scan of the published image reported two
+  findings — `CVE-2025-47273` in setuptools 70.3.0 and `GHSA-6v7p-g79w-8964` in
+  msgpack 1.1.2 — that came from pip's vendored bundle rather than from any
+  dependency this project declares. Neither was reachable: the vendored
+  setuptools ships only `pkg_resources`, without the `PackageIndex` class the
+  advisory concerns, and the vendored msgpack is the pure-Python fallback,
+  where the reported crash is in the C extension. They are now absent rather
+  than argued about, and an image with no package manager cannot be made to
+  install one. Nothing about the application changes; the base image's own
+  Debian packages are unaffected and still track upstream.
+
 ## [0.6.3] - 2026-09-08
 
 ### Added
@@ -705,7 +966,8 @@ must extract from a locally cached bundle rather than making a smaller request;
 and real bundles contain internal addresses and session tokens, which is why
 redaction is scheduled before the first downloadable bundle rather than after.
 
-[Unreleased]: https://github.com/acebmxer/xcp_pulse/compare/v0.6.3...HEAD
+[Unreleased]: https://github.com/acebmxer/xcp_pulse/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/acebmxer/xcp_pulse/compare/v0.6.3...v0.7.0
 [0.6.3]: https://github.com/acebmxer/xcp_pulse/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/acebmxer/xcp_pulse/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/acebmxer/xcp_pulse/compare/v0.6.0...v0.6.1

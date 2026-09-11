@@ -7,11 +7,11 @@
 [![Issues](https://img.shields.io/github/issues/acebmxer/xcp_pulse)](https://github.com/acebmxer/xcp_pulse/issues)
 [![Stars](https://img.shields.io/github/stars/acebmxer/xcp_pulse)](https://github.com/acebmxer/xcp_pulse/stargazers)
 [![Forks](https://img.shields.io/github/forks/acebmxer/xcp_pulse)](https://github.com/acebmxer/xcp_pulse/forks)
-[![Unique cloners](https://img.shields.io/badge/unique%20cloners-0-lightgrey)](https://github.com/acebmxer/xcp_pulse/graphs/traffic)
+[![Unique cloners](https://img.shields.io/badge/unique%20cloners-134-brightgreen)](https://github.com/acebmxer/xcp_pulse/graphs/traffic)
 [![Python](https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white)](pyproject.toml)
 [![Docker](https://img.shields.io/badge/docker-compose-2496ED?logo=docker&logoColor=white)](docker-compose.yml.example)
 [![Platform: Linux](https://img.shields.io/badge/platform-linux-333333?logo=linux&logoColor=white)](#requirements)
-[![Tests](https://img.shields.io/badge/tests-314%20unit-informational)](https://github.com/acebmxer/xcp_pulse/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-504%20unit-informational)](https://github.com/acebmxer/xcp_pulse/actions/workflows/ci.yml)
 [![Ruff](https://img.shields.io/badge/ruff-clean-brightgreen)](https://github.com/acebmxer/xcp_pulse/actions/workflows/ci.yml)
 
 Collects XCP-ng and Xen Orchestra logs, bundles them for download, analyses
@@ -21,9 +21,10 @@ Vates support ticket.
 > [!NOTE]
 > XCP Pulse is being built in stages. **Log collection shipped in v0.6.0: it
 > downloads a host's full log bundle, keeps the raw copy, and produces a
-> redacted copy to send — with a report of what was masked.**
-> Findings from the logs and a Vates support package come next. See
-> [the roadmap](docs/roadmap.md) for what is planned and what is done.
+> redacted copy to send — with a report of what was masked. Findings from the
+> API and from collected logs, individual log-category extraction and the
+> Vates support package shipped in v0.7.0.**
+> See [the roadmap](docs/roadmap.md) for what is planned and what is done.
 
 ## Read next
 
@@ -66,6 +67,13 @@ Then open `http://<server>:8080` and sign in. To build from source instead, see
 - A Xen Orchestra instance reachable over HTTP(S), and an API token for it
 - Disk for collected bundles — roughly **450 MB per host per collection**
 
+> [!IMPORTANT]
+> **If Xen Orchestra sits behind a reverse proxy**, a log collection can come
+> back truncated. This is a known, unsolved bug — intermittent, and not fixed
+> by any config change tried so far. See [Xen Orchestra behind a reverse
+> proxy](docs/installation.md#xen-orchestra-behind-a-reverse-proxy-known-bug-unsolved)
+> for what is known and what to do about it today.
+
 ## What it does
 
 Measured against a real XCP-ng 8.3 pool, so the numbers below are observed
@@ -88,13 +96,32 @@ rather than estimated:
   switched-off rule reading as *off* rather than as zero hits.
 - **Keep the disk in check** — a retention policy that shows exactly which
   collections it would delete before you press the button.
-
-Still to come, on [the roadmap](docs/roadmap.md):
-
-- **Collect individual categories** — storage, XAPI, audit, security, kernel and
-  the rest — extracted from the cached bundle without downloading again.
-- **Report findings** — failed tasks, missing patches, storage errors, HA events
-  — with the evidence behind each one.
+- **Report findings from the API** — failed tasks, alarms, XAPI messages,
+  missing patches, backup and restore results and the pool dashboard, each with
+  the evidence behind it and what to do about it. Nothing is downloaded, so it
+  answers in seconds rather than two minutes.
+- **Report findings from collected logs** — select a stored `*-logs.tgz` bundle
+  and analyze it locally for storage failures, multipath path failures, XAPI
+  exceptions, HA fencing or heartbeat failures, out-of-memory events and clock
+  sync failures. The run downloads nothing, groups repeated matches by
+  condition, redacts evidence, and stores JSON and Markdown reports beside the
+  job. A finding seen in both the API report and a log report — matched by
+  condition and, when timed, within an hour of each other — is marked as
+  confirmed by the other, so one incident doesn't read as two.
+- **Extract individual log categories** — ten families (XAPI, storage, audit,
+  security, kernel, system, high availability, xenstore, RRD plugins, network)
+  pulled from an already-collected bundle, current logs only unless rotated
+  history is asked for too. Xen Orchestra's `logs.tgz` has no category filter
+  of its own, so this extracts locally rather than downloading again — either
+  right after a fresh collection or from any bundle already stored. Several
+  categories at once come back as one combined archive.
+- **Build a Vates support package** — one archive with the redacted log
+  bundle, findings in Markdown and JSON, the redaction report, the inventory,
+  and a manifest listing what's inside and what was masked, instead of
+  gathering those downloads by hand. Package an already-stored collection, or
+  collect a host and package it in one action. Building one always runs a
+  fresh findings check and inventory refresh alongside it, so it never ships
+  with a gap.
 
 ## Configuration
 

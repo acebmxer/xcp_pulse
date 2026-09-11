@@ -10,6 +10,17 @@ where the hosts were.
 The first load after configuring a connection has no stored result yet, so one
 refresh is queued automatically. Only the first: after that, refreshing is
 something the operator asks for on the jobs page.
+
+The panels beneath the inventory follow the same rule: each reads a stored
+result and links to the page that owns it, so the dashboard answers "is
+anything wrong, and did the last run work?" without becoming a second copy of
+Findings or Jobs. Nothing here calls Xen Orchestra.
+
+**As features ship, they earn a panel only if they change that answer.** A
+feature having a page is not a reason to summarise it here — a dashboard that
+lists everything is one nobody reads. The test is whether an operator who
+opened this page and nothing else would be missing something they needed to
+act on.
 """
 
 from __future__ import annotations
@@ -19,10 +30,16 @@ import logging
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse, Response
 
+from app import retention
+from app.artifacts import human_bytes
 from app.dependencies import login_required, templates, wake_worker
+from app.findings import SEVERITIES
+from app.job_findings import KIND as FINDINGS_KIND
+from app.job_findings import report_from_job
 from app.job_inventory import KIND as INVENTORY_KIND
 from app.job_inventory import inventory_from_job
-from app.jobs import enqueue, has_active, latest_job, latest_successful
+from app.jobs import enqueue, has_active, latest_job, latest_successful, list_jobs
+from app.redact import RULES, enabled_rules
 from app.xo_client import Inventory
 from app.xo_connection import get_connection
 
@@ -47,6 +64,11 @@ PENDING_HELP = (
     "Reading the inventory from Xen Orchestra. This page will show your pools "
     "and hosts once it finishes."
 )
+
+# How many recent jobs the activity panel shows. Deliberately small: this
+# answers "did the last thing I started work?", and the jobs page is where a
+# history is read.
+RECENT_JOBS = 5
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -79,6 +101,21 @@ def dashboard(request: Request, username: str = Depends(login_required)) -> Resp
             wake_worker(request)
             log.info("queued the first %s job", INVENTORY_KIND)
 
+    # The latest findings report, for the severity summary. Read from the
+    # stored artifact the Findings page renders, so the two cannot disagree.
+    findings_job = latest_successful(db, FINDINGS_KIND)
+    report = report_from_job(db, settings.data_dir, findings_job.id) if findings_job else None
+
+    # Rules switched off, by title. A bundle or report produced with masking
+    # disabled is the failure worth seeing before it is sent, so it belongs on
+    # the page an operator opens first rather than only on Redaction.
+    enabled = enabled_rules(db)
+    rules_off = [rule.title for rule in RULES if rule.name not in enabled]
+
+    # Storage is the retention plan on its defaults — the same figures the
+    # collect page shows, without repeating its policy form here.
+    plan = retention.plan(db)
+
     return templates.TemplateResponse(
         request,
         "dashboard.html",
@@ -91,5 +128,13 @@ def dashboard(request: Request, username: str = Depends(login_required)) -> Resp
             "error": error,
             "empty_help": EMPTY_HELP,
             "pending_help": PENDING_HELP,
+            "findings_job": findings_job,
+            "report": report,
+            "severities": SEVERITIES,
+            "rules_off": rules_off,
+            "rule_total": len(RULES),
+            "plan": plan,
+            "recent_jobs": list_jobs(db, limit=RECENT_JOBS),
+            "human_bytes": human_bytes,
         },
     )

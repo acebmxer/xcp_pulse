@@ -45,6 +45,9 @@ streaming download.
 | `app/job_inventory.py` | The **Refresh inventory** job — the worked example of a job. |
 | `app/job_redact.py` | The **Redact artifact** job: masks a stored file, writes the report. |
 | `app/job_collect.py` | The **Collect logs** job: downloads a host's bundle (and optionally its audit trail), keeps raw and redacted copies. |
+| `app/findings.py` | Turns Xen Orchestra API reads into findings: severity, title, evidence, action, source. |
+| `app/job_findings.py` | The **API findings** job: runs the sources, stores the report as JSON and Markdown. |
+| `app/job_log_findings.py` | The **log findings** job: reads a stored `*-logs.tgz` bundle, stores the report as JSON and Markdown. |
 | `app/retention.py` | What stored collections to delete, always previewed before it acts. |
 | `app/artifacts.py` | What a job produced: files on the volume, metadata in the database. |
 | `app/redact.py` | The masking rules. The **only** place a redaction pattern is written. |
@@ -179,6 +182,34 @@ filtering parameters — a request for one category cannot be made smaller. So
 collection downloads once, caches, and every later product (redacted bundle,
 category subset, findings) is derived from that cache. This is why per-category
 collection must come *after* whole-bundle collection, not before.
+
+**The API answers before anything is downloaded.** Findings from the API read
+seven routes and need no `export:logs` privilege, so a pool's current state is
+readable in seconds by an account that could never collect a bundle. That is why
+API findings do not wait on collection, and why one refused source is recorded
+rather than failing the run — a restricted account is refused the pool dashboard
+and can still read messages and tasks.
+
+**Xen Orchestra's `limit` returns the oldest records, not the newest**, and its
+`sort` and `order` parameters are ignored. Event reads are therefore bounded by
+a server-side `filter` on time, which also shrinks the response as the window
+narrows. Messages and alarms carry seconds; tasks and backup runs carry
+milliseconds — filtering one with the other's scale matches every record, so the
+conversion lives in a single helper.
+
+**Log findings read the cache, not Xen Orchestra.** The Findings page selects a
+stored `*-logs.tgz` artifact produced by collection and queues `log_findings`.
+The worker scans the archive locally, groups repeated matches by detected
+condition, redacts representative evidence, and stores `log-findings.json` and
+`log-findings.md` beside the job. It reports progress as it scans — driven off
+bytes consumed against the bundle's own file size, one archive member at a
+time, rather than the single 10 → 90 → 100 jump a whole-tar pass would
+otherwise leave the page showing. A bundle that ends early — the same Nginx
+Proxy Manager truncation the redacted repack already salvages — keeps whatever
+was read before the break and marks the report `truncated` rather than failing
+the job; an archive that cannot be read at all still fails it. API and log
+reports remain separate until a later correlation layer can match timestamps,
+host identity, and event details reliably.
 
 **Redaction sits between the cache and anything sent onward.** Real bundles
 contain internal addresses, usernames and session tokens, so the redacted copy

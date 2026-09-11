@@ -37,6 +37,10 @@ columns; those are a reviewer's job.
 | Add a new kind of background job | `app/job_inventory.py` as the worked example; register it in `app/job_runner.py` and import it in `app/main.py` |
 | Redact a stored file and report what was masked | `app/job_redact.py` |
 | Collect a host's logs and redact them | `app/job_collect.py` |
+| Extract selected log categories from a stored bundle | `app/job_extract.py`; the category map is `app/log_categories.py` |
+| Build a Vates support package | `app/job_support_package.py`; the page is `app/routes/support_package.py` |
+| Ask the API what is wrong | `app/findings.py`, run by `app/job_findings.py` |
+| Ask a stored log bundle what is wrong | `app/findings.py`, run by `app/job_log_findings.py` |
 | Decide what stored collections to delete | `app/retention.py` — always `plan` before `apply` |
 | Show a byte count on a page | `app/artifacts.py` — `human_bytes` |
 | Store or read what a job produced | `app/artifacts.py` |
@@ -97,6 +101,8 @@ genuinely invalidates rather than merely asking the browser to forget.
 | --- | --- | --- | --- | --- |
 | `login_required` | `(request) -> str` | FastAPI dependency; 303s anonymous callers | every protected route | v0.1.0 |
 | `age` | `(timestamp: float \| None) -> str` | A timestamp as how long ago it was, for a stored result | `dashboard.html`, as the `age` filter | v0.4.0 |
+| `count` | `(value: int) -> str` | A hit count with thousands separators, for a report column whose range spans six orders of magnitude | `jobs.html`, `collect.html`, `redaction.html`, as the `count` filter | v0.7.0 |
+| `counts_in` | `(text: str \| None) -> str` | Thousands-separates the integers in a stored progress line, leaving byte sizes alone | `jobs.html`, `collect.html`, as the `counts_in` filter | v0.7.0 |
 | `redirect` | `(url: str, status_code: int = 303) -> RedirectResponse` | Redirect, defaulting to see-other | `routes/auth` | v0.1.0 |
 | `wake_worker` | `(request) -> None` | Tells the job worker to look now rather than at its next poll | every route that enqueues a job | v0.6.0 |
 | `serve_artifact` | `(request, artifact_id: str, *, on_error: str) -> Response` | Streams one stored artifact to the browser, shared by every page that lists artifacts | `routes.collect.download_artifact`, `routes.jobs.download_job_artifact` | v0.6.3 |
@@ -141,6 +147,8 @@ stored URL, token and TLS setting are applied in one place.
 
 | Method | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
+| `XoClient.alarms` | `(since: float) -> list[dict]` | Alarms raised since a Unix time | `findings.collect_findings` | v0.7.0 |
+| `XoClient.backup_logs` | `(since: float) -> list[dict]` | Backup job runs since a Unix time | `findings.collect_findings` | v0.7.0 |
 | `XoClient.check_log_export` | `(*, is_admin: bool) -> LogExportSupport` | Whether this account can download host logs, and why not | `test_connection`, settings page | v0.2.0 |
 | `XoClient.grantable_host_actions` | `() -> set[str]` | Host actions this instance can grant to a role | `check_log_export` | v0.2.0 |
 | `XoClient.download_audit` | `(host_id, destination, *, on_chunk=None) -> int` | Streams a host's XAPI audit trail to a file | `job_collect.run` | v0.6.0 |
@@ -148,6 +156,11 @@ stored URL, token and TLS setting are applied in one place.
 | `XoClient.download_to` | `(path, destination, *, on_chunk=None) -> int` | Streams any XO route to a file, never holding the body | `download_logs`, `download_audit` | v0.6.0 |
 | `XoClient.inventory` | `() -> Inventory` | Pools and hosts with their details, for the dashboard | `job_inventory.run` | v0.3.0 |
 | `XoClient.is_admin` | `() -> bool` | Whether the account has XO administrator permission | `test_connection` | v0.2.0 |
+| `XoClient.messages` | `(since: float) -> list[dict]` | XAPI messages since a Unix time | `findings.collect_findings` | v0.7.0 |
+| `XoClient.missing_patches` | `(pool_id: str) -> list[dict]` | Patches XO reports missing on one pool | `findings.collect_findings` | v0.7.0 |
+| `XoClient.pool_dashboard` | `() -> dict` | The dashboard totals: patches, backups, storage, host state | `findings.collect_findings` | v0.7.0 |
+| `XoClient.restore_logs` | `(since: float) -> list[dict]` | Restore runs since a Unix time | `findings.collect_findings` | v0.7.0 |
+| `XoClient.tasks` | `(since: float) -> list[dict]` | XO tasks since a Unix time, with failure results | `findings.collect_findings` | v0.7.0 |
 | `XoClient.list_hosts` | `() -> list[str]` | Host hrefs this account can see, for counting only | `test_connection` | v0.2.0 |
 | `XoClient.list_pools` | `() -> list[str]` | Pool hrefs this account can see, for counting only | `test_connection` | v0.2.0 |
 | `XoClient.test_connection` | `() -> ConnectionTest` | Checks URL and token, reports what the account reaches | `routes.settings.settings_test` | v0.2.0 |
@@ -163,6 +176,14 @@ it directly. `ConnectionTest` and `LogExportSupport` are frozen dataclasses.
 `/hosts`, not a 403.** Treating a successful request as a usable connection is
 therefore wrong, which is why `test_connection` reports what was visible rather
 than only whether the call succeeded.
+
+**The event routes are bounded by `filter`, never by `limit`.** Measured: XO
+applies `limit` to the *oldest* records, so asking `/messages` for 2000 of 3472
+rows returned the first month and hid every recent finding; `sort` and `order`
+are accepted and ignored. `_events` builds the time filter for all five event
+routes in one place, because messages and alarms carry seconds while tasks and
+backup runs carry milliseconds — and filtering a millisecond field with a
+seconds value matches everything, which looks exactly like a working filter.
 
 ## `app/xo_connection.py` — the stored connection
 
@@ -195,7 +216,7 @@ through the `JobContext` it is handed.
 | `has_active` | `(conn, kind: str) -> bool` | True when a job of this kind is queued or running | `routes.jobs`, `routes.dashboard` | v0.4.0 |
 | `latest_job` | `(conn, kind: str) -> Job \| None` | The newest job of a kind, whatever its state | `routes.dashboard` | v0.4.0 |
 | `latest_successful` | `(conn, kind: str) -> Job \| None` | The newest job of a kind that succeeded | `routes.dashboard` | v0.4.0 |
-| `list_jobs` | `(conn, *, kind: str \| None = None, limit: int = 50) -> list[Job]` | Recent jobs, newest first | `routes.jobs.jobs_page` | v0.4.0 |
+| `list_jobs` | `(conn, *, kind: str \| None = None, limit: int = 50) -> list[Job]` | Recent jobs, newest first | `routes.jobs.jobs_page`, `routes.dashboard` | v0.4.0 |
 | `mark_cancelled` | `(conn, job_id: str) -> None` | Records that a job stopped on request | `job_runner.JobWorker.run_one` | v0.4.0 |
 | `mark_failed` | `(conn, job_id: str, error: str) -> None` | Records a failure and its reason | `job_runner.JobWorker.run_one` | v0.4.0 |
 | `mark_succeeded` | `(conn, job_id: str, step: str = "") -> None` | Records completion | `job_runner.JobWorker.run_one` | v0.4.0 |
@@ -304,6 +325,176 @@ The raw bundle is kept alongside the redacted one because the redacted copy is
 lossy, and a question about what was masked can only be answered against the
 original. The collect page marks which is which.
 
+## `app/log_categories.py` — which log family a bundle member belongs to
+
+The map that makes "download only the storage logs" possible. Xen Orchestra's
+log routes accept no category filter and no date range — `logs.tgz` is
+`xen-bugtool`'s whole `/var/log`, 609 files on a real host measured
+2026-09-11 — so a category can only be answered by picking apart a bundle
+already on disk. Every prefix in `CATEGORIES` is a real path from that
+measured bundle; a path matching nothing falls into `"system"` rather than
+being dropped, so a file not seen in that one measurement — an older or newer
+XCP-ng release adds and removes a few — is still accounted for.
+
+| Function | Signature | Does | Used by | Since |
+| --- | --- | --- | --- | --- |
+| `canonical_name` | `(member_path: str) -> str` | Strips `var/log/` and a rotation suffix (`.N`, `.gz`) so every rotation of a log matches the same rule | `classify`, `job_extract.run` | v0.7.0 |
+| `category_by_key` | `(key: str) -> Category \| None` | One category by its key | `routes.collect`, `job_extract` | v0.7.0 |
+| `category_keys` | `() -> tuple[str, ...]` | Every valid category key, in display order | tests | v0.7.0 |
+| `classify` | `(member_path: str) -> str` | The category key a bundle member belongs to; never an unknown key | `job_extract.run` | v0.7.0 |
+
+## `app/job_extract.py` — the Extract categories job
+
+Pulls the selected log families out of an already-stored raw bundle into one
+combined `.tgz` — no second download, because there is nothing XO could filter
+server-side to make a second download smaller. Reuses
+`job_collect._redact_tarball`'s streaming/salvage/masking loop via its
+`member_filter` parameter rather than a second copy of it: a category
+extraction and the full redacted copy a collection makes are the same
+operation with a different answer to which members belong in the output.
+
+Redaction is always the rules active *now* — there is no per-extraction rule
+picker. To change what gets masked, change the rules on the Redaction page
+first, then extract.
+
+| Function | Signature | Does | Used by | Since |
+| --- | --- | --- | --- | --- |
+| `build_report` | `(*, source, extracted, categories, matched, include_rotated, enabled, counts) -> dict` | The extraction's report as plain JSON, extending `job_redact.build_report` | `job_extract.run` | v0.7.0 |
+| `report_from_job` | `(conn, data_dir, job_id: str) -> dict \| None` | Reads back a stored extraction report | `routes.collect` | v0.7.0 |
+| `run` | `(context: JobContext) -> None` | Extracts the selected categories, storing the archive and the report | `job_runner`, via `register` | v0.7.0 |
+
+`run` accepts either `artifact_id` (extracting from an already-stored
+collection) or `source_job_id` (queued alongside a fresh collection, before its
+bundle exists yet — resolved once that collection has actually finished,
+relying on the FIFO queue and single-worker run to guarantee it has). A failed
+or cancelled source collection fails the extraction with a clear reason rather
+than a confusing "artifact not found".
+
+Rotated history is opt-in, the same choice `job_collect` makes about the audit
+trail — current logs only unless `include_rotated` is set. A category that
+matches nothing in a given bundle is not an error: the archive is still stored
+empty and the report and job step say why.
+
+## `app/job_support_package.py` — the Support package job
+
+Assembles one `.tgz` from a collection and two sibling jobs it queues itself:
+the redacted log bundle, `findings.json` and `findings.md`, the redaction
+report, the inventory, and a manifest. Never packages a gap — if the target
+host has no findings run or no inventory refresh, this queues those first
+rather than shipping a package with a hole in it.
+
+The worker is single-threaded and the queue is strict FIFO, so this job cannot
+enqueue a sub-job and wait on it from inside its own `run` — the chain is built
+by the route instead (`routes.support_package._enqueue_chain`), which queues
+findings, then inventory, then this job, each addressed by the id of the job
+before it rather than an artifact id that does not exist yet. By the time this
+job is claimed, everything queued ahead of it has already finished.
+
+| Function | Signature | Does | Used by | Since |
+| --- | --- | --- | --- | --- |
+| `build_manifest` | `(*, host_name, collection, redacted_bundle, redaction_report, findings_job, inventory_job, entries) -> dict` | What the archive contains and what was masked, as plain JSON | `job_support_package.run` | v0.7.0 |
+| `package_from_job` | `(conn, job_id: str) -> Artifact \| None` | The archive a completed package job stored | `routes.support_package.delete_package` | v0.7.0 |
+| `run` | `(context: JobContext) -> None` | Resolves the collection and its two sibling jobs, builds the archive, stores it | `job_runner`, via `register` | v0.7.0 |
+
+`build_manifest`'s `rules_disabled` is read straight from the redaction report
+packaged beside it rather than re-derived, so the manifest can never disagree
+with the report sitting next to it in the same archive.
+
+## `app/findings.py` — what the API says is wrong
+
+Turns seven Xen Orchestra reads into findings: severity, title, evidence,
+suggested action, source. No HTTP of its own — every call goes through
+`XoClient`, and every finding is built by `_finding`, which is the only
+constructor and redacts the evidence on the way in.
+
+| Function | Signature | Does | Used by | Since |
+| --- | --- | --- | --- | --- |
+| `collect_findings` | `(client, pools, *, enabled=None, window_days=30, now=None, progress=None) -> Report` | Reads every source and builds the report | `job_findings.run` | v0.7.0 |
+| `collect_log_findings` | `(bundle_path, *, enabled=None, progress=None) -> Report` | Reads a stored tar bundle, groups storage, multipath, XAPI, HA, out-of-memory and clock-skew matches, and builds the report; a bundle that ends early is salvaged rather than failed | `job_log_findings.run` | v0.7.0 |
+| `disabled_rule_titles` | `(enabled) -> list[str]` | The titles of the redaction rules switched off, for the report | `collect_findings` | v0.7.0 |
+| `sort_findings` | `(findings: list[Finding]) -> list[Finding]` | Worst first, then most recent, then by title | `collect_findings`, `job_findings.report_from_job` | v0.7.0 |
+| `correlate_reports` | `(api_report: Report \| None, log_report: Report \| None) -> None` | Marks findings that appear in both the API report and the log report — same condition family, and within an hour of each other when both are timed — by setting `confirmed_by` on each side | `routes/findings.findings_page` | v0.7.0 |
+
+`Finding`, `SourceInfo`, `SourceResult` and `Report` are dataclasses. `SOURCES`
+holds each source's title, origin, what it holds and the unit it is counted in
+— origin because Xen Orchestra *serves* all seven routes but *originates* only
+three, and a XAPI message means log in to the host while a failed task means
+look in XO. `SourceResult.examined_text` phrases the count, so a zero says what
+was checked rather than reading as "nothing was examined". `Report.sources`
+records every source that was tried, so a source that was **refused** is told
+apart from one that was read and found nothing — the same distinction the
+redaction report draws between a rule with no hits and a rule switched off.
+
+**One source failing never fails the run.** A restricted account is refused the
+pool dashboard and can still read messages and tasks, and a report covering
+four sources is worth more than an error.
+
+**Evidence is masked before it is stored**, by `redact.redact_line` under the
+rules switched on at the time — not by a second masking implementation for
+short strings. XO task `properties` carry usernames and client IP addresses,
+so only `properties.name` and the failure message are read out of a task.
+
+Message classification is two tables: `MESSAGE_RULES` matched exactly, then
+`MESSAGE_PREFIX_RULES` matched by prefix for vendor families. Anything in
+neither is routine and is dropped — measured, VM lifecycle events alone were
+3,381 of 3,472 messages on one pool.
+
+Log classification uses six source rules: storage, multipath, XAPI, HA,
+out-of-memory and clock skew. Matching lines are counted once per source and
+repeated matches become one finding with a count; the latest matching line is
+retained as representative evidence. The rules are narrower than a generic
+error search: an XAPI error is not automatically a storage failure.
+
+**Correlation is a separate pass, not part of either read.** The API report and
+the log report are two independent runs, often hours apart, so `Finding` has no
+opinion about the other report while either is being built — `correlate_reports`
+runs once both exist, matching by condition family (HA, storage, XAPI, clock
+skew, multipath, via keyword patterns on title and evidence) and, when both
+findings carry a timestamp, a one-hour window. A match sets `confirmed_by` on
+both findings to the other's title, so an operator sees a fencing event that
+shows up in both the API and the logs as one incident instead of two unrelated
+findings on two different pages.
+
+## `app/job_findings.py` — the API findings job
+
+Runs `collect_findings` and stores the report twice: JSON, which the page reads
+back, and Markdown, which is what goes into a support ticket.
+
+| Function | Signature | Does | Used by | Since |
+| --- | --- | --- | --- | --- |
+| `report_from_job` | `(conn, data_dir, job_id: str) -> Report \| None` | Rebuilds the Report a job stored | `routes.findings.findings_page`, `routes.dashboard` | v0.7.0 |
+| `run` | `(context: JobContext) -> None` | Reads every source and stores the report | `job_runner`, via `register` | v0.7.0 |
+| `to_markdown` | `(report: Report) -> str` | The report as Markdown, for a support ticket | `job_findings.run` | v0.7.0 |
+| `to_payload` | `(report: Report) -> dict` | The report as plain JSON | `job_findings.run` | v0.7.0 |
+
+`report_from_job` drops unknown keys and leaves missing ones at their dataclass
+default, so a report written by an older version still renders.
+
+The Markdown is **plain ASCII**. The file on disk is valid UTF-8 and is served
+with `charset=utf-8`, and a real downloaded report still arrived with `â` where
+its em dashes were — a report is emailed and opened by other people's tools, so
+the reliable fix is to emit nothing that can mis-decode. `test_job_findings.py`
+holds the generated document to ASCII.
+
+The Markdown copy is written through `artifacts.store_file` rather than
+`store_json`, which would wrap the text in JSON quotes. It is the one text
+artifact written, and it still goes through the same store, hash and delete
+path as a 433 MB bundle.
+
+## `app/job_log_findings.py` — the log findings job
+
+Reads one stored `*-logs.tgz` artifact selected on the Findings page and writes
+`log-findings.json` for rendering plus `log-findings.md` for download or a
+support ticket. It never calls Xen Orchestra and does not create a new log
+collection.
+
+| Function | Signature | Does | Used by | Since |
+| --- | --- | --- | --- | --- |
+| `report_from_job` | `(conn, data_dir, job_id: str) -> Report \| None` | Rebuilds the stored log report | `routes.findings.findings_page` | v0.7.0 |
+| `run` | `(context: JobContext) -> None` | Reads the selected local bundle and stores both report artifacts | `job_runner`, via `register` | v0.7.0 |
+| `to_markdown` | `(report: Report, source_name: str) -> str` | Formats a log report for a support ticket | `job_log_findings.run` | v0.7.0 |
+| `to_payload` | `(report: Report, source_id: str) -> dict` | Serializes a log report as JSON | `job_log_findings.run` | v0.7.0 |
+
 ## `app/retention.py` — what to delete, previewed first
 
 A collection is about 433 MB, so a data volume fills quickly. Every caller asks
@@ -316,7 +507,7 @@ cleanup that has not been previewed.
 | `collections` | `(conn) -> list[Collection]` | Every stored collection, newest first | `plan`, `delete_collection` | v0.6.0 |
 | `delete_collection` | `(conn, data_dir, job_id: str) -> bool` | Deletes one collection outright, via `delete_job` | `routes.collect.delete_collection` | v0.6.0 |
 | `delete_job` | `(conn, data_dir, job_id: str, *, kind: str \| None = None) -> bool` | Deletes one job and its files outright, optionally restricted to a kind | `retention.delete_collection`, `routes.jobs.delete_redaction` | v0.6.3 |
-| `plan` | `(conn, *, keep_days, keep_count) -> Plan` | What a cleanup would delete, without deleting it | the collect page, `apply` | v0.6.0 |
+| `plan` | `(conn, *, keep_days, keep_count) -> Plan` | What a cleanup would delete, without deleting it | the collect page, the dashboard storage panel, `apply` | v0.6.0 |
 
 Two limits apply together: the newest `keep_count` collections are kept
 whatever their age, and only what remains is judged against `keep_days`. That
@@ -341,7 +532,7 @@ name coming from Xen Orchestra can never choose a path.
 | `artifacts_dir` | `(data_dir: Path) -> Path` | The directory holding every body, created if absent | `artifacts.artifact_path` | v0.4.0 |
 | `delete_for_job` | `(conn, data_dir: Path, job_id: str) -> int` | Removes a job's files and rows together | `retention.apply`, `retention.delete_collection` | v0.4.0 |
 | `get_artifact` | `(conn, artifact_id: str) -> Artifact \| None` | One artifact's metadata | `routes.collect.download_artifact`, `routes.jobs` | v0.4.0 |
-| `human_bytes` | `(size: int) -> str` | A byte count as something to put on a page | `Artifact.size_human`, retention, `job_collect` | v0.6.0 |
+| `human_bytes` | `(size: int) -> str` | A byte count as something to put on a page | `Artifact.size_human`, retention, `job_collect`, `routes.dashboard` | v0.6.0 |
 | `list_for_job` | `(conn, job_id: str) -> list[Artifact]` | Everything one job produced | `routes.jobs`, `job_inventory` | v0.4.0 |
 | `read_json` | `(data_dir: Path, artifact: Artifact) -> object` | Reads a JSON artifact's body back | `job_inventory.inventory_from_job` | v0.4.0 |
 | `store_file` | `(conn, data_dir, *, job_id, name, media_type, source, move=True) -> Artifact` | Takes a file on disk into the store, hashing in chunks | `job_collect`, `job_redact` | v0.4.0 |
@@ -360,7 +551,7 @@ password, and `mac` before `ipv6` because a MAC is also colon-separated hex.
 | Function | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
 | `active_rules` | `(enabled: frozenset[str] \| set[str] \| None = None) -> tuple[Rule, ...]` | The rules to apply, in order; `None` means all | `redact_line`, `redact_text` | v0.5.0 |
-| `enabled_rules` | `(conn: sqlite3.Connection) -> frozenset[str]` | The names of the rules currently switched on | `routes.redaction` | v0.5.1 |
+| `enabled_rules` | `(conn: sqlite3.Connection) -> frozenset[str]` | The names of the rules currently switched on | `routes.redaction`, `routes.dashboard` | v0.5.1 |
 | `redact_line` | `(line: str, enabled=None) -> str` | Masks one line — the unit a streaming repack uses | `redact_text`, `job_collect` | v0.5.0 |
 | `redact_text` | `(text: str, enabled=None) -> tuple[str, dict[str, int]]` | Masks a block and counts hits per rule | `routes.redaction` | v0.5.0 |
 | `rule_by_name` | `(name: str) -> Rule \| None` | One rule by name | `set_enabled_rules` | v0.5.0 |
@@ -380,7 +571,7 @@ on databases written before it did.
 | Function | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
 | `cancel_job` | `(job_id, request, username) -> Response` | `POST /jobs/{id}/cancel` — asks a job to stop | router | v0.4.0 |
-| `dashboard` | `(request, username) -> Response` | `GET /` — shows the inventory the last refresh stored | router | v0.1.0 |
+| `dashboard` | `(request, username) -> Response` | `GET /` — the inventory the last refresh stored, plus findings, redaction, storage and recent-job panels | router | v0.1.0 |
 | `healthz` | `() -> dict[str, str]` | `GET /healthz` — unauthenticated liveness | router, compose healthcheck | v0.1.0 |
 | `login_form` | `(request, next: str = "/") -> Response` | `GET /login` | router | v0.1.0 |
 | `login_submit` | `(request, username, password, next) -> Response` | `POST /login` | router | v0.1.0 |
@@ -402,7 +593,18 @@ on databases written before it did.
 | `delete_redaction` | `(job_id, request, username) -> Response` | `POST /jobs/{id}/delete` — deletes one redaction and its files | router | v0.6.3 |
 | `download_job_artifact` | `(artifact_id, request, username) -> Response` | `GET /jobs/download/{id}` — streams a stored file from the jobs page | router | v0.6.3 |
 | `run_cleanup` | `(request, username, keep_days, keep_count) -> Response` | `POST /collect/cleanup` — applies the retention limits | router | v0.6.0 |
-| `start_collection` | `(request, username, host_id, include_audit) -> Response` | `POST /collect` — queues a collection for one host | router | v0.6.0 |
+| `start_collection` | `(request, username, host_id, include_audit, categories, include_rotated) -> Response` | `POST /collect` — queues a collection for one host, and an extraction after it if categories are ticked | router | v0.7.0 |
+| `start_extraction` | `(job_id, request, username, categories, include_rotated) -> Response` | `POST /collect/{id}/extract` — queues an extraction from an already-stored collection's raw bundle | router | v0.7.0 |
+| `delete_extraction` | `(job_id, request, username) -> Response` | `POST /collect/extractions/{id}/delete` — deletes one extraction and its file | router | v0.7.0 |
+| `findings_page` | `(request, username) -> Response` | `GET /findings` — the latest stored findings report | router | v0.7.0 |
+| `start_findings` | `(request, username) -> Response` | `POST /findings` — queues a findings run | router | v0.7.0 |
+| `start_log_findings` | `(request, artifact_id, username) -> Response` | `POST /findings/from-logs` — queues findings from one stored log bundle | router | v0.7.0 |
+| `download_findings` | `(artifact_id, request, username) -> Response` | `GET /findings/download/{id}` — streams the stored JSON or Markdown | router | v0.7.0 |
+| `support_package_page` | `(request, username) -> Response` | `GET /support-package` — stored collections and built packages | router | v0.7.0 |
+| `package_collection` | `(job_id, request, username) -> Response` | `POST /support-package/{id}/package` — queues a package from an already-stored collection | router | v0.7.0 |
+| `collect_and_package` | `(request, username, host_id, include_audit) -> Response` | `POST /support-package/collect` — queues a collection, then a package from it | router | v0.7.0 |
+| `download_package` | `(artifact_id, request, username) -> Response` | `GET /support-package/download/{id}` — streams a stored package | router | v0.7.0 |
+| `delete_package` | `(job_id, request, username) -> Response` | `POST /support-package/{id}/delete` — deletes one package and its file | router | v0.7.0 |
 
 ## `app/hashpw.py` — password hash helper
 

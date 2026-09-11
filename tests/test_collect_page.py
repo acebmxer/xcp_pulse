@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 
 from app.artifacts import list_for_job, store_json
 from app.job_collect import KIND as COLLECT_KIND
+from app.job_extract import KIND as EXTRACT_KIND
 from app.job_inventory import KIND as INVENTORY_KIND
 from app.jobs import enqueue, list_jobs, mark_succeeded
 from app.xo_client import Host, Inventory, Pool
@@ -420,3 +421,127 @@ def test_a_failed_collection_offers_its_delete_button(logged_in: TestClient) -> 
     body = logged_in.get("/collect").text
     assert f"/collect/{job.id}/delete" in body
     assert "Delete this collection" in body
+
+
+# ---- extracting log categories -------------------------------------------
+
+
+def test_ticking_categories_at_collection_time_queues_an_extraction_after_it(
+    with_inventory: TestClient,
+) -> None:
+    app = with_inventory.app  # type: ignore[attr-defined]
+
+    with_inventory.post("/collect", data={"host_id": HOST.id, "categories": ["xapi"]})
+    with patch("app.job_collect.build_client", return_value=_FakeClient()):
+        run_pending_jobs(app)
+
+    collect_job = list_jobs(app.state.db, kind=COLLECT_KIND, limit=1)[0]
+    extract_job = list_jobs(app.state.db, kind=EXTRACT_KIND, limit=1)[0]
+    assert extract_job.params["source_job_id"] == collect_job.id
+    assert extract_job.params["categories"] == ["xapi"]
+    assert extract_job.state == "succeeded"
+
+
+def test_no_categories_ticked_queues_no_extraction(with_inventory: TestClient) -> None:
+    app = with_inventory.app  # type: ignore[attr-defined]
+
+    with_inventory.post("/collect", data={"host_id": HOST.id})
+    assert list_jobs(app.state.db, kind=EXTRACT_KIND) == []
+
+
+def test_extracting_from_an_existing_collection(with_inventory: TestClient) -> None:
+    app = with_inventory.app  # type: ignore[attr-defined]
+    job_id = _collect(with_inventory)
+
+    response = with_inventory.post(f"/collect/{job_id}/extract", data={"categories": ["xapi"]})
+    assert response.status_code == 303
+    assert "error" not in response.headers["location"]
+
+    extract_job = list_jobs(app.state.db, kind=EXTRACT_KIND, limit=1)[0]
+    assert extract_job.params["artifact_id"]
+    assert extract_job.params["categories"] == ["xapi"]
+
+    with patch("app.job_collect.build_client", return_value=_FakeClient()):
+        run_pending_jobs(app)
+    assert list_jobs(app.state.db, kind=EXTRACT_KIND, limit=1)[0].state == "succeeded"
+
+
+def test_extracting_with_no_category_ticked_is_refused(with_inventory: TestClient) -> None:
+    app = with_inventory.app  # type: ignore[attr-defined]
+    job_id = _collect(with_inventory)
+
+    response = with_inventory.post(f"/collect/{job_id}/extract", data={})
+    assert "error" in response.headers["location"]
+    assert list_jobs(app.state.db, kind=EXTRACT_KIND) == []
+
+
+def test_extracting_from_an_unknown_collection_is_refused(with_inventory: TestClient) -> None:
+    response = with_inventory.post("/collect/not-a-job/extract", data={"categories": ["xapi"]})
+    assert "error" in response.headers["location"]
+
+
+def test_the_page_offers_extraction_for_a_finished_collection(with_inventory: TestClient) -> None:
+    _collect(with_inventory)
+    body = with_inventory.get("/collect").text
+    assert "Extract specific log categories from this bundle" in body
+
+
+def test_a_completed_extraction_shows_its_download_on_the_page(
+    with_inventory: TestClient,
+) -> None:
+    """The extraction's own archive has a download link, not just its report.
+
+    Reported from a real screenshot: the finished extraction card rendered its
+    rule table and a delete button but no download link at all, because the
+    page built its artifacts-by-job-id map from collection jobs only —
+    ``artifacts.get(extraction.id, [])`` was always empty for an extraction.
+    """
+    app = with_inventory.app  # type: ignore[attr-defined]
+    job_id = _collect(with_inventory)
+
+    with_inventory.post(f"/collect/{job_id}/extract", data={"categories": ["xapi"]})
+    with patch("app.job_collect.build_client", return_value=_FakeClient()):
+        run_pending_jobs(app)
+
+    body = with_inventory.get("/collect").text
+    extract_job = list_jobs(app.state.db, kind=EXTRACT_KIND, limit=1)[0]
+    archive = next(
+        item for item in list_for_job(app.state.db, extract_job.id) if item.name.endswith(".tgz")
+    )
+    assert f"/collect/download/{archive.id}" in body
+    assert f"/collect/extractions/{extract_job.id}/delete" in body
+
+
+def test_deleting_an_extraction_does_not_touch_its_collection(
+    with_inventory: TestClient,
+) -> None:
+    app = with_inventory.app  # type: ignore[attr-defined]
+    job_id = _collect(with_inventory)
+
+    with_inventory.post(f"/collect/{job_id}/extract", data={"categories": ["xapi"]})
+    with patch("app.job_collect.build_client", return_value=_FakeClient()):
+        run_pending_jobs(app)
+    extract_job = list_jobs(app.state.db, kind=EXTRACT_KIND, limit=1)[0]
+
+    response = with_inventory.post(f"/collect/extractions/{extract_job.id}/delete")
+    assert "notice" in response.headers["location"]
+    assert list_jobs(app.state.db, kind=EXTRACT_KIND) == []
+    assert list_jobs(app.state.db, kind=COLLECT_KIND, limit=1)[0].id == job_id
+
+
+def test_an_extraction_job_id_cannot_delete_its_collection(with_inventory: TestClient) -> None:
+    """The delete route for extractions is restricted to EXTRACT_KIND, so an
+    extraction job's id posted to the collection's own delete route does
+    nothing — the two kinds must never be able to delete each other's rows.
+    """
+    app = with_inventory.app  # type: ignore[attr-defined]
+    job_id = _collect(with_inventory)
+
+    with_inventory.post(f"/collect/{job_id}/extract", data={"categories": ["xapi"]})
+    with patch("app.job_collect.build_client", return_value=_FakeClient()):
+        run_pending_jobs(app)
+    extract_job = list_jobs(app.state.db, kind=EXTRACT_KIND, limit=1)[0]
+
+    response = with_inventory.post(f"/collect/{extract_job.id}/delete")
+    assert "error" in response.headers["location"]
+    assert list_jobs(app.state.db, kind=EXTRACT_KIND, limit=1)[0].id == extract_job.id

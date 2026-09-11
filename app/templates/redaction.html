@@ -37,7 +37,7 @@
 <div class="card">
   <h2>Result</h2>
   {% if total_hits %}
-  <p>{{ total_hits }} value{{ '' if total_hits == 1 else 's' }} masked.</p>
+  <p>{{ total_hits | count }} value{{ '' if total_hits == 1 else 's' }} masked.</p>
   {% else %}
   <p class="note">Nothing in that text matched a rule.</p>
   {% endif %}

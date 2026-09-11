@@ -19,8 +19,13 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 
+from app.findings import CRITICAL, Finding, SourceResult
+from app.findings import Report as FindingsReport
+from app.job_findings import KIND as FINDINGS_KIND
 from app.job_inventory import KIND as INVENTORY_KIND
-from app.jobs import enqueue
+from app.jobs import enqueue, list_jobs
+from app.redact import RULES, set_enabled_rules
+from app.routes.dashboard import RECENT_JOBS
 from app.xo_client import Host, Inventory, Pool, XoError
 from app.xo_connection import save_connection
 from tests.helpers import run_pending_jobs
@@ -207,3 +212,149 @@ def test_dashboard_requires_login(client: TestClient) -> None:
     response = client.get("/")
     assert response.status_code == 303
     assert response.headers["location"].startswith("/login")
+
+
+# --- The status panels ---------------------------------------------------
+#
+# Both sides of every condition are asserted. A panel that renders its warning
+# unconditionally passes a test that only checks the case where the warning
+# belongs, which is exactly how a stuck-on message reaches a released page.
+
+
+def _store_findings(client: TestClient, report: FindingsReport) -> None:
+    """Run a findings job whose collection is stubbed, so a report is stored."""
+    enqueue(client.app.state.db, FINDINGS_KIND)  # type: ignore[attr-defined]
+    with (
+        patch("app.job_findings.build_client"),
+        patch("app.job_findings.collect_findings", return_value=report),
+    ):
+        run_pending_jobs(client.app)  # type: ignore[attr-defined]
+
+
+def test_the_panels_are_absent_without_a_connection(logged_in: TestClient) -> None:
+    """Nothing to report on until XO is configured, so the panels stay off."""
+    body = logged_in.get("/").text
+
+    assert "Recent activity" not in body
+    assert 'href="/findings">Open' not in body
+
+
+def test_the_findings_panel_shows_the_severity_counts(connected: TestClient) -> None:
+    _store_findings(
+        connected,
+        FindingsReport(
+            findings=[
+                Finding(
+                    severity=CRITICAL,
+                    title="A storage repository backend failed",
+                    evidence="nfs mount from [IPV4] failed",
+                    action="Check the SR is attached.",
+                    source="messages",
+                ),
+            ],
+            sources=[SourceResult("messages", read=True, examined=799)],
+            created_at=1788700000.0,
+        ),
+    )
+    body = connected.get("/").text
+
+    assert "Findings" in body
+    assert "sev-critical" in body
+    assert "Nothing has been read yet" not in body
+
+
+def test_the_findings_panel_says_when_nothing_has_run(connected: TestClient) -> None:
+    body = connected.get("/").text
+
+    assert "Nothing has been read yet" in body
+    assert "sev-critical" not in body
+
+
+def test_the_findings_panel_reports_an_unread_source(connected: TestClient) -> None:
+    """A refused source means the counts above it are not the whole picture."""
+    _store_findings(
+        connected,
+        FindingsReport(
+            sources=[
+                SourceResult("messages", read=True, examined=799),
+                SourceResult("dashboard", read=False, reason="not enough privileges"),
+            ],
+            created_at=1788700000.0,
+        ),
+    )
+    body = connected.get("/").text
+
+    assert "could not be read" in body
+
+
+def test_the_findings_panel_is_silent_when_every_source_was_read(
+    connected: TestClient,
+) -> None:
+    _store_findings(
+        connected,
+        FindingsReport(
+            sources=[SourceResult("messages", read=True, examined=799)],
+            created_at=1788700000.0,
+        ),
+    )
+    body = connected.get("/").text
+
+    assert "could not be read" not in body
+
+
+def test_the_redaction_panel_names_the_rules_that_are_off(connected: TestClient) -> None:
+    app = connected.app  # type: ignore[attr-defined]
+    keep_on = [rule.name for rule in RULES if rule.name != "ipv4"]
+    set_enabled_rules(app.state.db, keep_on)
+
+    body = connected.get("/").text
+
+    assert f"1 of {len(RULES)} rules off" in body
+    assert "IPv4 addresses" in body
+    assert "All 8 rules on" not in body
+
+
+def test_the_redaction_panel_says_so_when_every_rule_is_on(connected: TestClient) -> None:
+    """The other side of the banner above — it must not be stuck on."""
+    body = connected.get("/").text
+
+    assert f"All {len(RULES)} rules on" in body
+    assert "rules off" not in body
+
+
+def test_the_storage_panel_reports_an_empty_store(connected: TestClient) -> None:
+    body = connected.get("/").text
+
+    assert "No collections stored yet" in body
+
+
+def test_the_recent_activity_panel_lists_jobs(connected: TestClient) -> None:
+    _refresh(connected, Inventory(pools=[POOL], hosts=HOSTS))
+    body = connected.get("/").text
+
+    assert "Recent activity" in body
+    assert "refresh inventory" in body
+    assert "succeeded" in body
+    assert "Nothing has run yet" not in body
+
+
+def test_the_recent_activity_panel_shows_a_failure(connected: TestClient) -> None:
+    """A failed job is what makes every other figure on the page stale, which
+    is the reason this panel is here at all."""
+    _refresh(connected, error=XoError("cannot reach https://xo.example.com"))
+    body = connected.get("/").text
+
+    assert "failed" in body
+    assert "Nothing has run yet" not in body
+
+
+def test_the_activity_panel_shows_at_most_the_recent_few(connected: TestClient) -> None:
+    """It answers "did the last thing work?", not "what has ever run" — the
+    jobs page is where a history is read."""
+    app = connected.app  # type: ignore[attr-defined]
+    for _ in range(RECENT_JOBS + 3):
+        _refresh(connected, Inventory(pools=[POOL], hosts=HOSTS))
+
+    assert len(list_jobs(app.state.db)) > RECENT_JOBS
+    body = connected.get("/").text
+    assert body.count('class="job-state job-state-') == RECENT_JOBS

@@ -56,6 +56,32 @@
     what people did.
   </p>
 
+  <details class="category-picker">
+    <summary>Also extract specific log categories after collecting</summary>
+    <p class="note">
+      Downloads the full bundle as normal, then pulls the categories ticked
+      below into a second, smaller archive — current logs only unless
+      "include rotated history" is ticked too. Xen Orchestra has no way to
+      download less than the whole bundle, so this still takes the full
+      download; it saves having to pick through the raw bundle by hand
+      afterwards.
+    </p>
+    <ul class="category-grid">
+      {% for category in categories %}
+      <li>
+        <label class="check">
+          <input type="checkbox" name="categories" value="{{ category.key }}" form="collect-form">
+          <span>{{ category.title }}</span>
+        </label>
+      </li>
+      {% endfor %}
+    </ul>
+    <label class="check">
+      <input type="checkbox" name="include_rotated" value="1" form="collect-form">
+      <span>Include rotated history, not just current logs</span>
+    </label>
+  </details>
+
   {% if not connection %}
   <p class="note">
     No Xen Orchestra connection is configured. Add one in
@@ -103,12 +129,12 @@
          aria-valuemin="0" aria-valuemax="100">
       <div class="progress-bar" style="width: {{ job.progress }}%"></div>
     </div>
-    <p class="job-step">{{ job.step or 'Waiting to start' }} — {{ job.progress }}%</p>
+    <p class="job-step">{{ job.step | counts_in or 'Waiting to start' }} — {{ job.progress }}%</p>
     <form method="post" action="/jobs/{{ job.id }}/cancel" class="inline">
       <button type="submit" class="btn btn-quiet">Cancel</button>
     </form>
     {% elif job.step %}
-    <p class="job-step">{{ job.step }}</p>
+    <p class="job-step">{{ job.step | counts_in }}</p>
     {% endif %}
 
     {% if job.error %}
@@ -159,12 +185,132 @@
           <th scope="row">{{ row.title }}</th>
           <td><code>{{ row.placeholder }}</code></td>
           <td class="num">
-            {% if row.enabled %}{{ row.hits }}{% else %}off{% endif %}
+            {% if row.enabled %}{{ row.hits | count }}{% else %}off{% endif %}
           </td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
+    {% endif %}
+
+    {% set raw_bundle = raw_bundles.get(job.id) %}
+    {% set collection_extractions = extractions.get(job.id, [])[:extractions_per_collection] %}
+    {% if raw_bundle and not job.is_active %}
+    <details class="category-picker">
+      <summary>Extract specific log categories from this bundle</summary>
+      <p class="note">
+        Pulls the categories ticked below out of the raw bundle already stored
+        here — no second download — current logs only unless "include rotated
+        history" is ticked too.
+      </p>
+      <form method="post" action="/collect/{{ job.id }}/extract" id="extract-form-{{ job.id }}">
+        <ul class="category-grid">
+          {% for category in categories %}
+          <li>
+            <label class="check">
+              <input type="checkbox" name="categories" value="{{ category.key }}"
+                     form="extract-form-{{ job.id }}">
+              <span>{{ category.title }}</span>
+            </label>
+          </li>
+          {% endfor %}
+        </ul>
+        <label class="check">
+          <input type="checkbox" name="include_rotated" value="1" form="extract-form-{{ job.id }}">
+          <span>Include rotated history, not just current logs</span>
+        </label>
+        <div class="row-actions">
+          <button type="submit" class="btn btn-quiet" {% if any_active %}disabled{% endif %}>
+            Extract
+          </button>
+        </div>
+      </form>
+    </details>
+    {% endif %}
+
+    {% if collection_extractions %}
+    <ul class="joblist extractions">
+      {% for extraction in collection_extractions %}
+      {#
+        Not `.card` here: this already sits inside the collection's own
+        `.card`, and giving it a second full border drew two lines side by
+        side where the two boxes met — reported from a real screenshot.
+        `.extraction-item` is a lighter divider instead of a nested box.
+      #}
+      <li class="extraction-item job job-{{ extraction.state }}">
+        <div class="job-head">
+          <span class="job-kind">
+            {% for key in extraction.params.get('categories', []) %}
+            {{ category_titles.get(key, key) }}{{ ', ' if not loop.last }}
+            {% endfor %}
+          </span>
+          <span class="job-state job-state-{{ extraction.state }}">{{ extraction.state }}</span>
+        </div>
+
+        {% if extraction.is_active %}
+        <div class="progress" role="progressbar" aria-valuenow="{{ extraction.progress }}"
+             aria-valuemin="0" aria-valuemax="100">
+          <div class="progress-bar" style="width: {{ extraction.progress }}%"></div>
+        </div>
+        <p class="job-step">{{ extraction.step | counts_in or 'Waiting to start' }} — {{ extraction.progress }}%</p>
+        <form method="post" action="/jobs/{{ extraction.id }}/cancel" class="inline">
+          <button type="submit" class="btn btn-quiet">Cancel</button>
+        </form>
+        {% elif extraction.step %}
+        <p class="job-step">{{ extraction.step | counts_in }}</p>
+        {% endif %}
+
+        {% if extraction.error %}
+        <p class="job-error">{{ extraction.error }}</p>
+        {% endif %}
+
+        {% set extraction_produced = artifacts.get(extraction.id, []) %}
+        {% if extraction_produced %}
+        <ul class="artifacts">
+          {% for artifact in extraction_produced %}
+          {% if artifact.name != extract_report_artifact %}
+          <li>
+            <span class="mono">{{ artifact.name }}</span>
+            <span class="artifact-size">
+              {{ artifact.size_human }}
+              <a class="btn btn-quiet" href="/collect/download/{{ artifact.id }}">Download</a>
+            </span>
+          </li>
+          {% endif %}
+          {% endfor %}
+        </ul>
+        {% endif %}
+
+        {% set extraction_report = extraction_reports.get(extraction.id) %}
+        {% if extraction_report %}
+        <table class="report">
+          <caption class="visually-hidden">What each redaction rule masked</caption>
+          <thead>
+            <tr><th scope="col">Rule</th><th scope="col">Masked as</th>
+                <th scope="col" class="num">Hits</th></tr>
+          </thead>
+          <tbody>
+            {% for row in extraction_report %}
+            <tr class="{{ 'rule-off' if not row.enabled }}">
+              <th scope="row">{{ row.title }}</th>
+              <td><code>{{ row.placeholder }}</code></td>
+              <td class="num">
+                {% if row.enabled %}{{ row.hits | count }}{% else %}off{% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% endif %}
+
+        {% if not extraction.is_active %}
+        <form method="post" action="/collect/extractions/{{ extraction.id }}/delete" class="inline row-actions">
+          <button type="submit" class="btn btn-quiet">Delete this extraction</button>
+        </form>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
     {% endif %}
 
     {% if not job.is_active %}

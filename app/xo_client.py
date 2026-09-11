@@ -64,6 +64,44 @@ DASHBOARD_PATH = "/dashboard"
 POOL_FIELDS = "id,name_label,master"
 HOST_FIELDS = "id,name_label,address,version,productBrand,power_state,enabled,$pool,cpus,memory"
 
+# The routes findings are read from, and the fields each one needs.
+#
+# Every one is a plain collection route, so all of them answer a restricted
+# account with ``200 []`` rather than a refusal — the same trap the inventory
+# has, and the reason `_raise_for_collection` is shared with these.
+MESSAGES_PATH = "/messages"
+MESSAGE_FIELDS = "id,name,body,time,$object,$pool"
+
+TASKS_PATH = "/tasks"
+TASK_FIELDS = "id,status,start,end,result,properties"
+
+ALARMS_PATH = "/alarms"
+ALARM_FIELDS = "id,name,body,time,$object,$pool"
+
+BACKUP_LOGS_PATH = "/backup/logs"
+RESTORE_LOGS_PATH = "/restore/logs"
+BACKUP_LOG_FIELDS = "id,jobId,jobName,status,start,end,message"
+
+MISSING_PATCHES_PATH = "/pools/{pool_id}/missing_patches"
+
+# How the event routes are bounded to a time window.
+#
+# **``limit`` cannot be used for this.** Measured: XO applies it to the oldest
+# records, not the newest — asking /messages for 2000 of 3,472 rows returned
+# everything from the *first* month and nothing from the last, silently hiding
+# every recent finding. ``sort`` and ``order`` are accepted and ignored.
+#
+# ``filter`` is applied server-side and does work, so the window is expressed
+# as a filter and the whole matching set is returned. That also means the
+# response shrinks with the window rather than growing with pool age.
+#
+# The two timestamp scales are XO's, not ours: XAPI messages and alarms carry
+# seconds, XO tasks and backup runs carry milliseconds. Filtering a
+# millisecond field with a seconds value matches everything, which is a bug
+# that looks exactly like a working filter.
+MESSAGE_TIME_FIELD = "time"
+TASK_TIME_FIELD = "start"
+
 _DEFAULT_TIMEOUT = 30.0
 
 
@@ -282,6 +320,116 @@ class XoClient:
         ]
 
         return Inventory(pools=pools, hosts=hosts)
+
+    # -- findings sources ------------------------------------------------
+    #
+    # Six reads, all going through ``_get`` and ``_record_list`` above rather
+    # than building their own requests, so a restricted account's ``200 []``
+    # keeps being told apart from a refusal in exactly one place.
+
+    def messages(self, since: float) -> list[dict[str, object]]:
+        """XAPI messages since ``since`` (a Unix time in seconds).
+
+        These are the pool's own event record — ``twinstor_degraded``,
+        ``VDI_CBT_METADATA_INCONSISTENT``, ``POOL_MASTER_TRANSITION`` — mixed
+        in with routine VM lifecycle noise. Classifying them is the findings
+        module's job; this only fetches.
+        """
+        return self._events(MESSAGES_PATH, MESSAGE_FIELDS, MESSAGE_TIME_FIELD, since)
+
+    def alarms(self, since: float) -> list[dict[str, object]]:
+        """Active alarms since ``since`` (seconds).
+
+        A separate route from messages even though an alarm is a message in
+        XAPI terms, because XO filters it and an operator asking "what is
+        alarming?" means the filtered list.
+        """
+        return self._events(ALARMS_PATH, ALARM_FIELDS, MESSAGE_TIME_FIELD, since)
+
+    def tasks(self, since: float) -> list[dict[str, object]]:
+        """XO tasks since ``since`` (seconds), with their failure results.
+
+        ``properties`` is requested because it carries the task's human name
+        and type, which is the only thing distinguishing one failure from
+        another. It also carries request arguments — measured: usernames and
+        client IP addresses — so what is kept from a task is chosen field by
+        field rather than stored whole.
+        """
+        return self._events(TASKS_PATH, TASK_FIELDS, TASK_TIME_FIELD, since, millis=True)
+
+    def backup_logs(self, since: float) -> list[dict[str, object]]:
+        """Backup job runs since ``since`` (seconds)."""
+        return self._events(
+            BACKUP_LOGS_PATH, BACKUP_LOG_FIELDS, TASK_TIME_FIELD, since, millis=True
+        )
+
+    def restore_logs(self, since: float) -> list[dict[str, object]]:
+        """Restore runs since ``since`` (seconds)."""
+        return self._events(
+            RESTORE_LOGS_PATH, BACKUP_LOG_FIELDS, TASK_TIME_FIELD, since, millis=True
+        )
+
+    def _events(
+        self,
+        path: str,
+        fields: str,
+        time_field: str,
+        since: float,
+        *,
+        millis: bool = False,
+    ) -> list[dict[str, object]]:
+        """One time-bounded event read. Every event route goes through here.
+
+        Shared so the filter is built in exactly one place: the scale
+        conversion is the part that fails silently, and a second copy of it
+        would eventually disagree with this one about which routes are in
+        milliseconds.
+        """
+        threshold = int(since * 1000) if millis else int(since)
+        return _record_list(self._get(path, fields=fields, filter=f"{time_field}:>{threshold}"))
+
+    def missing_patches(self, pool_id: str) -> list[dict[str, object]]:
+        """Patches Xen Orchestra reports as missing on one pool.
+
+        Per-pool rather than global because that is the route XO offers. A 403
+        here is not fatal to a findings run: on XOA the patch list needs a
+        support subscription, so the caller treats a refusal as "not available"
+        rather than failing the whole report.
+        """
+        response = self._get(MISSING_PATCHES_PATH.format(pool_id=pool_id))
+        if response.status_code in (401, 403, 404):
+            raise XoError(
+                f"Xen Orchestra would not report missing patches for pool {pool_id} "
+                f"(HTTP {response.status_code}). On XOA this needs a support "
+                f"subscription; the rest of the findings are unaffected."
+            )
+        return _record_list(response)
+
+    def pool_dashboard(self) -> dict[str, object]:
+        """The pool dashboard totals: patches, backups, storage, host state.
+
+        Administrator-only — it is the same route ``is_admin`` probes, for the
+        same reason it can be used as that probe. A restricted account is
+        refused outright rather than answered with an empty summary, so this
+        raises and the caller records the source as unavailable.
+        """
+        response = self._get(DASHBOARD_PATH)
+        if response.status_code in (401, 403):
+            raise XoError(
+                "Xen Orchestra refused the pool dashboard. It carries no ACL "
+                "filtering, so it needs an administrator account."
+            )
+        if response.status_code != 200:
+            raise XoError(
+                f"Xen Orchestra returned HTTP {response.status_code} for {DASHBOARD_PATH}."
+            )
+        try:
+            payload = response.json()
+        except ValueError:
+            raise XoError(f"Xen Orchestra did not return JSON for {DASHBOARD_PATH}.") from None
+        if not isinstance(payload, dict):
+            raise XoError(f"Xen Orchestra returned an unexpected shape for {DASHBOARD_PATH}.")
+        return payload
 
     # -- privileges ------------------------------------------------------
 
@@ -594,7 +742,9 @@ _TAIL_BYTES = 4096
 # Said whenever a bundle arrives truncated. The cause is on the host rather
 # than in Xen Orchestra or here, so the operator is pointed at the right place.
 _TRUNCATED_HINT = (
-    "The cause is upstream of XCP Pulse — usually a reverse proxy in front of Xen Orchestra."
+    "The cause is upstream of XCP Pulse — usually a reverse proxy in front of "
+    "Xen Orchestra. This is a known, unsolved bug — see docs/installation.md, "
+    "'Xen Orchestra behind a reverse proxy'."
 )
 
 

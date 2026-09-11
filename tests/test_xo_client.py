@@ -704,3 +704,137 @@ def test_a_stall_with_nothing_received_is_still_a_failure(tmp_path) -> None:
 
     assert "stopped sending data" in str(excinfo.value)
     assert not destination.exists()
+
+
+# -- the findings sources ------------------------------------------------
+#
+# The reads behind the findings report. What is worth locking in here is not
+# that a GET happens, but the two things that fail *silently*: XO applies
+# `limit` to the oldest records rather than the newest, and its two timestamp
+# scales differ between routes.
+
+
+def _recording(payloads: dict[str, object]) -> tuple[XoClient, list[httpx.Request]]:
+    """A client answering from ``payloads``, recording every request made."""
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        for path, payload in payloads.items():
+            if request.url.path.endswith(path):
+                return httpx.Response(200, json=payload)
+        return httpx.Response(404, json={"error": "no such route"})
+
+    return _client(handler), seen
+
+
+def test_the_event_routes_are_bounded_by_a_time_filter_never_by_limit() -> None:
+    """Measured: `limit` returns the *oldest* records, hiding recent findings.
+
+    Asking /messages for 2000 of 3,472 rows returned everything from the first
+    month and nothing from the last. `sort` and `order` are accepted and
+    ignored, so the window has to be a filter — which also shrinks the response
+    rather than letting it grow with pool age.
+    """
+    client, seen = _recording({"/messages": []})
+
+    client.messages(1785000000.0)
+
+    assert len(seen) == 1
+    params = seen[0].url.params
+    assert params["filter"] == "time:>1785000000"
+    assert "limit" not in params
+
+
+def test_task_routes_filter_in_milliseconds_and_message_routes_in_seconds() -> None:
+    """The scale difference is XO's, and getting it wrong matches everything.
+
+    A millisecond field filtered with a seconds value is always greater, so
+    every record passes and the window silently does nothing.
+    """
+    client, seen = _recording({"/messages": [], "/tasks": [], "/backup/logs": []})
+
+    client.messages(1785000000.0)
+    client.tasks(1785000000.0)
+    client.backup_logs(1785000000.0)
+
+    filters = [request.url.params["filter"] for request in seen]
+    assert filters == [
+        "time:>1785000000",
+        "start:>1785000000000",
+        "start:>1785000000000",
+    ]
+
+
+def test_an_empty_event_collection_is_a_result_not_a_failure() -> None:
+    """A restricted account is answered 200 [] on every one of these."""
+    client, _ = _recording({"/messages": [], "/tasks": [], "/alarms": []})
+
+    assert client.messages(0) == []
+    assert client.tasks(0) == []
+    assert client.alarms(0) == []
+
+
+def test_a_refused_event_route_raises_rather_than_reading_as_empty() -> None:
+    """Flattening a 403 into [] would report an outage as "nothing is wrong"."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json={"error": "not enough permissions"})
+
+    with pytest.raises(XoError):
+        _client(handler).messages(0)
+
+
+def test_event_records_come_back_as_objects() -> None:
+    client, seen = _recording({"/messages": [{"id": "m1", "name": "SR_BACKEND_FAILURE"}]})
+
+    records = client.messages(0)
+
+    assert records == [{"id": "m1", "name": "SR_BACKEND_FAILURE"}]
+    assert "name" in seen[0].url.params["fields"]
+
+
+def test_the_pool_dashboard_is_read_for_an_admin() -> None:
+    client, _ = _recording({"/dashboard": {"nPools": 1, "nHosts": 2}})
+
+    assert client.pool_dashboard() == {"nPools": 1, "nHosts": 2}
+
+
+def test_a_refused_pool_dashboard_says_it_needs_an_administrator() -> None:
+    """Measured: it carries no ACL filtering, so it 403s a restricted account.
+
+    The reason matters as much as the refusal — the operator's next move is to
+    change the account, not to retry.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json={"error": "not enough permissions"})
+
+    with pytest.raises(XoError) as excinfo:
+        _client(handler).pool_dashboard()
+
+    assert "administrator" in str(excinfo.value)
+
+
+def test_missing_patches_are_read_per_pool() -> None:
+    client, seen = _recording({"/missing_patches": [{"name": "XS83E001"}]})
+
+    assert client.missing_patches("pool-1") == [{"name": "XS83E001"}]
+    assert "/pools/pool-1/missing_patches" in str(seen[0].url)
+
+
+def test_a_refused_patch_list_names_the_subscription_rather_than_reading_empty() -> None:
+    """On XOA this needs a support subscription.
+
+    Returning [] here would report "no missing patches" for an instance that
+    was never allowed to look, which is the precise lie this application exists
+    to avoid.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json={"error": "not enough permissions"})
+
+    with pytest.raises(XoError) as excinfo:
+        _client(handler).missing_patches("pool-1")
+
+    assert "subscription" in str(excinfo.value)
