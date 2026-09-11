@@ -24,8 +24,11 @@ from app.findings import (
     INFO,
     WARNING,
     Finding,
+    Report,
+    SourceResult,
     collect_findings,
     collect_log_findings,
+    correlate_reports,
 )
 from app.xo_client import Pool, XoError
 
@@ -574,6 +577,8 @@ def test_log_findings_reads_a_bundle_and_groups_repeated_lines(tmp_path) -> None
         "logs_multipath",
         "logs_xapi",
         "logs_ha",
+        "logs_oom",
+        "logs_clockskew",
     }
     assert len(report.findings) == 4
     assert sorted(finding.count for finding in report.findings) == [1, 1, 1, 2]
@@ -601,6 +606,46 @@ def test_generic_xapi_error_is_not_reported_as_storage_failure(tmp_path) -> None
     report = collect_log_findings(bundle)
 
     assert [finding.source for finding in report.findings] == ["logs_xapi"]
+
+
+def test_oom_killer_is_reported_and_a_quiet_log_is_not(tmp_path) -> None:
+    log = tmp_path / "kern.log"
+    log.write_text("Out of memory: Killed process 4821 (qemu-dm) total-vm:2048000kB")
+    bundle = tmp_path / "logs.tar.gz"
+    with tarfile.open(bundle, "w:gz") as archive:
+        archive.add(log, arcname="var/log/kern.log")
+
+    report = collect_log_findings(bundle)
+
+    assert [finding.source for finding in report.findings] == ["logs_oom"]
+
+    quiet = tmp_path / "quiet.log"
+    quiet.write_text("dom0 memory usage nominal")
+    quiet_bundle = tmp_path / "quiet.tar.gz"
+    with tarfile.open(quiet_bundle, "w:gz") as archive:
+        archive.add(quiet, arcname="var/log/quiet.log")
+
+    assert collect_log_findings(quiet_bundle).is_clean
+
+
+def test_clock_skew_is_reported_and_a_healthy_sync_is_not(tmp_path) -> None:
+    log = tmp_path / "ntp.log"
+    log.write_text("chronyd: Can't synchronise: no majority")
+    bundle = tmp_path / "logs.tar.gz"
+    with tarfile.open(bundle, "w:gz") as archive:
+        archive.add(log, arcname="var/log/ntp.log")
+
+    report = collect_log_findings(bundle)
+
+    assert [finding.source for finding in report.findings] == ["logs_clockskew"]
+
+    healthy = tmp_path / "healthy.log"
+    healthy.write_text("chronyd: Selected source 10.0.0.1")
+    healthy_bundle = tmp_path / "healthy.tar.gz"
+    with tarfile.open(healthy_bundle, "w:gz") as archive:
+        archive.add(healthy, arcname="var/log/healthy.log")
+
+    assert collect_log_findings(healthy_bundle).is_clean
 
 
 def test_a_truncated_bundle_still_yields_the_findings_read_before_the_break(
@@ -778,10 +823,124 @@ def test_an_unread_source_reports_no_count_at_all() -> None:
 
 def test_a_source_name_this_version_does_not_know_still_renders() -> None:
     """A report written by a later version must load, not raise."""
-    from app.findings import SourceResult
-
     unknown = SourceResult("something_new", read=True, examined=5)
 
     assert unknown.title == "something_new"
     assert unknown.origin == ""
     assert unknown.examined_text == "5 records"
+
+
+def test_correlate_reports_confirms_findings_in_the_same_family_and_time_window() -> None:
+    """An HA fencing event seen by both the API and the logs is one incident.
+
+    Both sides need to say so — the API report should not read as a lone XO
+    event when the same fault left a trace on the host, and vice versa.
+    """
+    api_report = Report(
+        findings=[
+            Finding(
+                severity=CRITICAL,
+                title="A host was fenced by high availability",
+                evidence="HA_HOST_WAS_FENCED",
+                action="Find why the host stopped responding.",
+                source="messages",
+                at=NOW,
+            ),
+        ],
+    )
+    log_report = Report(
+        findings=[
+            Finding(
+                severity=CRITICAL,
+                title="High availability reported a fencing or heartbeat failure",
+                evidence="HA fencing after heartbeat lost",
+                action="Check host reachability.",
+                source="logs_ha",
+                at=NOW + 120,
+            ),
+        ],
+    )
+
+    correlate_reports(api_report, log_report)
+
+    assert (
+        api_report.findings[0].confirmed_by
+        == "logs: High availability reported a fencing or heartbeat failure"
+    )
+    assert log_report.findings[0].confirmed_by == "API: A host was fenced by high availability"
+
+
+def test_correlate_reports_does_not_confirm_across_families_or_outside_the_window() -> None:
+    """Two unrelated problems, or the same family far apart in time, are not
+    the same incident and must not be linked."""
+    api_report = Report(
+        findings=[
+            Finding(
+                severity=WARNING,
+                title="A licence has expired",
+                evidence="LICENSE_EXPIRED",
+                action="Renew the licence.",
+                source="messages",
+                at=NOW,
+            ),
+        ],
+    )
+    log_report = Report(
+        findings=[
+            Finding(
+                severity=CRITICAL,
+                title="The logs contain a storage failure",
+                evidence="Storage SR reports I/O error",
+                action="Check the storage repository.",
+                source="logs_storage",
+                at=NOW,
+            ),
+        ],
+    )
+
+    correlate_reports(api_report, log_report)
+
+    assert api_report.findings[0].confirmed_by == ""
+    assert log_report.findings[0].confirmed_by == ""
+
+    # Same family, far outside the correlation window.
+    far_api = Report(
+        findings=[
+            Finding(
+                severity=CRITICAL,
+                title="A storage repository backend failed",
+                evidence="SR_BACKEND_FAILURE",
+                action="Check the SR.",
+                source="messages",
+                at=NOW,
+            ),
+        ],
+    )
+    far_log = Report(
+        findings=[
+            Finding(
+                severity=CRITICAL,
+                title="The logs contain a storage failure",
+                evidence="Storage SR reports I/O error",
+                action="Check the storage repository.",
+                source="logs_storage",
+                at=NOW + 100_000,
+            ),
+        ],
+    )
+
+    correlate_reports(far_api, far_log)
+
+    assert far_api.findings[0].confirmed_by == ""
+    assert far_log.findings[0].confirmed_by == ""
+
+
+def test_correlate_reports_handles_a_missing_report() -> None:
+    """Only one report exists yet — nothing to correlate against, not an error."""
+    finding = Finding(severity=INFO, title="x", evidence="", action="", source="messages")
+    report = Report(findings=[finding])
+
+    correlate_reports(report, None)
+    correlate_reports(None, report)
+
+    assert report.findings[0].confirmed_by == ""

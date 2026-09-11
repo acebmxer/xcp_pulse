@@ -21,7 +21,7 @@ from fastapi.responses import HTMLResponse, Response
 
 from app.artifacts import get_artifact, list_for_job
 from app.dependencies import login_required, redirect, serve_artifact, templates, wake_worker
-from app.findings import DEFAULT_WINDOW_DAYS, SEVERITIES
+from app.findings import DEFAULT_WINDOW_DAYS, SEVERITIES, correlate_reports
 from app.job_collect import KIND as COLLECT_KIND
 from app.job_findings import FINDINGS_ARTIFACT, FINDINGS_MARKDOWN, report_from_job
 from app.job_findings import KIND as FINDINGS_KIND
@@ -59,6 +59,12 @@ def findings_page(request: Request, username: str = Depends(login_required)) -> 
         for artifact in list_for_job(db, collect_job.id)
         if artifact.name.endswith("-logs.tgz")
     ]
+
+    # Both reports are independent runs, possibly hours apart, describing the
+    # same pool from different evidence. Correlating them here, once, means
+    # every finding on the page already carries its cross-reference rather
+    # than the operator comparing two lists by eye.
+    correlate_reports(report, log_report)
 
     return templates.TemplateResponse(
         request,

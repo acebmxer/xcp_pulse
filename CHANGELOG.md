@@ -39,6 +39,28 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
   464 MB bundle to its last few bytes. An archive that cannot be read at all
   still fails the job.
 
+- **Two more log sources, and correlation between the API and log reports.**
+  Log findings now also cover the kernel out-of-memory killer and NTP/chrony
+  clock sync failures, alongside the existing storage, multipath, XAPI and HA
+  rules — six local sources in total. These were named in the roadmap as
+  remaining work when log findings first shipped and had no rule at all until
+  now.
+
+  The API findings report and the log findings report are two independent
+  runs, often taken hours apart, and previously had no way to say when they
+  described the same incident. A new `correlate_reports` pass runs whenever
+  the Findings page renders both: it matches findings by condition family — HA,
+  storage, XAPI, clock skew, multipath, detected from title and evidence text —
+  and, when both findings carry a timestamp, requires them within an hour of
+  each other. A match marks each finding as confirmed by the other with a small
+  badge, so an HA fencing event that shows up in both an XO message and a host
+  log reads as one incident rather than two unrelated findings on two pages.
+
+  With both gaps closed, findings from the API and findings from collected
+  logs are built and complete. The dashboard's roadmap panel and
+  `docs/roadmap.md` now say so instead of "in progress" — neither is marked
+  shipped or given a version number yet, since that is a release decision.
+
 - **Status panels on the dashboard.** Beneath the inventory, four panels report
   the state of what has been built: the severity counts from the latest findings
   report, how many redaction rules are switched off, how much the data volume is

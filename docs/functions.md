@@ -333,9 +333,10 @@ constructor and redacts the evidence on the way in.
 | Function | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
 | `collect_findings` | `(client, pools, *, enabled=None, window_days=30, now=None, progress=None) -> Report` | Reads every source and builds the report | `job_findings.run` | unreleased |
-| `collect_log_findings` | `(bundle_path, *, enabled=None, progress=None) -> Report` | Reads a stored tar bundle, groups storage, multipath, XAPI and HA matches, and builds the report; a bundle that ends early is salvaged rather than failed | `job_log_findings.run` | unreleased |
+| `collect_log_findings` | `(bundle_path, *, enabled=None, progress=None) -> Report` | Reads a stored tar bundle, groups storage, multipath, XAPI, HA, out-of-memory and clock-skew matches, and builds the report; a bundle that ends early is salvaged rather than failed | `job_log_findings.run` | unreleased |
 | `disabled_rule_titles` | `(enabled) -> list[str]` | The titles of the redaction rules switched off, for the report | `collect_findings` | unreleased |
 | `sort_findings` | `(findings: list[Finding]) -> list[Finding]` | Worst first, then most recent, then by title | `collect_findings`, `job_findings.report_from_job` | unreleased |
+| `correlate_reports` | `(api_report: Report \| None, log_report: Report \| None) -> None` | Marks findings that appear in both the API report and the log report — same condition family, and within an hour of each other when both are timed — by setting `confirmed_by` on each side | `routes/findings.findings_page` | unreleased |
 
 `Finding`, `SourceInfo`, `SourceResult` and `Report` are dataclasses. `SOURCES`
 holds each source's title, origin, what it holds and the unit it is counted in
@@ -361,11 +362,21 @@ Message classification is two tables: `MESSAGE_RULES` matched exactly, then
 neither is routine and is dropped — measured, VM lifecycle events alone were
 3,381 of 3,472 messages on one pool.
 
-Log classification uses four source rules. Matching lines are counted once per
-source and repeated matches become one finding with a count; the latest
-matching line is retained as representative evidence. The rules are narrower
-than a generic error search: an XAPI error is not automatically a storage
-failure.
+Log classification uses six source rules: storage, multipath, XAPI, HA,
+out-of-memory and clock skew. Matching lines are counted once per source and
+repeated matches become one finding with a count; the latest matching line is
+retained as representative evidence. The rules are narrower than a generic
+error search: an XAPI error is not automatically a storage failure.
+
+**Correlation is a separate pass, not part of either read.** The API report and
+the log report are two independent runs, often hours apart, so `Finding` has no
+opinion about the other report while either is being built — `correlate_reports`
+runs once both exist, matching by condition family (HA, storage, XAPI, clock
+skew, multipath, via keyword patterns on title and evidence) and, when both
+findings carry a timestamp, a one-hour window. A match sets `confirmed_by` on
+both findings to the other's title, so an operator sees a fencing event that
+shows up in both the API and the logs as one incident instead of two unrelated
+findings on two different pages.
 
 ## `app/job_findings.py` — the API findings job
 

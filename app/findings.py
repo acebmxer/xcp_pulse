@@ -66,6 +66,8 @@ SOURCE_LOGS_STORAGE = "logs_storage"
 SOURCE_LOGS_MULTIPATH = "logs_multipath"
 SOURCE_LOGS_XAPI = "logs_xapi"
 SOURCE_LOGS_HA = "logs_ha"
+SOURCE_LOGS_OOM = "logs_oom"
+SOURCE_LOGS_CLOCKSKEW = "logs_clockskew"
 
 # Where a source's data physically comes from. Xen Orchestra serves all seven
 # routes, but it *originates* only three of them — the rest it relays from the
@@ -172,6 +174,18 @@ SOURCES = {
         title="HA logs",
         origin=ORIGIN_HOSTS,
         holds="HA heartbeat and fencing events",
+        unit="log lines",
+    ),
+    SOURCE_LOGS_OOM: SourceInfo(
+        title="Out-of-memory logs",
+        origin=ORIGIN_HOSTS,
+        holds="kernel out-of-memory killer events",
+        unit="log lines",
+    ),
+    SOURCE_LOGS_CLOCKSKEW: SourceInfo(
+        title="Clock sync logs",
+        origin=ORIGIN_HOSTS,
+        holds="NTP/chrony time sync failures and large clock steps",
         unit="log lines",
     ),
 }
@@ -321,6 +335,13 @@ class Finding:
     at: float | None = None
     count: int = 1
     object_id: str = ""
+
+    # Set after both reports exist, by ``correlate_reports``. Names the other
+    # report's finding this one lines up with, so an operator sees "this is
+    # not a one-off" without opening two pages and comparing them by eye.
+    # Empty means "not correlated to anything", which most findings are — a
+    # failed backup job has no log-side echo.
+    confirmed_by: str = ""
 
     @property
     def severity_rank(self) -> int:
@@ -534,6 +555,83 @@ def sort_findings(findings: list[Finding]) -> list[Finding]:
     )
 
 
+# Condition families for correlation. The API report and the log report are
+# built from different evidence — XO's event stream versus the hosts' own log
+# files — about the same pool, so the same underlying fault often shows up in
+# both as two findings with unrelated titles. Matched on source and title
+# keywords rather than an exact string, because the two sides never phrase a
+# condition the same way ("HA fenced a host" versus "HA fencing after
+# heartbeat lost").
+_CORRELATION_FAMILIES: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("ha", re.compile(r"\bha\b|heartbeat|fenc", re.IGNORECASE)),
+    ("storage", re.compile(r"storage|\bsr\b|i/o error|read-only|disk space", re.IGNORECASE)),
+    ("xapi", re.compile(r"xapi|xenopsd|backtrace|traceback", re.IGNORECASE)),
+    ("clockskew", re.compile(r"clock|time sync|ntp|chrony|skew", re.IGNORECASE)),
+    ("multipath", re.compile(r"multipath|\bpath\b", re.IGNORECASE)),
+)
+
+# How far apart two findings' timestamps can be and still count as the same
+# incident. Wide because log lines and XO messages for one event routinely
+# land minutes apart — the host writes to its own log immediately, XO learns
+# of it on its next poll. A state finding (no timestamp) is never excluded by
+# this, since a state can't be timed against an event at all.
+CORRELATION_WINDOW_SECONDS = 3600
+
+
+def _finding_family(finding: Finding) -> str | None:
+    """Which condition family a finding belongs to, if any."""
+    text = f"{finding.title} {finding.evidence}"
+    for family, pattern in _CORRELATION_FAMILIES:
+        if pattern.search(text):
+            return family
+    return None
+
+
+def correlate_reports(api_report: Report | None, log_report: Report | None) -> None:
+    """Mark findings in each report that are echoed in the other.
+
+    Findings are matched by condition family (see above) and, when both carry
+    a timestamp, by falling within ``CORRELATION_WINDOW_SECONDS`` of each
+    other. A match sets ``confirmed_by`` on *both* findings to the other
+    report's finding title, so either page shows the operator that this is not
+    a one-off — an XAPI exception in the logs next to a failed XO task is a
+    single incident, not two.
+
+    Mutates the findings in place via ``dataclasses.replace`` semantics
+    (``Finding`` is frozen) and reassigns each report's ``findings`` list. Safe
+    to call with either report missing — nothing to correlate against yet.
+    """
+    if api_report is None or log_report is None:
+        return
+
+    from dataclasses import replace
+
+    new_api_findings = list(api_report.findings)
+    new_log_findings = list(log_report.findings)
+    matched_log_indices: set[int] = set()
+
+    for i, api_finding in enumerate(new_api_findings):
+        api_family = _finding_family(api_finding)
+        if api_family is None:
+            continue
+        for j, log_finding in enumerate(new_log_findings):
+            if j in matched_log_indices or _finding_family(log_finding) != api_family:
+                continue
+            if (
+                api_finding.at is not None
+                and log_finding.at is not None
+                and abs(api_finding.at - log_finding.at) > CORRELATION_WINDOW_SECONDS
+            ):
+                continue
+            matched_log_indices.add(j)
+            new_api_findings[i] = replace(api_finding, confirmed_by=f"logs: {log_finding.title}")
+            new_log_findings[j] = replace(log_finding, confirmed_by=f"API: {api_finding.title}")
+            break
+
+    api_report.findings = new_api_findings
+    log_report.findings = new_log_findings
+
+
 LOG_FINDING_RULES: tuple[tuple[str, str, str, str, re.Pattern[str]], ...] = (
     (
         SOURCE_LOGS_MULTIPATH,
@@ -567,6 +665,26 @@ LOG_FINDING_RULES: tuple[tuple[str, str, str, str, re.Pattern[str]], ...] = (
         "The logs contain an XAPI exception",
         "Read the surrounding XAPI traceback and correlate it with the API findings.",
         re.compile(r"(?:xapi|xenopsd).*(?:error|exception|traceback)|backtrace", re.IGNORECASE),
+    ),
+    (
+        SOURCE_LOGS_OOM,
+        CRITICAL,
+        "The kernel out-of-memory killer ran on a host",
+        "Check dom0 memory pressure and which process was killed before it recurs.",
+        re.compile(r"out of memory|oom.?kill|killed process", re.IGNORECASE),
+    ),
+    (
+        SOURCE_LOGS_CLOCKSKEW,
+        WARNING,
+        "A host reported a time sync failure or clock step",
+        "Check NTP/chrony reachability; clock skew between pool members can "
+        "trigger spurious HA fencing and certificate failures.",
+        re.compile(
+            r"(?:ntpd|chronyd|chrony|ntp).*"
+            r"(?:error|fail|can.?t synchroni[sz]e|unsynchronis|unreachable|no majority)|"
+            r"(?:clock|time).*(?:step|skew|jump|drift).*(?:large|too big|adjust)",
+            re.IGNORECASE,
+        ),
     ),
 )
 

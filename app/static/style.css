@@ -867,6 +867,19 @@ textarea {
   font-size: 0.85rem;
 }
 
+/* Marks a finding that also showed up in the other report — the API report
+   or the log report, whichever this one isn't. Same pill shape as .sev-tag's
+   warning variant, since this is the same kind of small cross-reference. */
+.finding-confirmed {
+  display: inline-block;
+  margin: 0.4rem 0 0;
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  color: var(--accent);
+  font-size: 0.78rem;
+}
+
 /* Evidence wraps rather than scrolling sideways. A stack trace or a message
    body is long, and a line running off the right edge of the card is a line
    nobody reads — the same failure the collect page's log lines had. */

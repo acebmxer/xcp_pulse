@@ -31,7 +31,7 @@ genuinely has to come first:
 
 ### Findings from the API
 
-*Built, not yet released. Does not need a collected bundle.*
+*Built and complete, not yet released. Does not need a collected bundle.*
 
 A findings report without collecting anything — seconds rather than the two
 minutes a log collection takes, and no `export:logs` privilege.
@@ -72,11 +72,12 @@ message are read out of one.
 
 ### Findings from collected logs
 
-*Built, not yet released. Reads an existing collected bundle; it does not
-download logs again.*
+*Built and complete, not yet released. Reads an existing collected bundle; it
+does not download logs again.*
 
 - The Findings page offers stored `*-logs.tgz` artifacts for analysis.
-- Four local sources are reported: storage, multipath, XAPI, and HA.
+- Six local sources are reported: storage, multipath, XAPI, HA, out-of-memory
+  events, and clock sync failures.
 - Repeated matching lines are grouped by condition with an occurrence count and
   representative evidence, rather than becoming one finding per timestamped
   line.
@@ -88,13 +89,12 @@ download logs again.*
   bundle ended early rather than masquerading as a clean report; one that
   cannot be read at all still fails the job.
 
-Remaining before this is done: out-of-memory events and clock skew as
-additional local sources, and correlation between log events and XAPI
-messages on one timeline.
-
-The log and API reports are currently separate. They can describe the same
-incident from different evidence, but no correlation layer yet merges them or
-labels one as confirmed by the other.
+The log and API reports are two independent runs, often taken hours apart. A
+correlation pass on the Findings page matches them by condition family — HA,
+storage, XAPI, clock skew, multipath — and, when both findings are timed, a
+one-hour window. A match marks each finding as confirmed by the other, so an
+HA fencing event that shows up in both reads as one incident rather than two
+unrelated findings on two different pages.
 
 ---
 

@@ -120,6 +120,9 @@
         {% if finding.count > 1 %}<span class="finding-count">{{ finding.count }}×</span>{% endif %}
       </div>
       <p class="finding-meta">{{ finding.source_title }}</p>
+      {% if finding.confirmed_by %}
+      <p class="finding-confirmed">Also seen in the {{ finding.confirmed_by }}</p>
+      {% endif %}
       <pre class="finding-evidence">{{ finding.evidence }}</pre>
       <p class="finding-action"><strong>What to do:</strong> {{ finding.action }}</p>
     </li>
@@ -254,6 +257,9 @@
     <p class="finding-meta">
       {{ finding.source_title }}{% if finding.at %} — most recent {{ finding.at | age }}{% endif %}
     </p>
+    {% if finding.confirmed_by %}
+    <p class="finding-confirmed">Also seen in the {{ finding.confirmed_by }}</p>
+    {% endif %}
 
     <pre class="finding-evidence">{{ finding.evidence }}</pre>
 
