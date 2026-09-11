@@ -7,11 +7,11 @@
 [![Issues](https://img.shields.io/github/issues/acebmxer/xcp_pulse)](https://github.com/acebmxer/xcp_pulse/issues)
 [![Stars](https://img.shields.io/github/stars/acebmxer/xcp_pulse)](https://github.com/acebmxer/xcp_pulse/stargazers)
 [![Forks](https://img.shields.io/github/forks/acebmxer/xcp_pulse)](https://github.com/acebmxer/xcp_pulse/forks)
-[![Unique cloners](https://img.shields.io/badge/unique%20cloners-104-brightgreen)](https://github.com/acebmxer/xcp_pulse/graphs/traffic)
+[![Unique cloners](https://img.shields.io/badge/unique%20cloners-121-brightgreen)](https://github.com/acebmxer/xcp_pulse/graphs/traffic)
 [![Python](https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white)](pyproject.toml)
 [![Docker](https://img.shields.io/badge/docker-compose-2496ED?logo=docker&logoColor=white)](docker-compose.yml.example)
 [![Platform: Linux](https://img.shields.io/badge/platform-linux-333333?logo=linux&logoColor=white)](#requirements)
-[![Tests](https://img.shields.io/badge/tests-413%20unit-informational)](https://github.com/acebmxer/xcp_pulse/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-447%20unit-informational)](https://github.com/acebmxer/xcp_pulse/actions/workflows/ci.yml)
 [![Ruff](https://img.shields.io/badge/ruff-clean-brightgreen)](https://github.com/acebmxer/xcp_pulse/actions/workflows/ci.yml)
 
 Collects XCP-ng and Xen Orchestra logs, bundles them for download, analyses

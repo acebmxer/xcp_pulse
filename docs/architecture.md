@@ -201,9 +201,15 @@ conversion lives in a single helper.
 stored `*-logs.tgz` artifact produced by collection and queues `log_findings`.
 The worker scans the archive locally, groups repeated matches by detected
 condition, redacts representative evidence, and stores `log-findings.json` and
-`log-findings.md` beside the job. A failed or truncated archive is recorded as
-a failed job. API and log reports remain separate until a later correlation
-layer can match timestamps, host identity, and event details reliably.
+`log-findings.md` beside the job. It reports progress as it scans — driven off
+bytes consumed against the bundle's own file size, one archive member at a
+time, rather than the single 10 → 90 → 100 jump a whole-tar pass would
+otherwise leave the page showing. A bundle that ends early — the same Nginx
+Proxy Manager truncation the redacted repack already salvages — keeps whatever
+was read before the break and marks the report `truncated` rather than failing
+the job; an archive that cannot be read at all still fails it. API and log
+reports remain separate until a later correlation layer can match timestamps,
+host identity, and event details reliably.
 
 **Redaction sits between the cache and anything sent onward.** Real bundles
 contain internal addresses, usernames and session tokens, so the redacted copy

@@ -31,9 +31,11 @@ one masking implementation, not a second one for short strings.
 
 from __future__ import annotations
 
+import gzip
 import re
 import tarfile
 import time
+import zlib
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -397,6 +399,12 @@ class Report:
     # a support ticket.
     rules_disabled: list[str] = field(default_factory=list)
 
+    # Set when a log bundle's archive ended before its terminator — the same
+    # truncated-download case the redacted repack salvages. The findings above
+    # are still real, from every member read before the break; this says the
+    # bundle was not read in full so a clean report is not mistaken for one.
+    truncated: bool = False
+
     @property
     def counts(self) -> dict[str, int]:
         """How many findings at each severity, including the zeros.
@@ -563,42 +571,71 @@ LOG_FINDING_RULES: tuple[tuple[str, str, str, str, re.Pattern[str]], ...] = (
 )
 
 
-def collect_log_findings(bundle_path, *, enabled=None) -> Report:
-    """Inspect a collected tar bundle without contacting Xen Orchestra."""
+def collect_log_findings(bundle_path, *, enabled=None, progress=None) -> Report:
+    """Inspect a collected tar bundle without contacting Xen Orchestra.
+
+    ``progress(percent, step)``, when given, is called once per archive member
+    scanned so a long analysis moves rather than sitting at one value until the
+    whole tar has been read. It is driven off bytes consumed against the
+    bundle's own file size rather than a member count, because counting members
+    first means reading the archive twice. Every call is also a cancellation
+    checkpoint, the same as it is in ``collect_findings``.
+
+    A bundle that arrives truncated — the same Nginx Proxy Manager issue the
+    redacted repack already salvages — is not a lost analysis: everything read
+    before the break is real log data. What was recovered is kept and
+    ``Report.truncated`` says so, rather than the whole run failing on the
+    ``EOFError`` the last few missing bytes raise. Nothing readable at all is a
+    different matter and still raises.
+    """
     grouped: dict[tuple[str, str], dict[str, Any]] = {}
     examined = {source: 0 for source, *_ in LOG_FINDING_RULES}
+    total_bytes = bundle_path.stat().st_size or 1
+    members = 0
+    truncated = False
 
-    with tarfile.open(bundle_path, mode="r:*") as bundle:
-        for member in bundle:
-            if not member.isfile():
-                continue
-            handle = bundle.extractfile(member)
-            if handle is None:
-                continue
-            for raw_line in handle:
-                line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
-                for source, severity, title, action, pattern in LOG_FINDING_RULES:
-                    if not pattern.search(line):
-                        continue
-                    examined[source] += 1
-                    # Log lines usually carry a timestamp, process id, or
-                    # changing object detail. Those values make identical
-                    # failures look different, so group by the detected
-                    # condition and keep the latest matching line as evidence.
-                    key = source
-                    item = grouped.get(key)
-                    if item is None:
-                        grouped[key] = {
-                            "severity": severity,
-                            "title": title,
-                            "evidence": line,
-                            "action": action,
-                            "source": source,
-                            "count": 1,
-                        }
-                    else:
-                        item["count"] += 1
-                        item["evidence"] = line
+    try:
+        # Streaming mode, not random access: a bundle whose end is missing
+        # cannot be indexed, and only reading it strictly in order lets every
+        # intact member before the break be read rather than failing on the
+        # first seek past it — the same reasoning job_collect's repack follows.
+        with tarfile.open(bundle_path, mode="r|*") as bundle:
+            for member in bundle:
+                members += 1
+                if member.isfile():
+                    handle = bundle.extractfile(member)
+                    if handle is not None:
+                        for raw_line in handle:
+                            line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
+                            for source, severity, title, action, pattern in LOG_FINDING_RULES:
+                                if not pattern.search(line):
+                                    continue
+                                examined[source] += 1
+                                # Log lines usually carry a timestamp, process id, or
+                                # changing object detail. Those values make identical
+                                # failures look different, so group by the detected
+                                # condition and keep the latest matching line as evidence.
+                                key = source
+                                item = grouped.get(key)
+                                if item is None:
+                                    grouped[key] = {
+                                        "severity": severity,
+                                        "title": title,
+                                        "evidence": line,
+                                        "action": action,
+                                        "source": source,
+                                        "count": 1,
+                                    }
+                                else:
+                                    item["count"] += 1
+                                    item["evidence"] = line
+                if progress is not None:
+                    consumed = min(member.offset_data + member.size, total_bytes)
+                    progress(int(10 + 80 * consumed / total_bytes), f"Scanning {member.name}")
+    except (tarfile.TarError, EOFError, gzip.BadGzipFile, zlib.error):
+        if members == 0:
+            raise
+        truncated = True
 
     findings = [_finding(enabled=enabled, **item) for item in grouped.values()]
     sources = [
@@ -620,6 +657,7 @@ def collect_log_findings(bundle_path, *, enabled=None) -> Report:
         window_days=0,
         created_at=time.time(),
         rules_disabled=disabled_rule_titles(enabled),
+        truncated=truncated,
     )
 
 

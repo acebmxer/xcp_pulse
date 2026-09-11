@@ -17,9 +17,27 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
   for storage failures, multipath path failures, XAPI exceptions, and HA
   fencing or heartbeat failures, groups repeated matches by condition, masks
   evidence with the active redaction rules, and stores JSON and Markdown
-  reports as downloadable artifacts. The page refreshes while the job runs and
-  reports a failed or truncated bundle instead of leaving an ambiguous running
-  state.
+  reports as downloadable artifacts. The page refreshes while the job runs.
+  Both this run and the API findings run now render the same server-side
+  progress bar and step text `jobs.html` and `collect.html` already use, in
+  place of a bare "Running…" — the Findings page was the one long-job page
+  that had never gotten it. `collect_log_findings` previously only reported
+  10 → 90 → 100 for a whole-tar pass, which would have made the bar jump
+  rather than move; it now takes a `progress` callback and reports roughly
+  once per archive member, driven off bytes consumed against the bundle's
+  file size, which also makes a long log scan cancellable like the API
+  findings job already is.
+
+  A bundle that arrives truncated — measured against a real download cut
+  short by the same Nginx Proxy Manager issue the redacted repack already
+  salvages — used to fail the analysis outright on the `EOFError` its last
+  few missing bytes raised, discarding findings read from every log file
+  before the break. The scan now reads the archive in streaming order rather
+  than seeking, the same reasoning the repack follows, and keeps what it read
+  when the stream ends early: the report is marked as ending early and both
+  the page and the Markdown copy say so, rather than losing an analysis of a
+  464 MB bundle to its last few bytes. An archive that cannot be read at all
+  still fails the job.
 
 - **Status panels on the dashboard.** Beneath the inventory, four panels report
   the state of what has been built: the severity counts from the latest findings

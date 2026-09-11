@@ -22,12 +22,13 @@ from fastapi.responses import HTMLResponse, Response
 from app.artifacts import get_artifact, list_for_job
 from app.dependencies import login_required, redirect, serve_artifact, templates, wake_worker
 from app.findings import DEFAULT_WINDOW_DAYS, SEVERITIES
+from app.job_collect import KIND as COLLECT_KIND
 from app.job_findings import FINDINGS_ARTIFACT, FINDINGS_MARKDOWN, report_from_job
 from app.job_findings import KIND as FINDINGS_KIND
-from app.job_log_findings import LOG_FINDINGS_ARTIFACT, report_from_job as log_report_from_job
 from app.job_log_findings import KIND as LOG_FINDINGS_KIND
-from app.job_collect import KIND as COLLECT_KIND
-from app.jobs import enqueue, has_active, latest_successful, list_jobs
+from app.job_log_findings import LOG_FINDINGS_ARTIFACT
+from app.job_log_findings import report_from_job as log_report_from_job
+from app.jobs import enqueue, has_active, latest_job, latest_successful, list_jobs
 from app.xo_connection import get_connection
 
 router = APIRouter()
@@ -43,8 +44,15 @@ def findings_page(request: Request, username: str = Depends(login_required)) -> 
     job = latest_successful(db, FINDINGS_KIND)
     report = report_from_job(db, data_dir, job.id) if job is not None else None
     artifacts = list_for_job(db, job.id) if job is not None else []
+    active_job = latest_job(db, FINDINGS_KIND)
     log_job = latest_successful(db, LOG_FINDINGS_KIND)
     log_report = log_report_from_job(db, data_dir, log_job.id) if log_job is not None else None
+    # The newest *result* is the last successful run; the newest *job* is what
+    # says whether the run the operator just started failed. They are different
+    # rows once an analysis fails, so a failed run is surfaced from the latter —
+    # the same split the dashboard draws for a failed inventory refresh.
+    newest_log_job = latest_job(db, LOG_FINDINGS_KIND)
+    log_failed = newest_log_job is not None and newest_log_job.state == "failed"
     log_artifacts = [
         artifact
         for collect_job in list_jobs(db, kind=COLLECT_KIND, limit=100)
@@ -66,11 +74,13 @@ def findings_page(request: Request, username: str = Depends(login_required)) -> 
             "json_name": FINDINGS_ARTIFACT,
             "markdown_name": FINDINGS_MARKDOWN,
             "running": has_active(db, FINDINGS_KIND),
+            "active_job": active_job,
             "log_job": log_job,
             "log_report": log_report,
             "log_artifacts": log_artifacts,
             "log_running": has_active(db, LOG_FINDINGS_KIND),
-            "log_error": log_job.error if log_job is not None and log_job.state == "failed" else None,
+            "active_log_job": newest_log_job,
+            "log_error": newest_log_job.error if log_failed else None,
             "log_findings_artifact": LOG_FINDINGS_ARTIFACT,
             "notice": request.query_params.get("notice"),
             "error": request.query_params.get("error"),

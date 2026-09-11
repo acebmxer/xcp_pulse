@@ -13,8 +13,11 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
+from app.artifacts import store_json
 from app.findings import CRITICAL, INFO, WARNING, Finding, Report, SourceResult
+from app.job_collect import KIND as COLLECT_KIND
 from app.job_findings import KIND
+from app.job_log_findings import KIND as LOG_KIND
 from app.jobs import enqueue
 from app.xo_connection import save_connection
 from tests.conftest import TEST_PASSWORD, TEST_USER
@@ -68,6 +71,22 @@ def _store(client: TestClient, report: Report = REPORT) -> None:
         patch("app.job_findings.build_client"),
         patch("app.job_findings.collect_findings", return_value=report),
     ):
+        run_pending_jobs(client.app)
+
+
+def _store_log(client: TestClient, report: Report) -> None:
+    """Run a log-findings job against a stubbed scan, so a report is stored."""
+    db = client.app.state.db
+    collect_job = enqueue(db, COLLECT_KIND)
+    artifact = store_json(
+        db,
+        client.app.state.settings.data_dir,
+        job_id=collect_job.id,
+        name="host1-logs.tgz",
+        payload={},
+    )
+    enqueue(db, LOG_KIND, {"artifact_id": artifact.id})
+    with patch("app.job_log_findings.collect_log_findings", return_value=report):
         run_pending_jobs(client.app)
 
 
@@ -374,3 +393,97 @@ def test_a_source_that_could_not_be_read_says_not_read_in_the_table(
 
     assert "not read — needs an administrator" in body
     assert "checked - no" not in body
+
+
+def test_a_failed_log_analysis_is_shown_and_not_hidden_behind_an_old_report(
+    logged_in: TestClient,
+) -> None:
+    """The newest *result* is the last success; the newest *job* is what failed.
+
+    A run against a bundle that cannot be read at all fails, and the page
+    still shows the last good report — so the failure has to be surfaced from
+    the newest job, not from the newest successful one, or it is invisible.
+    """
+    enqueue(logged_in.app.state.db, LOG_KIND)  # no artifact_id -> the job fails
+    run_pending_jobs(logged_in.app)
+
+    body = logged_in.get("/findings").text
+
+    assert "Log analysis failed" in body
+    assert "No log bundle was named" in body
+
+
+def test_no_log_analysis_failure_is_shown_when_the_newest_run_succeeded(
+    logged_in: TestClient,
+) -> None:
+    """The other side: the alert must not stick on once a later run works."""
+    _connect(logged_in)
+    body = logged_in.get("/findings").text
+
+    assert "Log analysis failed" not in body
+
+
+def test_a_truncated_log_bundle_says_it_ended_early_rather_than_failing(
+    logged_in: TestClient,
+) -> None:
+    """The other side of the failure test above: a bundle that ends early is a
+    salvaged report, not a failed job, and the page has to say which one it
+    got — a clean-looking report from a partial read is worse than no report."""
+    _store_log(logged_in, Report(created_at=1788700000.0, truncated=True))
+
+    body = logged_in.get("/findings").text
+
+    assert "ended early" in body
+    assert "Log analysis failed" not in body
+
+
+def test_a_complete_log_bundle_shows_no_truncation_notice(logged_in: TestClient) -> None:
+    """The other side: a full read must not carry the partial-read warning."""
+    _store_log(logged_in, Report(created_at=1788700000.0, truncated=False))
+
+    body = logged_in.get("/findings").text
+
+    assert "ended early" not in body
+
+
+def test_the_progress_bar_shows_while_a_findings_run_is_active(
+    logged_in: TestClient,
+) -> None:
+    """The bare "Running…" text used to be all this page showed for a job that
+    could take a while — the same server-rendered bar `jobs.html` and
+    `collect.html` use should appear here too."""
+    app = logged_in.app  # type: ignore[attr-defined]
+    worker_thread = getattr(app.state, "job_worker", None)
+    if worker_thread is not None:
+        worker_thread.stop()
+    enqueue(app.state.db, KIND)
+
+    body = logged_in.get("/findings").text
+
+    assert 'class="progress"' in body
+    assert "Waiting to start" in body
+
+
+def test_the_progress_bar_shows_while_a_log_findings_run_is_active(
+    logged_in: TestClient,
+) -> None:
+    """The other side, for the log-findings section of the page."""
+    app = logged_in.app  # type: ignore[attr-defined]
+    worker_thread = getattr(app.state, "job_worker", None)
+    if worker_thread is not None:
+        worker_thread.stop()
+    enqueue(app.state.db, LOG_KIND)
+
+    body = logged_in.get("/findings").text
+
+    assert 'class="progress"' in body
+    assert "Waiting to start" in body
+
+
+def test_the_progress_bar_is_absent_once_nothing_is_running(
+    logged_in: TestClient,
+) -> None:
+    """The other side of both tests above: an idle page shows no bar at all."""
+    body = logged_in.get("/findings").text
+
+    assert 'class="progress"' not in body

@@ -13,8 +13,9 @@ warning stuck permanently on gets shipped.
 
 from __future__ import annotations
 
-import time
+import os
 import tarfile
+import time
 
 import pytest
 
@@ -521,6 +522,33 @@ def test_progress_is_reported_at_every_source() -> None:
     seen: list[tuple[int, str]] = []
     collect_findings(FakeXo(), [POOL], now=NOW, progress=lambda p, s: seen.append((p, s)))
 
+    assert len(seen) == 7
+    assert [percent for percent, _ in seen] == sorted(percent for percent, _ in seen)
+
+
+def test_log_findings_progress_is_reported_and_does_not_jump(tmp_path) -> None:
+    """Mirrors test_progress_is_reported_at_every_source, for the log scan.
+
+    A whole-tar pass reporting only 10 -> 90 -> 100 would make the bar jump
+    rather than move, so this asserts it is called per member and never goes
+    backwards, not that any particular percentage appears.
+    """
+    log_a = tmp_path / "a.log"
+    log_a.write_text("multipathd reports failed path\n" * 20)
+    log_b = tmp_path / "b.log"
+    log_b.write_text("Storage SR reports I/O error\n" * 20)
+    bundle = tmp_path / "logs.tar.gz"
+    with tarfile.open(bundle, "w:gz") as archive:
+        archive.add(log_a, arcname="var/log/a.log")
+        archive.add(log_b, arcname="var/log/b.log")
+
+    seen: list[tuple[int, str]] = []
+    collect_log_findings(bundle, progress=lambda p, s: seen.append((p, s)))
+
+    assert len(seen) == 2
+    assert [percent for percent, _ in seen] == sorted(percent for percent, _ in seen)
+    assert all(10 <= percent <= 90 for percent, _ in seen)
+
 
 def test_log_findings_reads_a_bundle_and_groups_repeated_lines(tmp_path) -> None:
     log = tmp_path / "xensource.log"
@@ -574,8 +602,49 @@ def test_generic_xapi_error_is_not_reported_as_storage_failure(tmp_path) -> None
 
     assert [finding.source for finding in report.findings] == ["logs_xapi"]
 
-    assert len(seen) == 7
-    assert [percent for percent, _ in seen] == sorted(percent for percent, _ in seen)
+
+def test_a_truncated_bundle_still_yields_the_findings_read_before_the_break(
+    tmp_path,
+) -> None:
+    """The case measured against a real pool: the download arrives with its
+    last member and its terminator missing.
+
+    What was read before the break is real, matching the salvage
+    ``job_collect``'s redacted repack already does for the same truncated
+    download — discarding it would lose an analysis of a bundle that takes
+    minutes to collect again.
+    """
+    log_a = tmp_path / "a.log"
+    log_a.write_text("Storage SR reports I/O error\n")
+    # High-entropy padding, not repeated text: it must not compress away to
+    # nothing, or the cut below lands in the gzip footer rather than inside
+    # this member's own data, and the truncation would not be a mid-archive one.
+    log_b = tmp_path / "b.log"
+    log_b.write_text(os.urandom(300_000).hex())
+    whole = tmp_path / "whole.tar.gz"
+    with tarfile.open(whole, "w:gz") as archive:
+        archive.add(log_a, arcname="var/log/a.log")
+        archive.add(log_b, arcname="var/log/b.log")
+
+    # Cut the terminator and the tail of the gzip stream off.
+    whole_bytes = whole.read_bytes()
+    bundle = tmp_path / "truncated.tar.gz"
+    bundle.write_bytes(whole_bytes[: int(len(whole_bytes) * 0.75)])
+
+    report = collect_log_findings(bundle)
+
+    assert report.truncated is True
+    assert any(finding.source == "logs_storage" for finding in report.findings)
+
+
+def test_a_bundle_unreadable_from_the_first_byte_still_raises(tmp_path) -> None:
+    """The other side: nothing salvageable is a different matter from a break
+    partway through, and must still be reported as a failure."""
+    bundle = tmp_path / "garbage.tar.gz"
+    bundle.write_bytes(b"not a tar archive at all")
+
+    with pytest.raises(tarfile.TarError):
+        collect_log_findings(bundle)
 
 
 def test_a_cancelling_progress_callback_stops_the_run() -> None:

@@ -32,6 +32,16 @@
       </button>
     </form>
   </div>
+  {% if active_job and active_job.is_active %}
+  <div class="progress" role="progressbar" aria-valuenow="{{ active_job.progress }}"
+       aria-valuemin="0" aria-valuemax="100">
+    <div class="progress-bar" style="width: {{ active_job.progress }}%"></div>
+  </div>
+  <p class="job-step">{{ active_job.step | counts_in or 'Waiting to start' }} — {{ active_job.progress }}%</p>
+  <form method="post" action="/jobs/{{ active_job.id }}/cancel" class="inline">
+    <button type="submit" class="btn btn-quiet">Cancel</button>
+  </form>
+  {% endif %}
   {% if not connection %}
   <p class="note">
     No Xen Orchestra connection is configured. Add one in
@@ -65,6 +75,16 @@
     <p class="note">Collect a host log bundle first. Stored <code>*-logs.tgz</code> files will appear here.</p>
     {% endif %}
   </div>
+  {% if active_log_job and active_log_job.is_active %}
+  <div class="progress" role="progressbar" aria-valuenow="{{ active_log_job.progress }}"
+       aria-valuemin="0" aria-valuemax="100">
+    <div class="progress-bar" style="width: {{ active_log_job.progress }}%"></div>
+  </div>
+  <p class="job-step">{{ active_log_job.step | counts_in or 'Waiting to start' }} — {{ active_log_job.progress }}%</p>
+  <form method="post" action="/jobs/{{ active_log_job.id }}/cancel" class="inline">
+    <button type="submit" class="btn btn-quiet">Cancel</button>
+  </form>
+  {% endif %}
 </div>
 
 {% if log_report %}
@@ -73,6 +93,13 @@
     <h2>Findings from logs</h2>
     <p class="inventory-source">Read {{ log_report.created_at | age }}</p>
   </div>
+  {% if log_report.truncated %}
+  <div class="alert alert-error">
+    <strong>The bundle ended early and was not read in full.</strong>
+    Findings below come only from the log files read before the break —
+    collect the bundle again to see the rest.
+  </div>
+  {% endif %}
   <ul class="sev-summary">
     {% for severity in severities %}
     <li class="sev-count sev-{{ severity }}{{ ' is-zero' if not log_report.counts[severity] }}">

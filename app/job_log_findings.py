@@ -35,7 +35,11 @@ def run(context: JobContext) -> None:
         raise ValueError(f"The body of {source.name} is missing from the data volume.")
 
     context.progress(10, f"Reading {source.name}")
-    report = collect_log_findings(bundle_path, enabled=enabled_rules(context.conn))
+    report = collect_log_findings(
+        bundle_path,
+        enabled=enabled_rules(context.conn),
+        progress=context.progress,
+    )
     context.progress(90, "Storing the log findings report")
     store_json(
         context.conn,
@@ -54,7 +58,10 @@ def run(context: JobContext) -> None:
         media_type="text/markdown",
         source=markdown_path,
     )
-    context.progress(100, f"{len(report.findings)} log finding(s) from {source.name}")
+    summary = f"{len(report.findings)} log finding(s) from {source.name}"
+    if report.truncated:
+        summary += " — the bundle ends early"
+    context.progress(100, summary)
 
 
 def _source_artifacts(conn, artifact_id: str):
@@ -81,6 +88,7 @@ def to_payload(report: Report, source_id: str) -> dict[str, Any]:
         "findings": [asdict(finding) for finding in report.findings],
         "sources": [asdict(source) for source in report.sources],
         "rules_disabled": report.rules_disabled,
+        "truncated": report.truncated,
     }
 
 
@@ -98,23 +106,37 @@ def report_from_job(conn, data_dir, job_id: str) -> Report | None:
     if not isinstance(payload, dict):
         return None
     return Report(
-        findings=sort_findings([_build(Finding, item) for item in _records(payload.get("findings"))]),
+        findings=sort_findings(
+            [_build(Finding, item) for item in _records(payload.get("findings"))]
+        ),
         sources=[_build(SourceResult, item) for item in _records(payload.get("sources"))],
         window_days=_as_int(payload.get("window_days"), 0),
         created_at=float(payload.get("created_at") or 0.0),
-        rules_disabled=[item for item in payload.get("rules_disabled") or [] if isinstance(item, str)],
+        rules_disabled=[
+            item for item in payload.get("rules_disabled") or [] if isinstance(item, str)
+        ],
+        truncated=bool(payload.get("truncated")),
     )
 
 
 def to_markdown(report: Report, source_name: str) -> str:
+    generated = time.strftime(
+        "%Y-%m-%d %H:%M:%S UTC", time.gmtime(report.created_at or time.time())
+    )
     lines = [
         "# XCP Pulse: findings from collected logs",
         "",
         f"Source: {source_name}",
         "",
-        f"Generated {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime(report.created_at or time.time()))}.",
+        f"Generated {generated}.",
         "",
     ]
+    if report.truncated:
+        lines += [
+            "> **The bundle ended early and was not read in full.** Findings below",
+            "> come only from the archive members read before the break.",
+            "",
+        ]
     if report.is_clean:
         lines.append("No findings. Every log source reported nothing.")
     for finding in report.findings:
@@ -130,7 +152,9 @@ def to_markdown(report: Report, source_name: str) -> str:
 
 
 def _records(value: object) -> list[dict[str, Any]]:
-    return [item for item in value or [] if isinstance(item, dict)] if isinstance(value, list) else []
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
 
 
 def _build(model, record: dict[str, Any]):

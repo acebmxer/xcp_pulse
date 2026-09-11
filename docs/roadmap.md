@@ -83,9 +83,10 @@ download logs again.*
 - Evidence is redacted before it is stored, using the same active rules as log
   collection.
 - The job stores JSON for the page and Markdown for a support ticket, and the
-  page refreshes automatically while analysis runs.
-- A truncated or unreadable archive fails visibly and does not masquerade as a
-  clean report.
+  page shows a progress bar while analysis runs.
+- A truncated archive keeps the findings read before the break and says the
+  bundle ended early rather than masquerading as a clean report; one that
+  cannot be read at all still fails the job.
 
 The log and API reports are currently separate. They can describe the same
 incident from different evidence, but no correlation layer yet merges them or

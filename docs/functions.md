@@ -333,7 +333,7 @@ constructor and redacts the evidence on the way in.
 | Function | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
 | `collect_findings` | `(client, pools, *, enabled=None, window_days=30, now=None, progress=None) -> Report` | Reads every source and builds the report | `job_findings.run` | unreleased |
-| `collect_log_findings` | `(bundle_path, *, enabled=None) -> Report` | Reads a stored tar bundle, groups storage, multipath, XAPI and HA matches, and builds the report | `job_log_findings.run` | unreleased |
+| `collect_log_findings` | `(bundle_path, *, enabled=None, progress=None) -> Report` | Reads a stored tar bundle, groups storage, multipath, XAPI and HA matches, and builds the report; a bundle that ends early is salvaged rather than failed | `job_log_findings.run` | unreleased |
 | `disabled_rule_titles` | `(enabled) -> list[str]` | The titles of the redaction rules switched off, for the report | `collect_findings` | unreleased |
 | `sort_findings` | `(findings: list[Finding]) -> list[Finding]` | Worst first, then most recent, then by title | `collect_findings`, `job_findings.report_from_job` | unreleased |
 
@@ -508,6 +508,7 @@ on databases written before it did.
 | `start_collection` | `(request, username, host_id, include_audit) -> Response` | `POST /collect` — queues a collection for one host | router | v0.6.0 |
 | `findings_page` | `(request, username) -> Response` | `GET /findings` — the latest stored findings report | router | unreleased |
 | `start_findings` | `(request, username) -> Response` | `POST /findings` — queues a findings run | router | unreleased |
+| `start_log_findings` | `(request, artifact_id, username) -> Response` | `POST /findings/from-logs` — queues findings from one stored log bundle | router | unreleased |
 | `download_findings` | `(artifact_id, request, username) -> Response` | `GET /findings/download/{id}` — streams the stored JSON or Markdown | router | unreleased |
 
 ## `app/hashpw.py` — password hash helper
