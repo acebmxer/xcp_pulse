@@ -742,7 +742,9 @@ _TAIL_BYTES = 4096
 # Said whenever a bundle arrives truncated. The cause is on the host rather
 # than in Xen Orchestra or here, so the operator is pointed at the right place.
 _TRUNCATED_HINT = (
-    "The cause is upstream of XCP Pulse — usually a reverse proxy in front of Xen Orchestra."
+    "The cause is upstream of XCP Pulse — usually a reverse proxy in front of "
+    "Xen Orchestra. This is a known, unsolved bug — see docs/installation.md, "
+    "'Xen Orchestra behind a reverse proxy'."
 )
 
 

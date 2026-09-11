@@ -12,6 +12,46 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ### Added
 
+- **Vates support package.** A new `/support-package` page assembles one
+  `.tgz` to attach to a support ticket — the redacted log bundle, findings in
+  Markdown and JSON, the redaction report, the inventory, and a manifest
+  listing what's inside and what was masked — instead of an operator
+  downloading each of those separately. Two ways to start one: **Package** an
+  already-stored collection, or **Collect + Package** a host with nothing
+  stored yet.
+
+  A package never ships with a gap it could have filled itself: building one
+  always queues a fresh `api_findings` run and a fresh `refresh_inventory`
+  alongside the collection, rather than reusing whatever last happened to be
+  stored. The new `support_package` job cannot enqueue those and wait on them
+  itself — the queue is strict FIFO with a single worker thread, so a job
+  waiting on another it enqueued would deadlock forever — so the chain is
+  built by the route instead, the same way `job_extract` already chains an
+  extraction behind a fresh collection: every job it depends on is queued
+  first, addressed by `source_job_id`/`findings_job_id`/`inventory_job_id`
+  rather than an artifact id that does not exist yet, and resolved once the
+  package job is actually claimed. The manifest's masked-rules list is read
+  straight from the redaction report packaged beside it, so the two can never
+  disagree about what was redacted.
+
+  The page itself shows progress throughout the chain, not only once a
+  package job exists: a collection just started by Collect + Package gets its
+  own progress bar, elapsed-time counter and cancel button on the page (not
+  only on Jobs), and the page's auto-refresh now also checks for an active
+  collection or a running findings/inventory job, not only an active
+  `support_package` job — reported from a real screenshot where pressing
+  Collect + Package showed nothing moving on this page at all while the
+  collection was visibly running on Jobs, and a second screenshot where the
+  progress bar moved but no elapsed-time counter did, unlike the same
+  collection on the Collect page.
+
+  A finished package also no longer disappears from the page when its source
+  collection is deleted from the Collect page — that page has no idea support
+  packages exist and will happily remove a collection with a finished package
+  still nested under it. The archive itself does not need the raw collection
+  any more, so it stays on disk and downloadable either way; it now stays
+  listed too, under a new "Built from a since-deleted collection" section.
+
 - **Extract individual log categories from a collected bundle.** Xen
   Orchestra's `logs.tgz` accepts no category filter and no date range — it is
   `xen-bugtool`'s whole `/var/log`, 609 files on a real host measured
@@ -160,6 +200,33 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
   ticket — both downloadable from the page.
 
 ### Fixed
+
+- **The in-app truncated-download message now points at a doc recording this
+  as a known, unsolved bug**, rather than only saying "usually a reverse proxy
+  in front of Xen Orchestra." `docs/installation.md` now has "Xen Orchestra
+  behind a reverse proxy (known bug, unsolved)", documenting an investigation
+  against a real Nginx Proxy Manager deployment — recorded so someone with
+  more insight into Nginx/httpx internals, or a setup where it reproduces more
+  cleanly, has a starting point. Neither of the two things tried fixed it:
+  XCP-ng's log bundle is built on the fly, so XO serves it as
+  `Transfer-Encoding: chunked` with no `Content-Length`, and on the tested
+  deployment the proxy's connection to XO intermittently closed before the
+  final chunk arrived — observed directly as `httpx.RemoteProtocolError: peer
+  closed connection without sending complete message body`. **Proxy
+  configuration** (`proxy_buffering off`, `proxy_set_header Connection ""`,
+  and related directives) reduced how often it happened but did not eliminate
+  it — identical code and configuration, run twice in a row, produced one
+  complete download and one truncated at the same byte offset every earlier
+  attempt had also stopped at. **Suppressing `httpx`'s default
+  `Accept-Encoding: gzip, deflate` header** (it was asking the proxy to
+  transport-encode an already-gzipped file) also only reduced the frequency,
+  confirmed by the same back-to-back test, and was not implemented in the
+  codebase since it does not actually fix anything. `proxy_http_version 1.1;`
+  — which looks like the obvious next thing to try alongside `Connection ""`
+  — is documented as something that broke the proxy outright on the
+  deployment it was tested against, for a reason not understood. The honest
+  advice recorded is to retry a collection that reports "the bundle ends
+  early," not that the problem is solved.
 
 - **The Xen Orchestra event routes are bounded by a time filter, not by
   `limit`.** Measured against XO CE: `limit` is applied to the *oldest* records

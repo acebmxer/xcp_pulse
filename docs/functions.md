@@ -38,6 +38,7 @@ columns; those are a reviewer's job.
 | Redact a stored file and report what was masked | `app/job_redact.py` |
 | Collect a host's logs and redact them | `app/job_collect.py` |
 | Extract selected log categories from a stored bundle | `app/job_extract.py`; the category map is `app/log_categories.py` |
+| Build a Vates support package | `app/job_support_package.py`; the page is `app/routes/support_package.py` |
 | Ask the API what is wrong | `app/findings.py`, run by `app/job_findings.py` |
 | Ask a stored log bundle what is wrong | `app/findings.py`, run by `app/job_log_findings.py` |
 | Decide what stored collections to delete | `app/retention.py` — always `plan` before `apply` |
@@ -374,6 +375,31 @@ trail — current logs only unless `include_rotated` is set. A category that
 matches nothing in a given bundle is not an error: the archive is still stored
 empty and the report and job step say why.
 
+## `app/job_support_package.py` — the Support package job
+
+Assembles one `.tgz` from a collection and two sibling jobs it queues itself:
+the redacted log bundle, `findings.json` and `findings.md`, the redaction
+report, the inventory, and a manifest. Never packages a gap — if the target
+host has no findings run or no inventory refresh, this queues those first
+rather than shipping a package with a hole in it.
+
+The worker is single-threaded and the queue is strict FIFO, so this job cannot
+enqueue a sub-job and wait on it from inside its own `run` — the chain is built
+by the route instead (`routes.support_package._enqueue_chain`), which queues
+findings, then inventory, then this job, each addressed by the id of the job
+before it rather than an artifact id that does not exist yet. By the time this
+job is claimed, everything queued ahead of it has already finished.
+
+| Function | Signature | Does | Used by | Since |
+| --- | --- | --- | --- | --- |
+| `build_manifest` | `(*, host_name, collection, redacted_bundle, redaction_report, findings_job, inventory_job, entries) -> dict` | What the archive contains and what was masked, as plain JSON | `job_support_package.run` | unreleased |
+| `package_from_job` | `(conn, job_id: str) -> Artifact \| None` | The archive a completed package job stored | `routes.support_package.delete_package` | unreleased |
+| `run` | `(context: JobContext) -> None` | Resolves the collection and its two sibling jobs, builds the archive, stores it | `job_runner`, via `register` | unreleased |
+
+`build_manifest`'s `rules_disabled` is read straight from the redaction report
+packaged beside it rather than re-derived, so the manifest can never disagree
+with the report sitting next to it in the same archive.
+
 ## `app/findings.py` — what the API says is wrong
 
 Turns seven Xen Orchestra reads into findings: severity, title, evidence,
@@ -574,6 +600,11 @@ on databases written before it did.
 | `start_findings` | `(request, username) -> Response` | `POST /findings` — queues a findings run | router | unreleased |
 | `start_log_findings` | `(request, artifact_id, username) -> Response` | `POST /findings/from-logs` — queues findings from one stored log bundle | router | unreleased |
 | `download_findings` | `(artifact_id, request, username) -> Response` | `GET /findings/download/{id}` — streams the stored JSON or Markdown | router | unreleased |
+| `support_package_page` | `(request, username) -> Response` | `GET /support-package` — stored collections and built packages | router | unreleased |
+| `package_collection` | `(job_id, request, username) -> Response` | `POST /support-package/{id}/package` — queues a package from an already-stored collection | router | unreleased |
+| `collect_and_package` | `(request, username, host_id, include_audit) -> Response` | `POST /support-package/collect` — queues a collection, then a package from it | router | unreleased |
+| `download_package` | `(artifact_id, request, username) -> Response` | `GET /support-package/download/{id}` — streams a stored package | router | unreleased |
+| `delete_package` | `(job_id, request, username) -> Response` | `POST /support-package/{id}/delete` — deletes one package and its file | router | unreleased |
 
 ## `app/hashpw.py` — password hash helper
 

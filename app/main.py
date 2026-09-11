@@ -23,12 +23,14 @@ from app.job_inventory import KIND as _INVENTORY_KIND  # noqa: F401
 from app.job_log_findings import KIND as _LOG_FINDINGS_KIND  # noqa: F401
 from app.job_redact import KIND as _REDACT_KIND  # noqa: F401
 from app.job_runner import JobWorker
+from app.job_support_package import KIND as _SUPPORT_PACKAGE_KIND  # noqa: F401
 from app.jobs import reset_orphans
 from app.logging_conf import configure_logging
 from app.routes import auth, collect, dashboard, health, redaction
 from app.routes import findings as findings_routes
 from app.routes import jobs as job_routes
 from app.routes import settings as settings_routes
+from app.routes import support_package as support_package_routes
 from app.security import purge_expired_sessions, purge_old_login_attempts
 
 
@@ -97,6 +99,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(redaction.router)
     app.include_router(collect.router)
     app.include_router(findings_routes.router)
+    app.include_router(support_package_routes.router)
     return app
 
 

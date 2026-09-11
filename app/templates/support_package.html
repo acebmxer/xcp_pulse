@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% block title %}Support package — XCP Pulse{% endblock %}
+
+{% macro package_card(package) %}
+      <li class="extraction-item job job-{{ package.state }}">
+        <div class="job-head">
+          <span class="job-kind">Support package</span>
+          <span class="job-state job-state-{{ package.state }}">{{ package.state }}</span>
+          {% if package.duration is not none %}
+          <span class="job-duration">{{ '%.0f'|format(package.duration) }}s</span>
+          {% endif %}
+        </div>
+
+        {% if package.is_active %}
+        <div class="progress" role="progressbar" aria-valuenow="{{ package.progress }}"
+             aria-valuemin="0" aria-valuemax="100">
+          <div class="progress-bar" style="width: {{ package.progress }}%"></div>
+        </div>
+        <p class="job-step">{{ package.step or 'Waiting to start' }} — {{ package.progress }}%</p>
+        <form method="post" action="/jobs/{{ package.id }}/cancel" class="inline">
+          <button type="submit" class="btn btn-quiet">Cancel</button>
+        </form>
+        {% elif package.step %}
+        <p class="job-step">{{ package.step }}</p>
+        {% endif %}
+
+        {% if package.error %}
+        <p class="job-error">{{ package.error }}</p>
+        {% endif %}
+
+        {% set produced = artifacts.get(package.id, []) %}
+        {% if produced %}
+        <ul class="artifacts">
+          {% for artifact in produced %}
+          <li>
+            <span class="mono">{{ artifact.name }}</span>
+            <span class="artifact-size">
+              {{ artifact.size_human }}
+              <a class="btn btn-quiet" href="/support-package/download/{{ artifact.id }}">Download</a>
+            </span>
+          </li>
+          {% endfor %}
+        </ul>
+        {% endif %}
+
+        {% if not package.is_active %}
+        <form method="post" action="/support-package/{{ package.id }}/delete" class="inline row-actions">
+          <button type="submit" class="btn btn-quiet">Delete this package</button>
+        </form>
+        {% endif %}
+      </li>
+{% endmacro %}
+
+{% block content %}
+{% if any_active %}
+<meta http-equiv="refresh" content="3">
+{% endif %}
+
+<h1 class="page-title">Support package</h1>
+
+{% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+{% if notice %}<div class="alert alert-ok">{{ notice }}</div>{% endif %}
+
+<div class="card">
+  <p class="note">
+    One archive to attach to a Vates support ticket: the redacted log bundle,
+    findings in Markdown and JSON, the redaction report, and the inventory —
+    plus a manifest listing what's inside and what was masked. Building one
+    always runs a fresh findings check and inventory refresh alongside it, so
+    the package is never missing a piece.
+  </p>
+
+  {% if not connection %}
+  <p class="note">
+    No Xen Orchestra connection is configured. Add one in
+    <a href="/settings">Settings</a>.
+  </p>
+  {% elif not hosts %}
+  <p class="note">
+    No hosts are known yet. Run <a href="/jobs">Refresh inventory</a> first.
+  </p>
+  {% endif %}
+
+  <h2>Collect from a host and package it</h2>
+  <p class="note">
+    For a host with nothing collected yet. Downloads its log bundle, redacts
+    a copy, then builds the package. Expect roughly the same <strong>870
+    MB</strong> and <strong>two minutes</strong> a plain collection takes.
+  </p>
+  <form method="post" action="/support-package/collect" class="inline">
+    <label class="visually-hidden" for="host_id">Host to collect from</label>
+    <select id="host_id" name="host_id" {% if not hosts %}disabled{% endif %}>
+      {% for host in hosts %}
+      <option value="{{ host.id }}">
+        {{ host.name }}{% if host.address %} — {{ host.address }}{% endif %}
+      </option>
+      {% endfor %}
+    </select>
+    <label class="check">
+      <input type="checkbox" name="include_audit" value="1">
+      <span>Also include the XAPI audit trail</span>
+    </label>
+    <button type="submit" class="btn btn-primary" {% if not hosts %}disabled{% endif %}>
+      Collect + Package
+    </button>
+  </form>
+</div>
+
+<h2 class="section-title">Package an existing collection</h2>
+
+{% if not collections %}
+<div class="card empty-state">
+  <span class="empty-mark">◇</span>
+  <h2>Nothing collected yet</h2>
+  <p>Collect a host's logs on the <a href="/collect">Collect</a> page, or use
+  Collect + Package above, and it will appear here.</p>
+</div>
+{% else %}
+<ul class="joblist">
+  {% for job in collections %}
+  <li class="card job job-{{ job.state }}">
+    <div class="job-head">
+      <span class="job-kind">{{ job.params.get('host_name') or 'Collection' }}</span>
+      <span class="job-state job-state-{{ job.state }}">{{ job.state }}</span>
+      {% if job.duration is not none %}
+      <span class="job-duration">{{ '%.0f'|format(job.duration) }}s</span>
+      {% endif %}
+    </div>
+
+    {% if job.is_active %}
+    <div class="progress" role="progressbar" aria-valuenow="{{ job.progress }}"
+         aria-valuemin="0" aria-valuemax="100">
+      <div class="progress-bar" style="width: {{ job.progress }}%"></div>
+    </div>
+    <p class="job-step">{{ job.step or 'Waiting to start' }} — {{ job.progress }}%</p>
+    <form method="post" action="/jobs/{{ job.id }}/cancel" class="inline">
+      <button type="submit" class="btn btn-quiet">Cancel</button>
+    </form>
+    {% elif job.step %}
+    <p class="job-step">{{ job.step }}</p>
+    {% endif %}
+
+    {% if job.error %}
+    <p class="job-error">{{ job.error }}</p>
+    {% endif %}
+
+    {% if not job.is_active %}
+    <form method="post" action="/support-package/{{ job.id }}/package" class="inline row-actions">
+      <button type="submit" class="btn btn-quiet" {% if any_active %}disabled{% endif %}>
+        Package this collection
+      </button>
+    </form>
+    {% endif %}
+
+    {% set collection_packages = packages_by_source.get(job.id, []) %}
+    {% if collection_packages %}
+    <ul class="joblist extractions">
+      {% for package in collection_packages %}
+      {{ package_card(package) }}
+      {% endfor %}
+    </ul>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+
+{% if orphaned_packages %}
+<h2 class="section-title">Built from a since-deleted collection</h2>
+<div class="card">
+  <p class="note">
+    These packages are still complete and downloadable — the archive does not
+    need the collection it was built from to still exist — but that collection
+    has since been deleted, so they no longer have a card to appear under.
+  </p>
+  <ul class="joblist extractions">
+    {% for package in orphaned_packages %}
+    {{ package_card(package) }}
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+{% endblock %}

@@ -126,6 +126,26 @@ data volume, never a smaller download.
 - An extraction is its own stored job with its own report, downloadable and
   deletable independently of the collection it was drawn from.
 
+### Vates support package
+
+*Built and complete, not yet released.*
+
+One archive to attach to a support ticket, instead of gathering several
+downloads by hand: the redacted log bundle, findings in Markdown and JSON, the
+redaction report, and the inventory, plus a manifest listing what's included
+and what was masked.
+
+- Two ways to start one: **Package** an already-stored collection, or **Collect
+  + Package** a host with nothing stored yet — either way the result is built
+  the same way.
+- Never ships with a gap it could have filled itself: building a package
+  always runs a fresh findings check and a fresh inventory refresh alongside
+  the collection, rather than reusing whatever last happened to be stored.
+- The manifest's masked-rules list is read straight from the redaction report
+  packaged beside it, so the two can never disagree.
+- Its own page — `/support-package` — lists what's been built, same as the
+  Collect page lists collections, with download and delete per package.
+
 ---
 
 ## Shipped
@@ -328,16 +348,6 @@ it reports on have stopped moving.
 
 This is deliberately last among the free-to-pick-up items. Tuning an interface
 around features that are still being added means doing it twice.
-
-### Vates support package
-
-*Prerequisite met: API findings, log findings, redaction and collection are all
-built.*
-
-One file to attach to a support ticket.
-
-- Redacted bundle, findings in Markdown and JSON, redaction report, inventory
-- A manifest saying what is included and what was masked
 
 ### Redact on demand, not only at collection
 

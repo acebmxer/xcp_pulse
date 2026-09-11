@@ -11,7 +11,7 @@
 [![Python](https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white)](pyproject.toml)
 [![Docker](https://img.shields.io/badge/docker-compose-2496ED?logo=docker&logoColor=white)](docker-compose.yml.example)
 [![Platform: Linux](https://img.shields.io/badge/platform-linux-333333?logo=linux&logoColor=white)](#requirements)
-[![Tests](https://img.shields.io/badge/tests-457%20unit-informational)](https://github.com/acebmxer/xcp_pulse/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-504%20unit-informational)](https://github.com/acebmxer/xcp_pulse/actions/workflows/ci.yml)
 [![Ruff](https://img.shields.io/badge/ruff-clean-brightgreen)](https://github.com/acebmxer/xcp_pulse/actions/workflows/ci.yml)
 
 Collects XCP-ng and Xen Orchestra logs, bundles them for download, analyses
@@ -67,6 +67,13 @@ Then open `http://<server>:8080` and sign in. To build from source instead, see
 - A Xen Orchestra instance reachable over HTTP(S), and an API token for it
 - Disk for collected bundles — roughly **450 MB per host per collection**
 
+> [!IMPORTANT]
+> **If Xen Orchestra sits behind a reverse proxy**, a log collection can come
+> back truncated. This is a known, unsolved bug — intermittent, and not fixed
+> by any config change tried so far. See [Xen Orchestra behind a reverse
+> proxy](docs/installation.md#xen-orchestra-behind-a-reverse-proxy-known-bug-unsolved)
+> for what is known and what to do about it today.
+
 ## What it does
 
 Measured against a real XCP-ng 8.3 pool, so the numbers below are observed
@@ -114,6 +121,14 @@ Built and awaiting release:
   of its own, so this extracts locally rather than downloading again — either
   right after a fresh collection or from any bundle already stored. Several
   categories at once come back as one combined archive.
+
+- **Build a Vates support package** — one archive with the redacted log
+  bundle, findings in Markdown and JSON, the redaction report, the inventory,
+  and a manifest listing what's inside and what was masked, instead of
+  gathering those downloads by hand. Package an already-stored collection, or
+  collect a host and package it in one action. Building one always runs a
+  fresh findings check and inventory refresh alongside it, so it never ships
+  with a gap.
 
 Still to come, on [the roadmap](docs/roadmap.md):
 
