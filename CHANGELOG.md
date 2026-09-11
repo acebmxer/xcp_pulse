@@ -10,6 +10,20 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+### Changed
+
+- **The container image's internals were undocumented.** The Dockerfile pins
+  `python:3.14-slim`, which currently resolves to Debian 13 (trixie), but
+  nothing in the docs said so, so there was no way to check compatibility with
+  that base without pulling the image and running `cat /etc/os-release`
+  yourself. It also runs as a non-root user, strips pip/setuptools/wheel from
+  the final image so it cannot install packages at runtime, stores all state
+  under the `/data` volume, and serves on port 8080 with a `/healthz`
+  healthcheck — none of which was written down anywhere either.
+  `docs/architecture.md` now states all of this under "Shape", and notes that
+  the base image tag floats with upstream so the exact Debian point release
+  isn't pinned by this project.
+
 ## [0.7.1] - 2026-09-11
 
 ### Fixed
