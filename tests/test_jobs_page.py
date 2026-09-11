@@ -504,3 +504,11 @@ def test_stored_progress_lines_are_separated_on_render() -> None:
     assert counts_in("6 value(s) masked in 39 line(s)") == "6 value(s) masked in 39 line(s)"
     assert counts_in("2.3 GiB stored") == "2.3 GiB stored"
     assert counts_in(None) == ""
+
+    # Regression test: a scanned bundle member's own name is progress text
+    # too ("Scanning {member.name}", collect_log_findings), and a dated log
+    # file like "sa20250911" (a real sysstat file name) was getting split into
+    # "sa20,250,911" — a filename is not a count. A digit run glued to a
+    # letter on either side is left alone; a bare 4+ digit count next to
+    # punctuation still separates.
+    assert counts_in("Scanning var/log/sa/sa20250911") == "Scanning var/log/sa/sa20250911"

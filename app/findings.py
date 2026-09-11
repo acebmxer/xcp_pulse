@@ -309,6 +309,21 @@ MESSAGE_PREFIX_RULES: dict[str, tuple[str, str, str]] = {
     ),
 }
 
+# Which condition family a message name belongs to, for cross-source
+# correlation with LOG_FINDING_RULES's own families (see
+# ``_LOG_SOURCE_FAMILIES``). Not every message name has a clean counterpart on
+# the log side (a licence expiring, CBT metadata, a pool master transition) —
+# those are left untagged and fall back to `_finding_family`'s text match.
+_MESSAGE_NAME_FAMILIES: dict[str, str] = {
+    "HA_HOST_FAILED": "ha",
+    "HA_HOST_WAS_FENCED": "ha",
+    "HA_NETWORK_AGENT_LOST": "ha",
+    "HA_STATEFILE_LOST": "ha",
+    "SR_BACKEND_FAILURE": "storage",
+    "SR_DISK_SPACE_LOW": "storage",
+    "MULTIPATH_PERIODIC_ALERT": "multipath",
+}
+
 # Task failures worth reporting, matched against the failure message. A failed
 # login is not a pool fault and floods the list — measured, 13 of 16 failed
 # tasks on one pool were "invalid credentials" from a browser session.
@@ -335,6 +350,14 @@ class Finding:
     at: float | None = None
     count: int = 1
     object_id: str = ""
+
+    # Which condition family this finding belongs to, for cross-source
+    # correlation — set by the rule that raised the finding, in
+    # ``LOG_FINDING_RULES`` and ``_finding_family``'s API-side callers. A rule
+    # that does not name one falls back to ``_finding_family``'s text match,
+    # so an older stored report (with no ``family`` field at all) and an API
+    # source not yet tagged still correlate rather than losing the feature.
+    family: str | None = None
 
     # Set after both reports exist, by ``correlate_reports``. Names the other
     # report's finding this one lines up with, so an operator sees "this is
@@ -579,7 +602,18 @@ CORRELATION_WINDOW_SECONDS = 3600
 
 
 def _finding_family(finding: Finding) -> str | None:
-    """Which condition family a finding belongs to, if any."""
+    """Which condition family a finding belongs to, if any.
+
+    A finding whose rule already named its family (``LOG_FINDING_RULES``, via
+    ``Finding.family``) uses that directly — the rule that raised it knows
+    what it detected, which is more reliable than re-deriving it from title
+    and evidence text after the fact. The regex fallback below exists for API
+    sources that have not been given a family yet (tasks, alarms, backups) and
+    for a report stored before this field existed, so correlation still works
+    for those rather than being switched off.
+    """
+    if finding.family is not None:
+        return finding.family
     text = f"{finding.title} {finding.evidence}"
     for family, pattern in _CORRELATION_FAMILIES:
         if pattern.search(text):
@@ -590,12 +624,22 @@ def _finding_family(finding: Finding) -> str | None:
 def correlate_reports(api_report: Report | None, log_report: Report | None) -> None:
     """Mark findings in each report that are echoed in the other.
 
-    Findings are matched by condition family (see above) and, when both carry
-    a timestamp, by falling within ``CORRELATION_WINDOW_SECONDS`` of each
-    other. A match sets ``confirmed_by`` on *both* findings to the other
-    report's finding title, so either page shows the operator that this is not
-    a one-off — an XAPI exception in the logs next to a failed XO task is a
-    single incident, not two.
+    Findings are matched by condition family (see above) and by falling
+    within ``CORRELATION_WINDOW_SECONDS`` of each other. A match sets
+    ``confirmed_by`` on *both* findings to the other report's finding title,
+    so either page shows the operator that this is not a one-off — an XAPI
+    exception in the logs next to a failed XO task is a single incident, not
+    two.
+
+    A log finding's evidence line rarely carries a timestamp the collector can
+    parse, so it has none of its own (``Finding.at is None``); a scanned log
+    bundle is treated as having happened when it was scanned, via the log
+    report's own ``created_at``, rather than skipping the window check
+    entirely. Skipping it would let a two-week-old log finding confirm today's
+    unrelated API finding just because both are the same condition family —
+    which is what a findings run and the log bundle it was run against being
+    "possibly hours apart" (see ``findings_page``) is meant to catch, not wave
+    through.
 
     Mutates the findings in place via ``dataclasses.replace`` semantics
     (``Finding`` is frozen) and reassigns each report's ``findings`` list. Safe
@@ -614,13 +658,15 @@ def correlate_reports(api_report: Report | None, log_report: Report | None) -> N
         api_family = _finding_family(api_finding)
         if api_family is None:
             continue
+        api_at = api_finding.at if api_finding.at is not None else api_report.created_at or None
         for j, log_finding in enumerate(new_log_findings):
             if j in matched_log_indices or _finding_family(log_finding) != api_family:
                 continue
+            log_at = log_finding.at if log_finding.at is not None else log_report.created_at or None
             if (
-                api_finding.at is not None
-                and log_finding.at is not None
-                and abs(api_finding.at - log_finding.at) > CORRELATION_WINDOW_SECONDS
+                api_at is not None
+                and log_at is not None
+                and abs(api_at - log_at) > CORRELATION_WINDOW_SECONDS
             ):
                 continue
             matched_log_indices.add(j)
@@ -688,6 +734,21 @@ LOG_FINDING_RULES: tuple[tuple[str, str, str, str, re.Pattern[str]], ...] = (
     ),
 )
 
+# Each log rule's own condition family, for cross-source correlation. Keyed by
+# the rule's ``source`` — already a unique, per-condition identifier — rather
+# than adding a sixth column to every row of ``LOG_FINDING_RULES`` above. A
+# source with no entry here has no family, and `_finding_family`'s regex
+# fallback covers it instead — this is deliberately not exhaustive, so a rule
+# added without an entry here still correlates by text match rather than not
+# correlating at all.
+_LOG_SOURCE_FAMILIES: dict[str, str] = {
+    SOURCE_LOGS_MULTIPATH: "multipath",
+    SOURCE_LOGS_HA: "ha",
+    SOURCE_LOGS_STORAGE: "storage",
+    SOURCE_LOGS_XAPI: "xapi",
+    SOURCE_LOGS_CLOCKSKEW: "clockskew",
+}
+
 
 def collect_log_findings(bundle_path, *, enabled=None, progress=None) -> Report:
     """Inspect a collected tar bundle without contacting Xen Orchestra.
@@ -743,6 +804,7 @@ def collect_log_findings(bundle_path, *, enabled=None, progress=None) -> Report:
                                         "action": action,
                                         "source": source,
                                         "count": 1,
+                                        "family": _LOG_SOURCE_FAMILIES.get(source),
                                     }
                                 else:
                                     item["count"] += 1
@@ -865,6 +927,7 @@ def _classify_events(
                 source=source,
                 enabled=enabled,
                 at=item["at"],
+                family=_MESSAGE_NAME_FAMILIES.get(item["name"]),
                 count=item["count"],
                 object_id=item["object_id"],
             )
@@ -1419,6 +1482,7 @@ def _finding(
     at: float | None = None,
     count: int = 1,
     object_id: str = "",
+    family: str | None = None,
 ) -> Finding:
     """Build a Finding, redacting and truncating the evidence.
 
@@ -1440,6 +1504,7 @@ def _finding(
         at=at,
         count=count,
         object_id=object_id,
+        family=family,
     )
 
 

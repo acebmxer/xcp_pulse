@@ -80,10 +80,31 @@ def run(context: JobContext) -> None:
     # so classifying by canonical name once each avoids repeating the prefix
     # scan in `classify` for every rotation.
     category_cache: dict[str, str] = {}
+    # The selected categories' own directory-style prefixes ("blktap/",
+    # "openvswitch/", ...), stripped of their trailing "/". `classify` decides
+    # whether a *file* belongs under one of these; a directory entry's own
+    # canonical name is the directory itself (tarfile strips the trailing
+    # slash), which `classify` was never written to match — it would compare
+    # "blktap" against the prefix "blktap/" and always lose. A directory
+    # belongs in the output when it *is* one of these, so the files under it
+    # keep a parent to live in.
+    selected_dirs = {
+        prefix.rstrip("/")
+        for category in CATEGORIES
+        if category.key in keys
+        for prefix in category.prefixes
+        if prefix.endswith("/")
+    }
 
     def member_filter(member) -> bool:
         if not member.isfile():
-            return False
+            # A directory or symlink has no rotation history and is never
+            # counted as a matched file, but it is still kept when it names a
+            # selected category's own directory — `_redact_tarball` preserves
+            # its metadata verbatim (job_collect.py) — so an extracted archive
+            # keeps the same folder layout as the full bundle instead of a
+            # flat pile of files with no parent directories.
+            return canonical_name(member.name) in selected_dirs
         if not include_rotated and _member_is_rotated(member.name):
             return False
         name = canonical_name(member.name)

@@ -10,6 +10,72 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+### Fixed
+
+- **Correlating API and log findings could confirm two unrelated incidents
+  weeks apart, because a log finding never carries its own timestamp.**
+  `correlate_reports`'s time-window check only ran when both the API and log
+  finding had an `at` value, but `collect_log_findings` never sets one — a log
+  line rarely carries a timestamp the collector can parse — so every log
+  finding had `at=None` and the window check was silently skipped for all of
+  them. A same-family match (e.g. two "storage" findings) was confirmed
+  regardless of how far apart in time they actually happened. It now falls
+  back to the log report's own `created_at` — when the bundle was scanned —
+  for a log finding with no timestamp of its own, so a log bundle collected
+  hours or weeks away from an API findings run is compared on when it was
+  read, not treated as a free match.
+
+- **Extracting selected log categories dropped every directory from the
+  output archive**, even when a directory itself belonged to a selected
+  category (e.g. `blktap/` under "storage"). `job_extract`'s member filter
+  rejected any non-file tar member outright before it was ever classified,
+  contradicting `_redact_tarball`'s own documented contract that a directory
+  entry is offered to the filter so a category match can keep it. Extracted
+  archives now keep the same folder layout as the full bundle for any
+  directory whose canonical name matches one of the selected categories'
+  directory-style prefixes.
+
+- **A job's live progress text mangled filenames containing four or more
+  digits.** The `counts_in` template filter that adds thousands separators to
+  a stored progress line (e.g. "3,477,921 line(s)") also matched digits inside
+  a scanned file's own name — `collect_log_findings` reports progress as
+  "Scanning {member.name}" — so a bundle member like `sa20250911` rendered as
+  "Scanning var/log/sa/sa20,250,911" while a log-findings job was running. The
+  filter now leaves a digit run alone when it is glued to a letter on either
+  side, since that makes it part of a filename rather than a standalone count.
+
+- **Building a support package could queue a second findings run or inventory
+  refresh behind one already in progress**, doubling XO API load and running
+  two findings scans concurrently. `_busy()` on the Support Package page only
+  checked for an active collection or package job, not the findings and
+  inventory jobs `_enqueue_chain` also queues as part of the same chain — so a
+  findings run started from the Findings page, or an inventory refresh from
+  the dashboard, was invisible to it. It now checks all four job kinds before
+  starting a package chain.
+
+- **Cross-source correlation between the API and log findings reports only
+  matched by re-scanning each finding's title and evidence for a fixed set of
+  keywords**, so two findings raised by rules that plainly detect the same
+  condition could fail to correlate if neither one's wording happened to
+  contain one of those keywords. `Finding` now carries an optional `family`
+  set directly by the rule that raised it — every `LOG_FINDING_RULES` entry,
+  and the API message names with a clear log-side counterpart (HA, storage,
+  multipath) — and `correlate_reports` uses that tag when present, falling
+  back to the keyword scan only for findings with no tag (a report stored
+  before this field existed, or an API source with no log-side counterpart,
+  like a licence expiring).
+
+### Changed
+
+- **The "last successful inventory" lookup used by the Collect, Support
+  Package and API-findings pages is now one function**
+  (`job_inventory.known_inventory`) instead of three identical private copies
+  in `routes/collect.py`, `job_findings.py` and `routes/support_package.py`.
+  One of those copies' own docstring already said it was "deliberately the
+  same reader" as another — this makes that literally true, so a future change
+  to how a missing or failed inventory job is handled can no longer be applied
+  to two of the three call sites and missed on the third.
+
 ## [0.7.0] - 2026-09-11
 
 ### Added

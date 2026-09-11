@@ -20,11 +20,10 @@ from app.dependencies import login_required, redirect, serve_artifact, templates
 from app.job_collect import KIND as COLLECT_KIND
 from app.job_findings import KIND as FINDINGS_KIND
 from app.job_inventory import KIND as INVENTORY_KIND
-from app.job_inventory import inventory_from_job
+from app.job_inventory import known_inventory
 from app.job_support_package import KIND as SUPPORT_PACKAGE_KIND
 from app.job_support_package import package_from_job
-from app.jobs import SUCCEEDED, enqueue, get_job, has_active, latest_successful, list_jobs
-from app.xo_client import Inventory
+from app.jobs import SUCCEEDED, enqueue, get_job, has_active, list_jobs
 from app.xo_connection import get_connection
 
 router = APIRouter()
@@ -44,7 +43,7 @@ def support_package_page(
     data_dir = request.app.state.settings.data_dir
 
     connection = get_connection(db)
-    inventory = _known_inventory(db, data_dir)
+    inventory = known_inventory(db, data_dir)
     # Active collections are shown too, not just succeeded ones — otherwise a
     # host just started via Collect + Package has no card at all to show the
     # collection's own progress on, and the page looks like nothing happened
@@ -149,7 +148,7 @@ def collect_and_package(
     if _busy(db):
         return redirect("/support-package?notice=A+collection+or+package+is+already+running.")
 
-    inventory = _known_inventory(db, data_dir)
+    inventory = known_inventory(db, data_dir)
     host = next((item for item in inventory.hosts if item.id == host_id), None)
     if host is None:
         return redirect(
@@ -208,8 +207,20 @@ def _busy(db) -> bool:
     Mirrors the Collect page's own check: a package always starts with (or
     reuses) a collection, and the worker runs one job at a time regardless, so
     queuing a second chain here would only sit behind the first, looking stuck.
+
+    Also checks the two kinds ``_enqueue_chain`` queues as part of the same
+    chain, not only the collection and the package job itself: a findings run
+    started from the Findings page, or an inventory refresh started from the
+    dashboard, is still a job this chain would queue a duplicate of — the
+    single worker thread runs one job at a time regardless of which page
+    started it.
     """
-    return has_active(db, COLLECT_KIND) or has_active(db, SUPPORT_PACKAGE_KIND)
+    return (
+        has_active(db, COLLECT_KIND)
+        or has_active(db, SUPPORT_PACKAGE_KIND)
+        or has_active(db, FINDINGS_KIND)
+        or has_active(db, INVENTORY_KIND)
+    )
 
 
 def _enqueue_chain(request: Request, *, source_job_id: str) -> None:
@@ -238,13 +249,6 @@ def _enqueue_chain(request: Request, *, source_job_id: str) -> None:
         },
     )
     wake_worker(request)
-
-
-def _known_inventory(db, data_dir) -> Inventory:
-    job = latest_successful(db, INVENTORY_KIND)
-    if job is None:
-        return Inventory()
-    return inventory_from_job(db, data_dir, job.id) or Inventory()
 
 
 def _packages_by_source(packages) -> dict[str, list]:

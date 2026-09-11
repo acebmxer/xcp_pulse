@@ -20,8 +20,10 @@ from fastapi.testclient import TestClient
 
 from app.findings import Report
 from app.job_collect import KIND as COLLECT_KIND
+from app.job_findings import KIND as FINDINGS_KIND
+from app.job_inventory import KIND as INVENTORY_KIND
 from app.job_support_package import KIND as SUPPORT_PACKAGE_KIND
-from app.jobs import list_jobs
+from app.jobs import enqueue, list_jobs, mark_succeeded
 from app.xo_client import Host, Inventory, Pool
 from app.xo_connection import save_connection
 from tests.helpers import run_pending_jobs
@@ -204,6 +206,38 @@ def test_a_package_stays_listed_after_its_source_collection_is_deleted(
     body = with_inventory.get("/support-package").text
     assert "support-package.tgz" in body
     assert "Download" in body
+
+
+def test_packaging_is_refused_while_a_findings_or_inventory_job_is_active(
+    with_inventory: TestClient,
+) -> None:
+    """A findings run or inventory refresh started elsewhere still blocks a
+    package chain, because ``_enqueue_chain`` queues one of each itself.
+
+    Regression test: ``_busy`` used to check only ``COLLECT_KIND`` and
+    ``SUPPORT_PACKAGE_KIND``, so a findings run started from the Findings page
+    (or an inventory refresh from the dashboard) was invisible to it — a
+    package build queued on top would enqueue a second, concurrent findings or
+    inventory job rather than being refused like a second collection is.
+    """
+    app = with_inventory.app  # type: ignore[attr-defined]
+
+    with patch("app.job_collect.build_client", return_value=_FakeClient()):
+        with_inventory.post("/collect", data={"host_id": HOST.id})
+        run_pending_jobs(app)
+    collect_job = list_jobs(app.state.db, kind=COLLECT_KIND, limit=1)[0]
+
+    enqueue(app.state.db, FINDINGS_KIND, {})
+    response = with_inventory.post(f"/support-package/{collect_job.id}/package")
+    assert "already+running" in response.headers["location"]
+    assert list_jobs(app.state.db, kind=SUPPORT_PACKAGE_KIND) == []
+
+    # Same refusal for a bare inventory refresh, once the findings job is gone.
+    mark_succeeded(app.state.db, list_jobs(app.state.db, kind=FINDINGS_KIND, limit=1)[0].id)
+    enqueue(app.state.db, INVENTORY_KIND, {})
+    response = with_inventory.post(f"/support-package/{collect_job.id}/package")
+    assert "already+running" in response.headers["location"]
+    assert list_jobs(app.state.db, kind=SUPPORT_PACKAGE_KIND) == []
 
 
 def test_packaging_an_unknown_collection_is_refused(with_inventory: TestClient) -> None:

@@ -125,6 +125,20 @@ def test_a_storage_message_becomes_a_critical_finding() -> None:
     assert finding.source == "messages"
     assert "nfs mount failed" in finding.evidence
     assert finding.action
+    # Tagged with its condition family at the point the rule fires, rather
+    # than left for correlate_reports to re-derive from title/evidence text.
+    assert finding.family == "storage"
+
+
+def test_a_licence_message_has_no_family_and_falls_back_to_text_matching() -> None:
+    """Not every message name maps to a log-side condition family — a licence
+    expiring has no log-side echo — so it is left untagged rather than forced
+    into one, and correlation for it (if any) still goes through the text
+    match `_finding_family` falls back to."""
+    report = _run(messages=[_message("LICENSE_EXPIRED")])
+
+    assert len(report.findings) == 1
+    assert report.findings[0].family is None
 
 
 def test_routine_vm_lifecycle_messages_produce_no_findings() -> None:
@@ -594,6 +608,10 @@ def test_log_findings_redact_evidence(tmp_path) -> None:
     report = collect_log_findings(bundle)
 
     assert "10.20.30.41" not in report.findings[0].evidence
+    # Tagged with its condition family at the point the rule fires — see
+    # test_correlate_reports_confirms_findings_by_family_tag_alone for why
+    # this matters beyond just this field having a value.
+    assert report.findings[0].family == "storage"
 
 
 def test_generic_xapi_error_is_not_reported_as_storage_failure(tmp_path) -> None:
@@ -933,6 +951,132 @@ def test_correlate_reports_does_not_confirm_across_families_or_outside_the_windo
 
     assert far_api.findings[0].confirmed_by == ""
     assert far_log.findings[0].confirmed_by == ""
+
+
+def test_correlate_reports_uses_the_log_reports_created_at_when_a_finding_has_none() -> None:
+    """A real log finding has no timestamp of its own — ``collect_log_findings``
+    never sets ``Finding.at`` — so the window check must not be skipped just
+    because it is missing. It falls back to when the bundle was scanned.
+
+    Regression test: earlier, ``api_finding.at is not None and log_finding.at
+    is not None`` skipped the window entirely whenever either side lacked a
+    timestamp, so *any* two same-family findings matched regardless of how far
+    apart in time they actually happened — which is every real log finding,
+    since none of them ever carries one.
+    """
+    api_report = Report(
+        findings=[
+            Finding(
+                severity=CRITICAL,
+                title="A storage repository backend failed",
+                evidence="SR_BACKEND_FAILURE",
+                action="Check the SR.",
+                source="messages",
+                at=NOW,
+            ),
+        ],
+        created_at=NOW,
+    )
+
+    # Within the window of the API finding: still confirms.
+    recent_log_report = Report(
+        findings=[
+            Finding(
+                severity=CRITICAL,
+                title="The logs contain a storage failure",
+                evidence="Storage SR reports I/O error",
+                action="Check the storage repository.",
+                source="logs_storage",
+                at=None,
+            ),
+        ],
+        created_at=NOW + 60,
+    )
+    correlate_reports(api_report, recent_log_report)
+    assert api_report.findings[0].confirmed_by == "logs: The logs contain a storage failure"
+    assert recent_log_report.findings[0].confirmed_by == (
+        "API: A storage repository backend failed"
+    )
+
+    # A log bundle scanned weeks after the API finding: must not confirm just
+    # because the log finding itself has no timestamp.
+    stale_api = Report(
+        findings=[
+            Finding(
+                severity=CRITICAL,
+                title="A storage repository backend failed",
+                evidence="SR_BACKEND_FAILURE",
+                action="Check the SR.",
+                source="messages",
+                at=NOW,
+            ),
+        ],
+        created_at=NOW,
+    )
+    stale_log_report = Report(
+        findings=[
+            Finding(
+                severity=CRITICAL,
+                title="The logs contain a storage failure",
+                evidence="Storage SR reports I/O error",
+                action="Check the storage repository.",
+                source="logs_storage",
+                at=None,
+            ),
+        ],
+        created_at=NOW + 1_000_000,
+    )
+    correlate_reports(stale_api, stale_log_report)
+    assert stale_api.findings[0].confirmed_by == ""
+    assert stale_log_report.findings[0].confirmed_by == ""
+
+
+def test_correlate_reports_confirms_findings_by_family_tag_alone() -> None:
+    """Two findings whose titles and evidence share no keyword at all still
+    correlate, because they were tagged with the same family by the rule that
+    raised them — not by re-deriving the family from their text.
+
+    Regression test: before ``Finding.family`` existed, ``_finding_family``
+    only ever matched by scanning title+evidence for hand-picked keywords
+    (``_CORRELATION_FAMILIES``). A rule whose wording happened not to contain
+    one of those keywords could never correlate, regardless of how obviously
+    related the two findings actually were to the rules that raised them. This
+    reproduces that case: neither finding's title or evidence contains any
+    word any `_CORRELATION_FAMILIES` pattern looks for.
+    """
+    api_report = Report(
+        findings=[
+            Finding(
+                severity=CRITICAL,
+                title="Completely unrelated wording, no keywords here",
+                evidence="Nothing here matches any regex either",
+                action="Do something.",
+                source="messages",
+                at=NOW,
+                family="storage",
+            ),
+        ],
+    )
+    log_report = Report(
+        findings=[
+            Finding(
+                severity=CRITICAL,
+                title="Also nothing a keyword scan would catch",
+                evidence="Still nothing here to match on",
+                action="Do something else.",
+                source="logs_storage",
+                at=NOW + 60,
+                family="storage",
+            ),
+        ],
+    )
+
+    correlate_reports(api_report, log_report)
+
+    assert api_report.findings[0].confirmed_by == "logs: Also nothing a keyword scan would catch"
+    assert log_report.findings[0].confirmed_by == (
+        "API: Completely unrelated wording, no keywords here"
+    )
 
 
 def test_correlate_reports_handles_a_missing_report() -> None:
