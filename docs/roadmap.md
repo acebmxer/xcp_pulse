@@ -88,6 +88,10 @@ download logs again.*
   bundle ended early rather than masquerading as a clean report; one that
   cannot be read at all still fails the job.
 
+Remaining before this is done: out-of-memory events and clock skew as
+additional local sources, and correlation between log events and XAPI
+messages on one timeline.
+
 The log and API reports are currently separate. They can describe the same
 incident from different evidence, but no correlation layer yet merges them or
 labels one as confirmed by the other.
@@ -278,6 +282,23 @@ this plainly, rather than surfacing a bare `403`.
 Nothing below blocks anything else. Order is a choice about what is most
 useful.
 
+### Collect individual categories
+
+*Prerequisite met: full-bundle collection shipped in v0.6.0.*
+
+Download only the log families you want, without collecting again.
+
+- Categories: XAPI, storage, audit, security, kernel, system, HA, xenstore,
+  RRD plugins, network
+- "Current logs only" or "include rotated history"
+- Extracted from the cached bundle, so it takes seconds rather than 100
+- Current-logs-only bundles come to roughly **35 MB instead of 433 MB**
+
+> [!NOTE]
+> This cannot come first. `logs.tgz` supports no range requests and no
+> server-side filtering, so a request for one category cannot be made smaller —
+> it has to extract from a bundle already on disk.
+
 ### Finalise the dashboard and the UI
 
 The dashboard shows status panels for findings, redaction, storage and recent
@@ -295,30 +316,15 @@ it reports on have stopped moving.
 This is deliberately last among the free-to-pick-up items. Tuning an interface
 around features that are still being added means doing it twice.
 
-### Findings from the logs
+### Vates support package
 
-*Prerequisite met: full-bundle collection shipped in v0.6.0.*
+*Prerequisite met: API findings, log findings, redaction and collection are all
+built.*
 
-- Storage repository failures, multipath flapping, XAPI exceptions,
-  out-of-memory events, HA fencing, clock skew — with counts and first/last seen
-- Correlation between log events and XAPI messages on one timeline
+One file to attach to a support ticket.
 
-### Collect individual categories
-
-*Prerequisite met: full-bundle collection shipped in v0.6.0.*
-
-Download only the log families you want, without collecting again.
-
-- Categories: XAPI, storage, audit, security, kernel, system, HA, xenstore,
-  RRD plugins, network
-- "Current logs only" or "include rotated history"
-- Extracted from the cached bundle, so it takes seconds rather than 100
-- Current-logs-only bundles come to roughly **35 MB instead of 433 MB**
-
-> [!NOTE]
-> This cannot come first. `logs.tgz` supports no range requests and no
-> server-side filtering, so a request for one category cannot be made smaller —
-> it has to extract from a bundle already on disk.
+- Redacted bundle, findings in Markdown and JSON, redaction report, inventory
+- A manifest saying what is included and what was masked
 
 ### Redact on demand, not only at collection
 
@@ -443,22 +449,6 @@ large saving on what you keep and send.
 >
 > There is nothing to filter until a bundle exists, which is why this follows
 > collection rather than standing on its own.
-
----
-
-## Planned — has prerequisites
-
-One item is still waiting on something that does not exist yet.
-
-### Vates support package
-
-*Waiting on: findings from the logs. API findings, redaction and collection are
-built.*
-
-One file to attach to a support ticket.
-
-- Redacted bundle, findings in Markdown and JSON, redaction report, inventory
-- A manifest saying what is included and what was masked
 
 ---
 
