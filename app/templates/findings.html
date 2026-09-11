@@ -64,7 +64,7 @@
       <label for="log-artifact">Bundle</label>
       <select id="log-artifact" name="artifact_id"{% if log_running %} disabled{% endif %}>
         {% for artifact in log_artifacts %}
-        <option value="{{ artifact.id }}">{{ artifact.name }} — {{ artifact.size_human }}</option>
+        <option value="{{ artifact.id }}">{{ artifact.name }} — {{ artifact.size_human }} — {{ artifact.created_at | age }}</option>
         {% endfor %}
       </select>
       <button type="submit" class="btn btn-primary"{% if log_running %} disabled{% endif %}>

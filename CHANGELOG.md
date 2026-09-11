@@ -12,6 +12,15 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ### Fixed
 
+- **The log bundle picker on the Findings page could not tell two collections
+  of the same host apart.** Repeated collections of one host all produce a
+  file named identically (e.g. `xcp-ng-host1-logs.tgz`), and the dropdown's
+  option label was just that name and its size — with sizes often
+  coincidentally equal too, there was nothing on screen to say which bundle a
+  given entry actually was, or when it had been collected. Each option now
+  also shows how long ago that collection ran, using the same `age` filter
+  already used elsewhere on this page.
+
 - **Correlating API and log findings could confirm two unrelated incidents
   weeks apart, because a log finding never carries its own timestamp.**
   `correlate_reports`'s time-window check only ran when both the API and log
