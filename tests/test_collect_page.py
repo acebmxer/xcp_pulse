@@ -86,9 +86,15 @@ class _FakeClient:
 
 
 def _collect(client: TestClient) -> str:
-    """Start and run a collection, returning its job id."""
+    """Start and run a collection, returning its job id.
+
+    Sends ``redact=1`` explicitly, the same value the page's own checkbox
+    submits by default (pre-ticked) — this helper is used by tests about
+    other parts of a collection, which still expect the redacted copy the
+    real form produces unless an operator unticks the box.
+    """
     app = client.app  # type: ignore[attr-defined]
-    client.post("/collect", data={"host_id": HOST.id})
+    client.post("/collect", data={"host_id": HOST.id, "redact": "1"})
     with patch("app.job_collect.build_client", return_value=_FakeClient()):
         run_pending_jobs(app)
     return list_jobs(app.state.db, kind=COLLECT_KIND, limit=1)[0].id
@@ -115,6 +121,8 @@ def test_the_page_offers_every_known_host(with_inventory: TestClient) -> None:
 
 
 def test_starting_a_collection_queues_a_job_for_that_host(with_inventory: TestClient) -> None:
+    """A bare post, with no checkboxes ticked at all — the same shape a
+    browser sends when every box on the form is unticked."""
     app = with_inventory.app  # type: ignore[attr-defined]
 
     response = with_inventory.post("/collect", data={"host_id": HOST.id})
@@ -125,6 +133,7 @@ def test_starting_a_collection_queues_a_job_for_that_host(with_inventory: TestCl
         "host_id": HOST.id,
         "host_name": HOST.name,
         "include_audit": False,
+        "redact": False,
     }
 
 
@@ -150,6 +159,24 @@ def test_the_page_offers_the_audit_trail_as_an_unticked_choice(
     body = with_inventory.get("/collect").text
     assert 'name="include_audit"' in body
     assert "checked" not in body.split('name="include_audit"')[1].split(">")[0]
+
+
+def test_the_page_offers_redaction_as_a_ticked_choice(with_inventory: TestClient) -> None:
+    """The opposite default from the audit checkbox: this one ships on, since
+    an unmasked bundle sitting on disk is the surprise to guard against."""
+    body = with_inventory.get("/collect").text
+    assert 'name="redact"' in body
+    assert "checked" in body.split('name="redact"')[1].split(">")[0]
+
+
+def test_unticking_redact_stores_only_the_raw_bundle(with_inventory: TestClient) -> None:
+    """A browser omits an unticked checkbox entirely, same as the audit one."""
+    app = with_inventory.app  # type: ignore[attr-defined]
+
+    with_inventory.post("/collect", data={"host_id": HOST.id})
+
+    job = list_jobs(app.state.db, kind=COLLECT_KIND, limit=1)[0]
+    assert job.params["redact"] is False
 
 
 def test_a_host_that_is_not_in_the_inventory_is_refused(with_inventory: TestClient) -> None:
@@ -189,6 +216,56 @@ def test_the_page_marks_which_copy_is_redacted_and_which_is_raw(
     body = with_inventory.get("/collect").text
     assert "redacted — safe to send" in body
     assert "raw — unmasked" in body
+
+
+def test_a_raw_only_collection_offers_a_redact_now_button(
+    with_inventory: TestClient,
+) -> None:
+    """The card for a collection stored with redaction switched off names the
+    raw bundle as unmasked and offers to redact it, in place of the report."""
+    app = with_inventory.app  # type: ignore[attr-defined]
+    with_inventory.post("/collect", data={"host_id": HOST.id})
+    with patch("app.job_collect.build_client", return_value=_FakeClient()):
+        run_pending_jobs(app)
+
+    body = with_inventory.get("/collect").text
+    assert "Not redacted yet" in body
+    assert "Redact now" in body
+    assert "redacted — safe to send" not in body
+
+
+def test_redact_now_updates_the_card_once_it_finishes(
+    with_inventory: TestClient,
+) -> None:
+    """Pressing "Redact now" on a raw-only collection's card must change what
+    that same card shows, not leave it reading "not redacted" forever.
+
+    Reported from a real run: "Redact now" posts to the Jobs page's own
+    ``/jobs/redact`` route, which redacts via a *separate*
+    ``redact_artifact`` job — so the redacted copy and report are stored
+    under that job's id, never the collection's. The Collect page's report
+    and file-list lookups only ever read the collection's own id, so the
+    warning and "Redact now" button kept showing after a real redaction had
+    already succeeded.
+    """
+    app = with_inventory.app  # type: ignore[attr-defined]
+    with_inventory.post("/collect", data={"host_id": HOST.id})
+    with patch("app.job_collect.build_client", return_value=_FakeClient()):
+        run_pending_jobs(app)
+
+    collect_job = list_jobs(app.state.db, kind=COLLECT_KIND, limit=1)[0]
+    raw_bundle = next(
+        item for item in list_for_job(app.state.db, collect_job.id) if item.name.endswith(".tgz")
+    )
+
+    response = with_inventory.post("/jobs/redact", data={"artifact_id": raw_bundle.id})
+    assert response.status_code == 303
+    run_pending_jobs(app)
+
+    body = with_inventory.get("/collect").text
+    assert "Not redacted yet" not in body
+    assert "redacted — safe to send" in body
+    assert "IPv4" in body
 
 
 def test_the_page_shows_the_redaction_report_for_a_collection(
@@ -447,6 +524,43 @@ def test_no_categories_ticked_queues_no_extraction(with_inventory: TestClient) -
 
     with_inventory.post("/collect", data={"host_id": HOST.id})
     assert list_jobs(app.state.db, kind=EXTRACT_KIND) == []
+
+
+def test_a_date_range_with_no_categories_ticked_extracts_every_category(
+    with_inventory: TestClient,
+) -> None:
+    """A date range alone queues the same extraction every category would —
+    an operator narrowing by date should not also have to tick every box."""
+    from app.log_categories import category_keys
+
+    app = with_inventory.app  # type: ignore[attr-defined]
+
+    with_inventory.post("/collect", data={"host_id": HOST.id, "date_preset": "7d"})
+    with patch("app.job_collect.build_client", return_value=_FakeClient()):
+        run_pending_jobs(app)
+
+    extract_job = list_jobs(app.state.db, kind=EXTRACT_KIND, limit=1)[0]
+    assert set(extract_job.params["categories"]) == set(category_keys())
+    assert extract_job.params["date_preset"] == "7d"
+    # Rotated files must not be excluded outright before the date filter
+    # gets a chance to run — otherwise the whole point of the range (keeping
+    # rotated history inside the window) never happens.
+    assert extract_job.params["include_rotated"] is True
+
+
+def test_date_range_and_ticked_categories_both_apply(with_inventory: TestClient) -> None:
+    app = with_inventory.app  # type: ignore[attr-defined]
+
+    with_inventory.post(
+        "/collect",
+        data={"host_id": HOST.id, "categories": ["xapi"], "date_preset": "7d"},
+    )
+    with patch("app.job_collect.build_client", return_value=_FakeClient()):
+        run_pending_jobs(app)
+
+    extract_job = list_jobs(app.state.db, kind=EXTRACT_KIND, limit=1)[0]
+    assert extract_job.params["categories"] == ["xapi"]
+    assert extract_job.params["date_preset"] == "7d"
 
 
 def test_extracting_from_an_existing_collection(with_inventory: TestClient) -> None:

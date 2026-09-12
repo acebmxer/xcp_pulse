@@ -34,7 +34,8 @@ from app.findings import (
 )
 from app.job_inventory import known_inventory
 from app.job_runner import register
-from app.jobs import JobContext
+from app.jobs import JobContext, get_job
+from app.log_dates import range_from_form
 from app.redact import enabled_rules
 from app.xo_connection import build_client
 
@@ -55,7 +56,23 @@ def run(context: JobContext) -> None:
     operator has already seen. A run with no stored inventory still works —
     every other source is pool-independent — and records the patch source as
     unread with that as the reason.
+
+    An optional date range narrows which events are reported, the same
+    ``date_preset``/``date_start``/``date_end`` params ``job_extract`` takes —
+    re-derived here at run time rather than resolved when the job was queued,
+    for the same reason: a relative preset like "last 24 hours" would
+    otherwise drift stale between queueing and running. Absent params (a run
+    started the plain way, or queued before this existed) fall back to
+    ``collect_findings``'s own ``window_days`` default.
     """
+    job = get_job(context.conn, context.job_id)
+    params = job.params if job else {}
+    date_range = range_from_form(
+        preset=params.get("date_preset"),
+        start_date=params.get("date_start"),
+        end_date=params.get("date_end"),
+    )
+
     context.progress(5, "Connecting to Xen Orchestra")
     client = build_client(context.conn, context.settings.secret_key)
 
@@ -68,6 +85,7 @@ def run(context: JobContext) -> None:
         client,
         inventory.pools,
         enabled=enabled,
+        date_range=date_range,
         progress=context.progress,
     )
 
@@ -100,6 +118,8 @@ def to_payload(report: Report) -> dict[str, Any]:
     return {
         "created_at": report.created_at or time.time(),
         "window_days": report.window_days,
+        "date_start": report.date_start,
+        "date_end": report.date_end,
         "counts": report.counts,
         "findings": [asdict(finding) for finding in report.findings],
         "sources": [asdict(source) for source in report.sources],
@@ -129,6 +149,8 @@ def report_from_job(conn, data_dir, job_id: str) -> Report | None:
     if not isinstance(payload, dict):
         return None
 
+    date_start = payload.get("date_start")
+    date_end = payload.get("date_end")
     return Report(
         findings=sort_findings(
             [_build(Finding, record) for record in _records(payload.get("findings"))]
@@ -139,6 +161,8 @@ def report_from_job(conn, data_dir, job_id: str) -> Report | None:
         rules_disabled=[
             str(title) for title in payload.get("rules_disabled") or [] if isinstance(title, str)
         ],
+        date_start=float(date_start) if isinstance(date_start, (int, float)) else None,
+        date_end=float(date_end) if isinstance(date_end, (int, float)) else None,
     )
 
 
@@ -155,7 +179,7 @@ def to_markdown(report: Report) -> str:
     lines = [
         "# XCP Pulse: findings from the Xen Orchestra API",
         "",
-        f"Generated {created}, covering the last {report.window_days} days.",
+        f"Generated {created}, covering {report.coverage_text}.",
         "",
         f"**{counts['critical']} critical, {counts['warning']} warning, "
         f"{counts['info']} informational.**",

@@ -99,6 +99,9 @@ def start_log_findings(
     request: Request,
     artifact_id: str = Form(...),
     username: str = Depends(login_required),
+    date_preset: str = Form(default=""),
+    date_start: str = Form(default=""),
+    date_end: str = Form(default=""),
 ) -> Response:
     """Queue findings from one stored collected log bundle."""
     db = request.app.state.db
@@ -107,14 +110,29 @@ def start_log_findings(
         return redirect("/findings?error=That+log+bundle+is+no+longer+stored.")
     if has_active(db, LOG_FINDINGS_KIND):
         return redirect("/findings?notice=A+log+findings+run+is+already+going.")
-    job = enqueue(db, LOG_FINDINGS_KIND, {"artifact_id": artifact_id})
+    job = enqueue(
+        db,
+        LOG_FINDINGS_KIND,
+        {
+            "artifact_id": artifact_id,
+            "date_preset": date_preset,
+            "date_start": date_start,
+            "date_end": date_end,
+        },
+    )
     wake_worker(request)
     log.info("queued %s job %s for %s", LOG_FINDINGS_KIND, job.id, username)
     return redirect("/findings?notice=Reading+findings+from+the+stored+logs.")
 
 
 @router.post("/findings")
-def start_findings(request: Request, username: str = Depends(login_required)) -> Response:
+def start_findings(
+    request: Request,
+    username: str = Depends(login_required),
+    date_preset: str = Form(default=""),
+    date_start: str = Form(default=""),
+    date_end: str = Form(default=""),
+) -> Response:
     """Queue a findings run.
 
     Refused while one is already going, for the same reason a second collection
@@ -130,7 +148,11 @@ def start_findings(request: Request, username: str = Depends(login_required)) ->
     if has_active(db, FINDINGS_KIND):
         return redirect("/findings?notice=A+findings+run+is+already+going.")
 
-    job = enqueue(db, FINDINGS_KIND, {})
+    job = enqueue(
+        db,
+        FINDINGS_KIND,
+        {"date_preset": date_preset, "date_start": date_start, "date_end": date_end},
+    )
     wake_worker(request)
     log.info("queued %s job %s by %s", FINDINGS_KIND, job.id, username)
     return redirect("/findings?notice=Reading+findings+from+Xen+Orchestra.")

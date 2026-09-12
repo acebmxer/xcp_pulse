@@ -110,9 +110,21 @@ def counts_in(text: str | None) -> str:
     )
 
 
+def date_coverage(report, fallback: str = "") -> str:
+    """How to phrase the window a findings report covers, for the page header.
+
+    Delegates to ``Report.coverage_text`` so the page and the downloaded
+    Markdown copy (``job_findings.to_markdown``) can never disagree about
+    what a run covered. ``fallback`` covers a page rendered with no report at
+    all yet.
+    """
+    return report.coverage_text if report is not None else fallback
+
+
 templates.env.filters["age"] = age
 templates.env.filters["count"] = count
 templates.env.filters["counts_in"] = counts_in
+templates.env.filters["date_coverage"] = date_coverage
 
 
 class RedirectToLogin(Exception):

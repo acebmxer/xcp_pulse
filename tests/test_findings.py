@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import tarfile
 import time
+from datetime import UTC, datetime
 
 import pytest
 
@@ -34,6 +35,10 @@ from app.xo_client import Pool, XoError
 
 NOW = 1788700000.0
 POOL = Pool(id="pool-1", name="Pool1")
+
+
+def _dt(*args) -> datetime:
+    return datetime(*args, tzinfo=UTC)
 
 
 def _message(name: str, *, body: str = "", ago_days: float = 1.0, obj: str = "obj-1") -> dict:
@@ -598,6 +603,79 @@ def test_log_findings_reads_a_bundle_and_groups_repeated_lines(tmp_path) -> None
     assert sorted(finding.count for finding in report.findings) == [1, 1, 1, 2]
 
 
+def test_log_findings_date_range_excludes_lines_outside_the_window(tmp_path) -> None:
+    from app.log_dates import DateRange
+
+    log = tmp_path / "xensource.log"
+    log.write_text(
+        "\n".join(
+            [
+                "2026-01-15T00:00:00 multipathd reports failed path",
+                "2026-03-01T00:00:00 HA fencing after heartbeat lost",
+            ]
+        )
+    )
+    bundle = tmp_path / "logs.tar.gz"
+    with tarfile.open(bundle, "w:gz") as archive:
+        archive.add(log, arcname="var/log/xensource.log")
+
+    date_range = DateRange(
+        start=_dt(2026, 1, 1).timestamp(), end=_dt(2026, 1, 31, 23, 59, 59).timestamp()
+    )
+    report = collect_log_findings(bundle, date_range=date_range)
+
+    titles = [finding.title for finding in report.findings]
+    assert any("Multipath" in title for title in titles)
+    assert not any("High availability" in title for title in titles)
+
+
+def test_log_findings_date_range_keeps_unparsable_lines(tmp_path) -> None:
+    """A line with no recognisable timestamp is never excluded by a date
+    range — see log_dates.line_in_range's best-effort rule."""
+    from app.log_dates import DateRange
+
+    log = tmp_path / "xensource.log"
+    log.write_text("multipathd reports failed path with no timestamp at all")
+    bundle = tmp_path / "logs.tar.gz"
+    with tarfile.open(bundle, "w:gz") as archive:
+        archive.add(log, arcname="var/log/xensource.log")
+
+    date_range = DateRange(
+        start=_dt(2026, 1, 1).timestamp(), end=_dt(2026, 1, 31, 23, 59, 59).timestamp()
+    )
+    report = collect_log_findings(bundle, date_range=date_range)
+
+    assert len(report.findings) == 1
+
+
+def test_log_findings_no_date_range_means_no_filtering(tmp_path) -> None:
+    log = tmp_path / "xensource.log"
+    log.write_text("2026-03-01T00:00:00 multipathd reports failed path")
+    bundle = tmp_path / "logs.tar.gz"
+    with tarfile.open(bundle, "w:gz") as archive:
+        archive.add(log, arcname="var/log/xensource.log")
+
+    report = collect_log_findings(bundle)
+
+    assert len(report.findings) == 1
+
+
+def test_log_findings_date_range_recorded_on_the_report(tmp_path) -> None:
+    from app.log_dates import DateRange
+
+    log = tmp_path / "xensource.log"
+    log.write_text("nothing interesting")
+    bundle = tmp_path / "logs.tar.gz"
+    with tarfile.open(bundle, "w:gz") as archive:
+        archive.add(log, arcname="var/log/xensource.log")
+
+    start, end = _dt(2026, 1, 1).timestamp(), _dt(2026, 1, 31).timestamp()
+    report = collect_log_findings(bundle, date_range=DateRange(start=start, end=end))
+
+    assert report.date_start == pytest.approx(start)
+    assert report.date_end == pytest.approx(end)
+
+
 def test_log_findings_redact_evidence(tmp_path) -> None:
     log = tmp_path / "xensource.log"
     log.write_text("Storage SR reports I/O error from 10.20.30.41")
@@ -727,6 +805,79 @@ def test_a_finding_with_an_unknown_severity_sorts_last_rather_than_raising() -> 
     """Reading back a report written by a later version must not raise."""
     odd = Finding(severity="apocalyptic", title="?", evidence="", action="", source="messages")
     assert odd.severity_rank == 3
+
+
+def test_date_range_start_bounds_what_is_asked_of_xen_orchestra() -> None:
+    """An explicit range's start is used the same way ``window_days`` is —
+    passed to Xen Orchestra as the lower bound of what it returns."""
+    from app.log_dates import DateRange
+
+    seen: list[float] = []
+
+    class Recording(FakeXo):
+        def messages(self, since: float) -> list[dict]:
+            seen.append(since)
+            return []
+
+    start = NOW - 10 * 86400
+    collect_findings(Recording(), [POOL], now=NOW, date_range=DateRange(start=start, end=None))
+
+    assert seen == [pytest.approx(start)]
+
+
+def test_date_range_end_excludes_events_after_it() -> None:
+    """Xen Orchestra has no upper-bound filter of its own, so an event after
+    the range's end is dropped here, against what the server already
+    returned."""
+    from app.log_dates import DateRange
+
+    report = collect_findings(
+        FakeXo(
+            messages=[
+                _message("SR_BACKEND_FAILURE", body="inside", ago_days=5, obj="sr-a"),
+                _message("SR_BACKEND_FAILURE", body="too recent", ago_days=1, obj="sr-b"),
+            ]
+        ),
+        [POOL],
+        now=NOW,
+        date_range=DateRange(start=NOW - 20 * 86400, end=NOW - 3 * 86400),
+    )
+
+    assert len(report.findings) == 1
+    assert "sr-a" in report.findings[0].evidence or report.findings[0].object_id == "sr-a"
+
+
+def test_date_range_overrides_window_days_entirely() -> None:
+    """A caller giving both gets the range, not the window — the range is the
+    more specific request."""
+    from app.log_dates import DateRange
+
+    report = collect_findings(
+        FakeXo(messages=[_message("SR_BACKEND_FAILURE", body="old", ago_days=200, obj="sr-a")]),
+        [POOL],
+        now=NOW,
+        window_days=1,
+        date_range=DateRange(start=NOW - 365 * 86400, end=None),
+    )
+
+    assert len(report.findings) == 1
+
+
+def test_date_range_is_recorded_on_the_report() -> None:
+    from app.log_dates import DateRange
+
+    start, end = NOW - 30 * 86400, NOW
+    report = collect_findings(FakeXo(), [POOL], now=NOW, date_range=DateRange(start=start, end=end))
+
+    assert report.date_start == pytest.approx(start)
+    assert report.date_end == pytest.approx(end)
+
+
+def test_no_date_range_leaves_report_fields_none() -> None:
+    report = collect_findings(FakeXo(), [POOL], now=NOW, window_days=30)
+
+    assert report.date_start is None
+    assert report.date_end is None
 
 
 def test_the_window_bounds_what_is_asked_of_xen_orchestra() -> None:

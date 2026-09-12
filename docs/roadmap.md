@@ -5,10 +5,13 @@
 What is built, what is next, and what each piece of work lets you do that you
 could not do before.
 
-This list is also shown on the dashboard, under **What is coming**, and stays
-there permanently. As work ships, its rows are updated rather than removed — the
-section is a standing part of the UI, not a placeholder to be cleared out once
-there is real content. It comes off only when Nick says so.
+The dashboard shows the same list under **What is coming**, in its own
+hand-written HTML (`app/templates/dashboard.html`) — it does not read this
+file, so the two have to be kept in step by hand. That section stays on the
+dashboard permanently: as work ships, its rows are updated rather than
+removed, not cleared out once there is real content. It comes off only when
+Nick says so. See "Finalise the dashboard and the UI" below for whether this
+should instead read this file directly.
 
 ## About the version numbers
 
@@ -246,6 +249,29 @@ this plainly, rather than surfacing a bare `403`.
 > Enterprise.** Role-based access control is not available on the lower XOA
 > tiers. Installations from the sources are not restricted.
 
+### v0.8.0 — Date ranges
+
+Ask for the window you care about instead of everything on the host.
+
+- A date-range picker wherever a range makes sense: collection, category
+  downloads, findings, the support package
+- Rotated logs selected by **modification time**, so "the last three days" skips
+  the 28 older `xensource.log.N.gz` files rather than downloading and discarding
+- Line-level filtering by parsed timestamp for files straddling the window edge
+- Presets — last 24 hours, last 7 days, since the last reboot
+
+Of a measured 433 MB bundle, 418 MB is rotated history, so a narrow window is a
+large saving on what you keep and send.
+
+> [!NOTE]
+> **The first collection still downloads the whole bundle.** Xen Orchestra's
+> `logs.tgz` accepts no date parameter and supports no range requests, so
+> filtering happens here, after the download. A date range shrinks what you keep
+> and send, not the 100 seconds of the initial fetch.
+>
+> There is nothing to filter until a bundle exists, which is why this follows
+> collection rather than standing on its own.
+
 ---
 
 ## Planned — free to pick up in any order
@@ -265,26 +291,13 @@ it reports on have stopped moving.
   whether an operator needs to act, not because it has a page
 - Panels for later features where that test is met — log findings, update
   availability, the support package
-- Settle what **What is coming** becomes once the list is short
+- Settle what **What is coming** becomes once the list is short — including
+  whether it should read this file's Planned section directly instead of
+  duplicating it by hand, which would make it structurally impossible for the
+  two to drift the way they have already
 
 This is deliberately last among the free-to-pick-up items. Tuning an interface
 around features that are still being added means doing it twice.
-
-### Redact on demand, not only at collection
-
-*Prerequisite met: redaction shipped in v0.5.0, per-rule toggles in v0.5.1,
-full-bundle collection in v0.6.0.*
-
-Redaction currently happens once, during collection, using whichever rules were
-switched on at that moment. Changing a rule afterwards means collecting the
-whole bundle again.
-
-- Make redaction a choice at collection time rather than automatic, the way the
-  audit trail already is
-- A **Redact** button beside each stored raw artifact, producing a redacted
-  copy from the rules switched on now
-- So a user who wants hostnames masked after all can re-redact the bundle they
-  already have, in seconds, without a second 433 MB download
 
 ### Self-update from the UI
 
@@ -368,31 +381,6 @@ More than one person can use XCP Pulse, with their own credentials.
 
 Migration is automatic: the existing environment-configured admin becomes the
 first row in the user table and continues to work.
-
-### Date ranges
-
-*Prerequisite met: full-bundle collection shipped in v0.6.0.*
-
-Ask for the window you care about instead of everything on the host.
-
-- A date-range picker wherever a range makes sense: collection, category
-  downloads, findings, the support package
-- Rotated logs selected by **modification time**, so "the last three days" skips
-  the 28 older `xensource.log.N.gz` files rather than downloading and discarding
-- Line-level filtering by parsed timestamp for files straddling the window edge
-- Presets — last 24 hours, last 7 days, since the last reboot
-
-Of a measured 433 MB bundle, 418 MB is rotated history, so a narrow window is a
-large saving on what you keep and send.
-
-> [!NOTE]
-> **The first collection still downloads the whole bundle.** Xen Orchestra's
-> `logs.tgz` accepts no date parameter and supports no range requests, so
-> filtering happens here, after the download. A date range shrinks what you keep
-> and send, not the 100 seconds of the initial fetch.
->
-> There is nothing to filter until a bundle exists, which is why this follows
-> collection rather than standing on its own.
 
 ---
 

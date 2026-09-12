@@ -28,7 +28,7 @@ from app.artifacts import (
     store_json,
 )
 from app.job_runner import register
-from app.jobs import SUCCEEDED, Job, JobContext, get_job, list_jobs
+from app.jobs import CANCELLED, FAILED, SUCCEEDED, Job, JobContext, get_job, list_jobs
 from app.redact import RULES, active_rules, enabled_rules, rule_by_name
 
 KIND = "redact_artifact"
@@ -114,18 +114,16 @@ def _report_enabled(report: dict[str, Any]) -> set[str]:
 def run(context: JobContext) -> None:
     """Redact one stored artifact, storing the result and a report.
 
-    The artifact to redact arrives in ``params['artifact_id']``. Raises rather
+    Params: either ``artifact_id`` (the stored file to redact directly) or
+    ``source_job_id`` (a collection job to read its raw ``-logs.tgz`` from once
+    that job has produced one — chained behind a fresh, redact-later
+    collection the same way ``job_extract`` chains behind one). Raises rather
     than catching: the runner records the message against the job, which is
     where the operator looks for it.
     """
     job = get_job(context.conn, context.job_id)
-    artifact_id = job.params.get("artifact_id") if job else None
-    if not isinstance(artifact_id, str) or not artifact_id:
-        raise ValueError("No artifact was named to redact.")
-
-    source = get_artifact(context.conn, artifact_id)
-    if source is None:
-        raise ValueError(f"Artifact {artifact_id} is no longer stored.")
+    params = job.params if job else {}
+    source = _resolve_source(context, params)
 
     context.progress(5, f"Reading {source.name}")
     source_path = artifact_path(context.data_dir, source.job_id, source.id)
@@ -160,6 +158,52 @@ def run(context: JobContext) -> None:
 
     total = report["total_hits"]
     context.progress(100, f"{total} value(s) masked in {lines} line(s)")
+
+
+def _resolve_source(context: JobContext, params: dict) -> Artifact:
+    """The artifact this run redacts, by either param a caller may give.
+
+    ``artifact_id`` is resolved directly. ``source_job_id`` looks up that
+    job's stored raw ``-logs.tgz`` instead — for a collection queued with
+    redaction switched off, whose bundle does not exist yet at the moment the
+    redaction is queued behind it in the same request. Exactly one of the two
+    is expected; both absent is a caller error.
+    """
+    artifact_id = params.get("artifact_id")
+    if isinstance(artifact_id, str) and artifact_id:
+        source = get_artifact(context.conn, artifact_id)
+        if source is None:
+            raise ValueError(f"Artifact {artifact_id} is no longer stored.")
+        return source
+
+    source_job_id = params.get("source_job_id")
+    if isinstance(source_job_id, str) and source_job_id:
+        source_job = get_job(context.conn, source_job_id)
+        if source_job is None:
+            raise ValueError("The collection this redaction was queued after no longer exists.")
+        if source_job.state == FAILED:
+            raise ValueError(
+                "The collection this redaction was queued after failed, so there is "
+                "no bundle to redact."
+            )
+        if source_job.state == CANCELLED:
+            raise ValueError(
+                "The collection this redaction was queued after was cancelled, so "
+                "there is no bundle to redact."
+            )
+        if source_job.is_active:
+            # The FIFO queue and single-worker run guarantee this cannot
+            # actually happen — the source job is enqueued first and this one
+            # is never claimed before it finishes — but failing loudly here
+            # beats redacting a bundle that is still being written to.
+            raise ValueError("The collection this redaction was queued after has not finished yet.")
+        produced = list_for_job(context.conn, source_job_id)
+        bundle = next((item for item in produced if item.name.endswith("-logs.tgz")), None)
+        if bundle is None:
+            raise ValueError("That collection produced no log bundle to redact.")
+        return bundle
+
+    raise ValueError("No artifact was named to redact.")
 
 
 def _redact_file(

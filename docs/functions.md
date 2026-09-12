@@ -71,6 +71,18 @@ missing or unusable and the app must not start.
 Migrations are append-only. Editing an applied one leaves existing databases
 behind.
 
+**`init_db`'s connection is wrapped in a lock, `connect`'s is not.** FastAPI
+runs synchronous routes in a thread pool, so the web app's one connection
+(`app.state.db`, opened via `init_db`) is called from whichever thread is
+serving a given request — several at once under load — and a bare
+`sqlite3.Connection` is not safe for concurrent statement execution even with
+`check_same_thread=False`. Reported as a real crash: `GET /jobs` returned a
+500 reading a `sqlite3.Row` corrupted by an interleaved concurrent query. The
+private `_LockedConnection` class serialises every call with a re-entrant
+lock and is otherwise a transparent passthrough, so no call site changed. The
+background job worker (`job_runner.JobWorker`) calls `connect` directly
+instead — one dedicated thread, no contention — and does not need it.
+
 ## `app/security.py` — authentication
 
 | Function | Signature | Does | Used by | Since |
@@ -106,6 +118,7 @@ genuinely invalidates rather than merely asking the browser to forget.
 | `redirect` | `(url: str, status_code: int = 303) -> RedirectResponse` | Redirect, defaulting to see-other | `routes/auth` | v0.1.0 |
 | `wake_worker` | `(request) -> None` | Tells the job worker to look now rather than at its next poll | every route that enqueues a job | v0.6.0 |
 | `serve_artifact` | `(request, artifact_id: str, *, on_error: str) -> Response` | Streams one stored artifact to the browser, shared by every page that lists artifacts | `routes.collect.download_artifact`, `routes.jobs.download_job_artifact` | v0.6.3 |
+| `date_coverage` | `(report, fallback: str = "") -> str` | How to phrase a findings report's date window, delegating to `Report.coverage_text` so the page and the downloaded Markdown never disagree | `findings.html`, as the `date_coverage` filter | 0.8.0 |
 
 `templates` is the shared Jinja environment; `RedirectToLogin` is the exception
 `login_required` raises, handled in `main.create_app`.
@@ -262,7 +275,7 @@ job lands on them.
 | Function | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
 | `inventory_from_job` | `(conn, data_dir, job_id: str) -> Inventory \| None` | Rebuilds the Inventory a job stored | `routes.dashboard.dashboard`, `known_inventory` | v0.4.0 |
-| `known_inventory` | `(conn, data_dir) -> Inventory` | The last successful refresh's pools and hosts, or an empty Inventory | `routes.collect`, `routes.support_package`, `job_findings.run` | unreleased |
+| `known_inventory` | `(conn, data_dir) -> Inventory` | The last successful refresh's pools and hosts, or an empty Inventory | `routes.collect`, `routes.support_package`, `job_findings.run` | 0.8.0 |
 | `run` | `(context: JobContext) -> None` | Reads XO and stores the inventory as an artifact | `job_runner`, via `register` | v0.4.0 |
 
 `inventory_from_job` drops unknown keys and leaves missing ones at their
@@ -346,6 +359,24 @@ XCP-ng release adds and removes a few — is still accounted for.
 | `category_by_key` | `(key: str) -> Category \| None` | One category by its key | `routes.collect`, `job_extract` | v0.7.0 |
 | `category_keys` | `() -> tuple[str, ...]` | Every valid category key, in display order | tests | v0.7.0 |
 | `classify` | `(member_path: str) -> str` | The category key a bundle member belongs to; never an unknown key | `job_extract.run` | v0.7.0 |
+
+## `app/log_dates.py` — the date-range filter and parser
+
+A `DateRange` (both ends optional, both inclusive) and the two filters built on
+it: by file modification time, for skipping a rotated log outside the window
+before it is ever read, and by best-effort line timestamp, for a file that
+straddles the window edge. A line whose timestamp cannot be parsed is always
+kept — never silently dropped — because `xen-bugtool`'s bundle mixes several
+logging conventions (syslog-style, XAPI's own ISO-ish format, sysstat) and this
+module does not try to cover every one of them.
+
+| Function | Signature | Does | Used by | Since |
+| --- | --- | --- | --- | --- |
+| `line_in_range` | `(line: str, date_range: DateRange \| None, *, now: float \| None = None) -> bool` | Whether one log line belongs in a date-filtered output; unparsable lines always pass | `job_extract.run`, `findings.collect_log_findings` | 0.8.0 |
+| `mtime_in_range` | `(mtime: float, date_range: DateRange \| None) -> bool` | Whether a file's modification time falls inside the range | `job_extract.run` | 0.8.0 |
+| `parse_log_timestamp` | `(line: str, *, now: float \| None = None) -> float \| None` | Best-effort Unix timestamp from the start of one log line, or `None` | `line_in_range` | 0.8.0 |
+| `preset_range` | `(key: str, *, now: float \| None = None, uptime_seconds: float \| None = None) -> DateRange \| None` | The range a preset key (`24h`, `7d`, `30d`, `since_reboot`) resolves to | `range_from_form` | 0.8.0 |
+| `range_from_form` | `(*, preset: str \| None, start_date: str \| None, end_date: str \| None, now: float \| None = None, uptime_seconds: float \| None = None) -> DateRange \| None` | The range a date-picker form submitted, or `None` for "no filtering" | `job_extract.run`, `job_findings.run`, `job_log_findings.run`, `routes.collect`, `routes.support_package` | 0.8.0 |
 
 ## `app/job_extract.py` — the Extract categories job
 

@@ -22,6 +22,7 @@ from app.findings import Report
 from app.job_collect import KIND as COLLECT_KIND
 from app.job_findings import KIND as FINDINGS_KIND
 from app.job_inventory import KIND as INVENTORY_KIND
+from app.job_redact import KIND as REDACT_KIND
 from app.job_support_package import KIND as SUPPORT_PACKAGE_KIND
 from app.jobs import enqueue, list_jobs, mark_succeeded
 from app.xo_client import Host, Inventory, Pool
@@ -179,6 +180,40 @@ def test_packaging_an_existing_collection_reuses_its_bundle(with_inventory: Test
     package_jobs = list_jobs(app.state.db, kind=SUPPORT_PACKAGE_KIND, limit=1)
     assert package_jobs[0].state == "succeeded"
     assert package_jobs[0].params["source_job_id"] == collect_job.id
+
+
+def test_packaging_the_same_raw_only_collection_twice_redacts_only_once(
+    with_inventory: TestClient,
+) -> None:
+    """A second package built from the same raw-only collection must reuse the
+    first package's redaction rather than repeating a 433 MB redact job.
+
+    Reported as a real bug: the route checked the collection's own id for a
+    redaction report, but a chained ``redact_artifact`` job's report lives
+    under that job's id — so the check always read "not redacted" and every
+    package built from the same raw-only collection queued a fresh
+    redaction, silently, forever.
+    """
+    app = with_inventory.app  # type: ignore[attr-defined]
+
+    with patch("app.job_collect.build_client", return_value=_FakeClient()):
+        with_inventory.post("/collect", data={"host_id": HOST.id})
+        run_pending_jobs(app)
+    collect_job = list_jobs(app.state.db, kind=COLLECT_KIND, limit=1)[0]
+
+    with_inventory.post(f"/support-package/{collect_job.id}/package")
+    _run_chain(app)
+    assert list_jobs(app.state.db, kind=SUPPORT_PACKAGE_KIND, limit=1)[0].state == "succeeded"
+    assert len(list_jobs(app.state.db, kind=REDACT_KIND, limit=10)) == 1
+
+    with_inventory.post(f"/support-package/{collect_job.id}/package")
+    _run_chain(app)
+
+    packages = list_jobs(app.state.db, kind=SUPPORT_PACKAGE_KIND, limit=10)
+    assert len(packages) == 2
+    assert all(job.state == "succeeded" for job in packages)
+    # The second package must not have queued a second redaction.
+    assert len(list_jobs(app.state.db, kind=REDACT_KIND, limit=10)) == 1
 
 
 def test_a_package_stays_listed_after_its_source_collection_is_deleted(

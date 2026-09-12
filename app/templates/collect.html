@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_date_range.html" as date_range %}
 {% block title %}Collect — XCP Pulse{% endblock %}
 
 {% block content %}
@@ -23,8 +24,8 @@
       <h2>Collect from a host</h2>
       <p class="note">
         Downloads the host's log bundle — the same status report
-        <code>xen-bugtool</code> produces, which is what Vates ask for — then
-        makes a redacted copy using the rules switched on in
+        <code>xen-bugtool</code> produces, which is what Vates ask for — then,
+        by default, makes a redacted copy using the rules switched on in
         <a href="/redaction">Redaction</a>. Expect roughly <strong>870 MB</strong>
         of stored files and <strong>two minutes</strong> per host.
       </p>
@@ -55,6 +56,24 @@
     calling itself — storage scans and PBD updates — rather than a record of
     what people did.
   </p>
+
+  <label class="check">
+    <input type="checkbox" name="redact" value="1" form="collect-form" checked>
+    <span>Redact using the rules switched on in Redaction</span>
+  </label>
+  <p class="note">
+    Untick this to store the raw bundle only, faster and without a redacted
+    copy taking up space alongside it. You can redact it afterwards from
+    <a href="/jobs">Jobs</a> once you know which rules you want — useful if
+    you plan to change a rule before sending anything.
+  </p>
+
+  <p class="note">
+    A date range collects and redacts as normal, then extracts every category
+    narrowed to that window into a second, smaller archive — the full bundle
+    is still downloaded either way, this only shrinks what is kept afterwards.
+  </p>
+  {{ date_range.date_range_picker("collect-form") }}
 
   <details class="category-picker">
     <summary>Also extract specific log categories after collecting</summary>
@@ -191,6 +210,17 @@
         {% endfor %}
       </tbody>
     </table>
+    {% elif not job.is_active and not job.error and raw_bundles.get(job.id) %}
+    <div class="alert alert-error">
+      Not redacted yet — this collection stored the raw bundle only. It is
+      <strong>unmasked</strong>; do not send it anywhere until you redact it.
+    </div>
+    <form method="post" action="/jobs/redact" class="inline">
+      <input type="hidden" name="artifact_id" value="{{ raw_bundles[job.id].id }}">
+      <button type="submit" class="btn btn-primary" {% if any_active %}disabled{% endif %}>
+        Redact now
+      </button>
+    </form>
     {% endif %}
 
     {% set raw_bundle = raw_bundles.get(job.id) %}
@@ -219,6 +249,7 @@
           <input type="checkbox" name="include_rotated" value="1" form="extract-form-{{ job.id }}">
           <span>Include rotated history, not just current logs</span>
         </label>
+        {{ date_range.date_range_picker("extract-form-" ~ job.id) }}
         <div class="row-actions">
           <button type="submit" class="btn btn-quiet" {% if any_active %}disabled{% endif %}>
             Extract

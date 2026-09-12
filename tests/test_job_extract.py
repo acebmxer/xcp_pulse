@@ -10,6 +10,7 @@ from __future__ import annotations
 import io
 import sqlite3
 import tarfile
+from datetime import UTC
 from pathlib import Path
 
 import pytest
@@ -25,10 +26,18 @@ HOST_ID = "host-1"
 HOST_NAME = "xcp-ng-host1"
 
 
-def _bundle_bytes(members: dict[str, str], *, directories: tuple[str, ...] = ()) -> bytes:
+def _bundle_bytes(
+    members: dict[str, str],
+    *,
+    directories: tuple[str, ...] = (),
+    mtimes: dict[str, float] | None = None,
+) -> bytes:
     """Build a tar.gz. ``directories`` adds bare directory entries (no body),
     the way ``xen-bugtool`` bundles carry them for every real path — needed to
-    test that a filtered extraction preserves them, not just files."""
+    test that a filtered extraction preserves them, not just files.
+    ``mtimes``, keyed by member name, sets a member's modification time for
+    tests of date-range filtering; a member not named there gets tarfile's
+    own default (the current time)."""
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
         for name in directories:
@@ -39,6 +48,8 @@ def _bundle_bytes(members: dict[str, str], *, directories: tuple[str, ...] = ())
             body = text.encode("utf-8")
             info = tarfile.TarInfo(name)
             info.size = len(body)
+            if mtimes and name in mtimes:
+                info.mtime = mtimes[name]
             archive.addfile(info, io.BytesIO(body))
     return buffer.getvalue()
 
@@ -78,6 +89,7 @@ def _store_bundle(
     members: dict[str, str] | None = None,
     *,
     directories: tuple[str, ...] = (),
+    mtimes: dict[str, float] | None = None,
 ) -> tuple[str, str]:
     """Store a raw collected bundle as ``job_collect`` would, returning its artifact id.
 
@@ -90,7 +102,7 @@ def _store_bundle(
     """
     collect_job = enqueue(conn, COLLECT_KIND, {"host_id": HOST_ID, "host_name": HOST_NAME})
     mark_succeeded(conn, collect_job.id)
-    body = _bundle_bytes(members or _MEMBERS, directories=directories)
+    body = _bundle_bytes(members or _MEMBERS, directories=directories, mtimes=mtimes)
     working = data_dir / "artifacts" / collect_job.id / "raw.tmp"
     working.parent.mkdir(parents=True, exist_ok=True)
     working.write_bytes(body)
@@ -303,3 +315,158 @@ def test_a_failed_source_collection_fails_the_extraction_clearly(
 
     assert get_job(conn, job.id).state == FAILED
     assert "failed" in get_job(conn, job.id).error
+
+
+# -- date range -------------------------------------------------------------
+
+
+def test_date_range_excludes_a_rotated_file_by_modification_time(
+    conn: sqlite3.Connection, worker: JobWorker, data_dir: Path
+) -> None:
+    import time
+    from datetime import datetime
+
+    now = time.time()
+    old = datetime(2020, 1, 1, tzinfo=UTC).timestamp()
+    artifact_id, _ = _store_bundle(
+        conn,
+        data_dir,
+        {
+            "var/log/xensource.log": "current, unrotated\n",
+            "var/log/xensource.log.1.gz": "old rotated history\n",
+        },
+        mtimes={"var/log/xensource.log": now, "var/log/xensource.log.1.gz": old},
+    )
+
+    job = enqueue(
+        conn,
+        KIND,
+        {
+            "artifact_id": artifact_id,
+            "categories": ["xapi"],
+            "include_rotated": True,
+            "date_preset": "30d",
+        },
+    )
+    worker.run_one(conn)
+
+    assert get_job(conn, job.id).state == SUCCEEDED
+    produced = list_for_job(conn, job.id)
+    bundle = next(item for item in produced if item.name.endswith(".tgz"))
+    members = _members(data_dir / "artifacts" / job.id / bundle.id)
+
+    # The rotated file is outside the last-30-days window and is skipped
+    # entirely; the current file has no rotation history to filter by mtime
+    # and survives.
+    assert set(members) == {"var/log/xensource.log"}
+
+
+def test_date_range_keeps_a_rotated_file_inside_the_window(
+    conn: sqlite3.Connection, worker: JobWorker, data_dir: Path
+) -> None:
+    import time
+
+    now = time.time()
+    artifact_id, _ = _store_bundle(
+        conn,
+        data_dir,
+        {
+            "var/log/xensource.log": "current\n",
+            "var/log/xensource.log.1.gz": "recent rotated history\n",
+        },
+        mtimes={"var/log/xensource.log": now, "var/log/xensource.log.1.gz": now - 3600},
+    )
+
+    job = enqueue(
+        conn,
+        KIND,
+        {
+            "artifact_id": artifact_id,
+            "categories": ["xapi"],
+            "include_rotated": True,
+            "date_preset": "7d",
+        },
+    )
+    worker.run_one(conn)
+
+    produced = list_for_job(conn, job.id)
+    bundle = next(item for item in produced if item.name.endswith(".tgz"))
+    members = _members(data_dir / "artifacts" / job.id / bundle.id)
+    assert set(members) == {"var/log/xensource.log", "var/log/xensource.log.1.gz"}
+
+
+def test_date_range_filters_lines_in_a_file_straddling_the_window(
+    conn: sqlite3.Connection, worker: JobWorker, data_dir: Path
+) -> None:
+    """A current, unrotated file is never excluded by mtime, but a date range
+    still narrows it line by line for content that straddles the edge."""
+    content = (
+        "2026-01-05T00:00:00 inside the window\n"
+        "2026-03-01T00:00:00 outside the window\n"
+        "no timestamp on this line, kept regardless\n"
+    )
+    artifact_id, _ = _store_bundle(conn, data_dir, {"var/log/xensource.log": content})
+
+    job = enqueue(
+        conn,
+        KIND,
+        {
+            "artifact_id": artifact_id,
+            "categories": ["xapi"],
+            "date_preset": "custom",
+            "date_start": "2026-01-01",
+            "date_end": "2026-01-31",
+        },
+    )
+    worker.run_one(conn)
+
+    produced = list_for_job(conn, job.id)
+    bundle = next(item for item in produced if item.name.endswith(".tgz"))
+    members = _members(data_dir / "artifacts" / job.id / bundle.id)
+    body = members["var/log/xensource.log"]
+    assert "inside the window" in body
+    assert "outside the window" not in body
+    assert "kept regardless" in body
+
+
+def test_no_date_range_means_no_filtering(
+    conn: sqlite3.Connection, worker: JobWorker, data_dir: Path
+) -> None:
+    """Omitting the date fields entirely is unchanged behaviour: no line of a
+    kept member is dropped, exactly as before this feature existed. (Content
+    is still masked by the active redaction rules, which is unrelated.)"""
+    artifact_id, _ = _store_bundle(conn, data_dir)
+
+    job = enqueue(conn, KIND, {"artifact_id": artifact_id, "categories": ["xapi"]})
+    worker.run_one(conn)
+
+    produced = list_for_job(conn, job.id)
+    bundle = next(item for item in produced if item.name.endswith(".tgz"))
+    members = _members(data_dir / "artifacts" / job.id / bundle.id)
+    assert members["var/log/xensource.log"].count("\n") == _MEMBERS["var/log/xensource.log"].count(
+        "\n"
+    )
+
+
+def test_date_range_recorded_in_the_report(
+    conn: sqlite3.Connection, worker: JobWorker, data_dir: Path
+) -> None:
+    artifact_id, _ = _store_bundle(conn, data_dir)
+
+    job = enqueue(
+        conn,
+        KIND,
+        {
+            "artifact_id": artifact_id,
+            "categories": ["xapi"],
+            "date_preset": "custom",
+            "date_start": "2026-01-01",
+            "date_end": "2026-01-31",
+        },
+    )
+    worker.run_one(conn)
+
+    report = report_from_job(conn, data_dir, job.id)
+    assert report is not None
+    assert report["date_start"] is not None
+    assert report["date_end"] is not None

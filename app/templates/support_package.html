@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_date_range.html" as date_range %}
 {% block title %}Support package — XCP Pulse{% endblock %}
 
 {% macro package_card(package) %}
@@ -87,7 +88,7 @@
     a copy, then builds the package. Expect roughly the same <strong>870
     MB</strong> and <strong>two minutes</strong> a plain collection takes.
   </p>
-  <form method="post" action="/support-package/collect" class="inline">
+  <form method="post" action="/support-package/collect" class="inline" id="collect-package-form">
     <label class="visually-hidden" for="host_id">Host to collect from</label>
     <select id="host_id" name="host_id" {% if not hosts %}disabled{% endif %}>
       {% for host in hosts %}
@@ -104,6 +105,11 @@
       Collect + Package
     </button>
   </form>
+  <p class="note">
+    Ships a date-filtered log bundle in the package instead of the full
+    one, and narrows the findings inside it to match.
+  </p>
+  {{ date_range.date_range_picker("collect-package-form") }}
 </div>
 
 <h2 class="section-title">Package an existing collection</h2>
@@ -145,11 +151,17 @@
     {% endif %}
 
     {% if not job.is_active %}
-    <form method="post" action="/support-package/{{ job.id }}/package" class="inline row-actions">
+    <form method="post" action="/support-package/{{ job.id }}/package" class="inline row-actions"
+          id="package-form-{{ job.id }}">
       <button type="submit" class="btn btn-quiet" {% if any_active %}disabled{% endif %}>
         Package this collection
       </button>
     </form>
+    <p class="note">
+      Ships a date-filtered log bundle instead of the full one, and narrows
+      the findings inside it to match.
+    </p>
+    {{ date_range.date_range_picker("package-form-" ~ job.id) }}
     {% endif %}
 
     {% set collection_packages = packages_by_source.get(job.id, []) %}

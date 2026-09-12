@@ -12,6 +12,30 @@ One container. A FastAPI application serving server-rendered Jinja templates,
 with SQLite on a mounted volume. No JavaScript build step, no CDN, no broker —
 the job queue is a table in the same database.
 
+The image builds from `python:3.14-slim` ([Dockerfile](../Dockerfile)), which
+is Debian 13 (trixie) running Python 3.14. That tag floats with upstream, so
+the exact Debian point release moves independently of this project's version —
+check the image at `docker run --rm ghcr.io/acebmxer/xcp_pulse:<tag> cat
+/etc/os-release` if the exact point release matters.
+
+Other facts about the image worth knowing before debugging or hardening it:
+
+- **Every build runs `apt-get upgrade`** in both stages, right after `FROM`.
+  The app never installs OS packages itself, but the base image's own
+  packages (glibc, perl, etc.) still carry Debian's security fixes, and this
+  keeps the image on the latest point release for those on every build rather
+  than only whenever Docker Hub happens to refresh the `slim` tag.
+- **Runs as a non-root user**, `pulse` (uid 10001) — not root, and not the
+  base image's default user.
+- **Cannot install packages at runtime.** pip, setuptools and wheel are
+  removed from the final image in the same build stage that creates it; only
+  the build stage has them, and it is discarded.
+- **Data lives on the `/data` volume** — the SQLite database and every
+  collected/redacted artifact. Nothing outside that path survives a container
+  recreate.
+- **Listens on port 8080**, with a healthcheck against `GET /healthz` on that
+  same port.
+
 ```
 browser ──▶ uvicorn ──▶ FastAPI ──▶ SQLite  (/data/xcp-pulse.db)
                           │            ▲
@@ -44,7 +68,7 @@ streaming download.
 | `app/job_runner.py` | The worker that runs queued jobs, and the registry of job kinds. |
 | `app/job_inventory.py` | The **Refresh inventory** job — the worked example of a job. |
 | `app/job_redact.py` | The **Redact artifact** job: masks a stored file, writes the report. |
-| `app/job_collect.py` | The **Collect logs** job: downloads a host's bundle (and optionally its audit trail), keeps raw and redacted copies. |
+| `app/job_collect.py` | The **Collect logs** job: downloads a host's bundle (and optionally its audit trail), redacting it unless that step was switched off, in which case `app/job_redact.py` handles it later. |
 | `app/findings.py` | Turns Xen Orchestra API reads into findings: severity, title, evidence, action, source. |
 | `app/job_findings.py` | The **API findings** job: runs the sources, stores the report as JSON and Markdown. |
 | `app/job_log_findings.py` | The **log findings** job: reads a stored `*-logs.tgz` bundle, stores the report as JSON and Markdown. |

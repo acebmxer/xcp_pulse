@@ -187,6 +187,44 @@ def test_without_the_audit_flag_the_trail_is_neither_fetched_nor_stored(
     assert client.audit_calls == 0
 
 
+def test_with_redaction_switched_off_only_the_raw_bundle_is_stored(
+    conn: sqlite3.Connection, worker: JobWorker
+) -> None:
+    """A collection can be told to skip redaction entirely.
+
+    Both sides of this condition need a test, same as the audit flag above: one
+    that only checked the flag switched off would pass just as well against a
+    flag that is always off.
+    """
+    params = {**_NO_AUDIT_PARAMS, "redact": False}
+    job_id = _run(conn, worker, params=params)
+
+    assert get_job(conn, job_id).state == SUCCEEDED
+    assert set(_named(conn, job_id)) == {f"{HOST_NAME}-logs.tgz"}
+
+
+def test_with_redaction_switched_off_there_is_no_report(
+    conn: sqlite3.Connection, worker: JobWorker, tmp_path: Path
+) -> None:
+    params = {**_NO_AUDIT_PARAMS, "redact": False}
+    job_id = _run(conn, worker, params=params)
+
+    assert report_from_job(conn, tmp_path, job_id) is None
+
+
+def test_absent_redact_param_defaults_to_redacting(
+    conn: sqlite3.Connection, worker: JobWorker
+) -> None:
+    """A job queued before this checkbox existed still redacts.
+
+    ``_NO_AUDIT_PARAMS`` carries no ``redact`` key at all, the same shape an
+    older stored job or an external caller would have.
+    """
+    job_id = _run(conn, worker, params=_NO_AUDIT_PARAMS)
+
+    assert f"{HOST_NAME}-logs.redacted.tgz" in _named(conn, job_id)
+
+
 def test_the_report_covers_only_the_files_a_collection_produced(
     conn: sqlite3.Connection, worker: JobWorker, tmp_path: Path
 ) -> None:
@@ -430,6 +468,17 @@ def test_the_finished_step_says_what_was_masked_and_stored(
     step = get_job(conn, job_id).step
     assert HOST_NAME in step
     assert "masked" in step
+
+
+def test_the_finished_step_says_unredacted_when_redaction_was_skipped(
+    conn: sqlite3.Connection, worker: JobWorker
+) -> None:
+    params = {**_NO_AUDIT_PARAMS, "redact": False}
+    job_id = _run(conn, worker, params=params)
+
+    step = get_job(conn, job_id).step
+    assert HOST_NAME in step
+    assert "unredacted" in step
 
 
 def test_build_report_carries_every_rule_including_ones_that_matched_nothing() -> None:

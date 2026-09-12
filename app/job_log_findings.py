@@ -10,6 +10,7 @@ from app.artifacts import artifact_path, list_for_job, read_json, store_file, st
 from app.findings import Finding, Report, SourceResult, collect_log_findings, sort_findings
 from app.job_runner import register
 from app.jobs import JobContext, get_job
+from app.log_dates import range_from_form
 from app.redact import enabled_rules
 
 KIND = "log_findings"
@@ -18,8 +19,16 @@ LOG_FINDINGS_MARKDOWN = "log-findings.md"
 
 
 def run(context: JobContext) -> None:
+    """Read findings from one stored log bundle.
+
+    Params: ``artifact_id`` (required) plus an optional date range —
+    ``date_preset``/``date_start``/``date_end``, the same fields
+    ``job_extract`` takes — re-derived at run time for the same reason: a
+    relative preset must not go stale between queueing and running.
+    """
     job = get_job(context.conn, context.job_id)
-    artifact_id = job.params.get("artifact_id") if job else None
+    params = job.params if job else {}
+    artifact_id = params.get("artifact_id")
     if not isinstance(artifact_id, str) or not artifact_id:
         raise ValueError("No log bundle was named.")
 
@@ -34,10 +43,17 @@ def run(context: JobContext) -> None:
     if not bundle_path.is_file():
         raise ValueError(f"The body of {source.name} is missing from the data volume.")
 
+    date_range = range_from_form(
+        preset=params.get("date_preset"),
+        start_date=params.get("date_start"),
+        end_date=params.get("date_end"),
+    )
+
     context.progress(10, f"Reading {source.name}")
     report = collect_log_findings(
         bundle_path,
         enabled=enabled_rules(context.conn),
+        date_range=date_range,
         progress=context.progress,
     )
     context.progress(90, "Storing the log findings report")
@@ -84,6 +100,8 @@ def to_payload(report: Report, source_id: str) -> dict[str, Any]:
         "source_id": source_id,
         "created_at": report.created_at or time.time(),
         "window_days": report.window_days,
+        "date_start": report.date_start,
+        "date_end": report.date_end,
         "counts": report.counts,
         "findings": [asdict(finding) for finding in report.findings],
         "sources": [asdict(source) for source in report.sources],
@@ -105,6 +123,8 @@ def report_from_job(conn, data_dir, job_id: str) -> Report | None:
         return None
     if not isinstance(payload, dict):
         return None
+    date_start = payload.get("date_start")
+    date_end = payload.get("date_end")
     return Report(
         findings=sort_findings(
             [_build(Finding, item) for item in _records(payload.get("findings"))]
@@ -116,6 +136,8 @@ def report_from_job(conn, data_dir, job_id: str) -> Report | None:
             item for item in payload.get("rules_disabled") or [] if isinstance(item, str)
         ],
         truncated=bool(payload.get("truncated")),
+        date_start=float(date_start) if isinstance(date_start, (int, float)) else None,
+        date_end=float(date_end) if isinstance(date_end, (int, float)) else None,
     )
 
 

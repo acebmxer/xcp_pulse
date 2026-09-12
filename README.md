@@ -91,7 +91,9 @@ rather than estimated:
 - **Redact** internal addresses, session tokens and credentials before anything
   leaves the machine. A single real `xensource.log` contained 8,359 lines
   matching password, secret or session patterns. The raw bundle is kept too, and
-  the download list marks which copy is which.
+  the download list marks which copy is which. Redaction runs immediately by
+  default, or can be switched off per collection to store the raw bundle only
+  and redact it later, in seconds, once the rules you want are settled.
 - **Report what was masked** — per-rule hit counts for the whole run, with a
   switched-off rule reading as *off* rather than as zero hits.
 - **Keep the disk in check** — a retention policy that shows exactly which
@@ -122,6 +124,15 @@ rather than estimated:
   collect a host and package it in one action. Building one always runs a
   fresh findings check and inventory refresh alongside it, so it never ships
   with a gap.
+- **Narrow any of the above to a date range** — presets for the last 24 hours,
+  7 days, 30 days, since the last reboot, or a custom start/end. Xen
+  Orchestra's `logs.tgz` still has no date filter of its own, so the first
+  download of a bundle is unchanged; a range only shrinks what gets kept
+  afterwards — a rotated log file outside the window is skipped by its
+  modification time, and a file straddling the window edge has its lines
+  filtered by a best-effort timestamp parse. Available when extracting log
+  categories, reading findings from the API or from collected logs, and
+  building a support package.
 
 ## Configuration
 

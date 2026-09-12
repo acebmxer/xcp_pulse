@@ -7,6 +7,15 @@
 # appearing in vulnerability scans of the published image.
 FROM python:3.14-slim AS build
 
+# Pull in Debian's security point-release fixes for the base OS packages
+# (glibc, perl, util-linux, etc.) that python:3.14-slim ships. The app never
+# apt-installs anything itself, so without this the image only gets these
+# fixes whenever Docker Hub happens to refresh the slim tag — this makes it
+# happen on every build instead. apt's own lists are dropped afterwards so
+# they don't sit in the image (and can't go stale in a way that matters,
+# since nothing here uses them again).
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
+
 ENV PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
@@ -29,6 +38,10 @@ RUN pip uninstall --yes pip setuptools wheel 2>/dev/null || true
 
 
 FROM python:3.14-slim
+
+# Same Debian security point-release upgrade as the build stage — this is the
+# stage that actually ships, so this is the copy that matters for scans.
+RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
