@@ -85,3 +85,21 @@ jobs:
       - name: Show logs on failure
         if: failure()
         run: docker logs pulse
+
+  trivy:
+    name: Trivy vulnerability scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Build the image
+        run: docker build -t xcp-pulse:ci .
+
+      - name: Scan the image
+        uses: aquasecurity/trivy-action@0.33.1
+        with:
+          image-ref: xcp-pulse:ci
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+          trivyignores: .trivyignore

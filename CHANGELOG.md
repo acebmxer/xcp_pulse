@@ -10,6 +10,19 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+### Added
+
+- **CI now scans the built Docker image for known vulnerabilities with
+  [Trivy](https://github.com/aquasecurity/trivy) on every push and pull
+  request**, failing the build on any HIGH or CRITICAL finding with a fix
+  available (`ignore-unfixed: true`, since there's nothing to act on for one
+  that isn't). This is the automated version of the manual CVE sweep that
+  produced `7f5360d` (upgrading base-OS packages during the image build): the
+  same class of finding is now caught continuously instead of by hand.
+  Accepted exceptions, if any are ever needed, go in `.trivyignore` with a
+  comment explaining why. See the new CI job in
+  [ci.yml](.github/workflows/ci.yml).
+
 ## [0.8.0] - 2026-09-12
 
 ### Added
