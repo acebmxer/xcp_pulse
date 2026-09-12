@@ -20,9 +20,10 @@ import pytest
 
 from app.artifacts import artifact_path, get_artifact, list_for_job, store_file, store_json
 from app.db import init_db
+from app.job_collect import KIND as COLLECT_KIND
 from app.job_redact import KIND, REPORT_ARTIFACT, redacted_name, report_from_job, report_rows
 from app.job_runner import JobWorker
-from app.jobs import FAILED, SUCCEEDED, enqueue, get_job
+from app.jobs import FAILED, SUCCEEDED, enqueue, get_job, mark_failed, mark_succeeded
 from app.redact import RULES, redact_text, set_enabled_rules
 
 SAMPLE = """\
@@ -293,6 +294,55 @@ def test_no_artifact_named_fails_the_job_with_its_own_reason(
     stored = get_job(conn, job.id)
     assert stored.state == FAILED
     assert "no artifact was named" in stored.error.lower()
+
+
+def _store_raw_bundle(conn: sqlite3.Connection, tmp_path: Path, text: str) -> str:
+    """A collection's raw ``-logs.tgz``, stored the way ``job_collect`` would.
+
+    The collection job is enqueued and marked succeeded rather than actually
+    run, the same as ``test_job_extract.py``'s own ``_store_bundle``: what is
+    under test is the redaction job's own ``source_job_id`` resolution, not a
+    real collection.
+    """
+    collect_job = enqueue(conn, COLLECT_KIND, {"host_id": "host-1", "host_name": "xcp-ng-host1"})
+    mark_succeeded(conn, collect_job.id)
+    path = tmp_path / "raw.tmp"
+    path.write_text(text, encoding="utf-8")
+    store_file(
+        conn,
+        tmp_path,
+        job_id=collect_job.id,
+        name="xcp-ng-host1-logs.tgz",
+        media_type="application/gzip",
+        source=path,
+    )
+    return collect_job.id
+
+
+def test_source_job_id_resolves_once_the_collection_has_finished(
+    conn: sqlite3.Connection, worker: JobWorker, tmp_path: Path
+) -> None:
+    """The "collect raw-only, redact later" path: queued after the bundle exists."""
+    collect_job_id = _store_raw_bundle(conn, tmp_path, SAMPLE)
+
+    job = enqueue(conn, KIND, {"source_job_id": collect_job_id})
+    worker.run_one(conn)
+
+    assert get_job(conn, job.id).state == SUCCEEDED
+    assert report_from_job(conn, tmp_path, job.id) is not None
+
+
+def test_a_failed_source_collection_fails_the_redaction_clearly(
+    conn: sqlite3.Connection, worker: JobWorker
+) -> None:
+    collect_job = enqueue(conn, COLLECT_KIND, {"host_id": "host-1", "host_name": "xcp-ng-host1"})
+    mark_failed(conn, collect_job.id, "the download stalled")
+
+    job = enqueue(conn, KIND, {"source_job_id": collect_job.id})
+    worker.run_one(conn)
+
+    assert get_job(conn, job.id).state == FAILED
+    assert "failed" in get_job(conn, job.id).error
 
 
 def test_a_missing_body_fails_the_job_rather_than_storing_an_empty_copy(

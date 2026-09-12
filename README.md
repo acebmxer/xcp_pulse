@@ -91,7 +91,9 @@ rather than estimated:
 - **Redact** internal addresses, session tokens and credentials before anything
   leaves the machine. A single real `xensource.log` contained 8,359 lines
   matching password, secret or session patterns. The raw bundle is kept too, and
-  the download list marks which copy is which.
+  the download list marks which copy is which. Redaction runs immediately by
+  default, or can be switched off per collection to store the raw bundle only
+  and redact it later, in seconds, once the rules you want are settled.
 - **Report what was masked** — per-rule hit counts for the whole run, with a
   switched-off rule reading as *off* rather than as zero hits.
 - **Keep the disk in check** — a retention policy that shows exactly which

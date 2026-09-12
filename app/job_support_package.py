@@ -43,9 +43,12 @@ from app.job_findings import FINDINGS_ARTIFACT, FINDINGS_MARKDOWN
 from app.job_findings import KIND as FINDINGS_KIND
 from app.job_inventory import INVENTORY_ARTIFACT
 from app.job_inventory import KIND as INVENTORY_KIND
+from app.job_redact import KIND as REDACT_KIND
+from app.job_redact import existing_redaction
 from app.job_redact import report_from_job as redaction_report_from_job
 from app.job_runner import register
 from app.jobs import CANCELLED, FAILED, Job, JobContext, get_job
+from app.redact import enabled_rules
 
 KIND = "support_package"
 
@@ -64,6 +67,19 @@ def run(context: JobContext) -> None:
     here rather than passed as artifact ids, for the same reason
     ``job_extract`` resolves ``source_job_id``: a job queued in the same
     request as this one has not produced its artifacts yet at enqueue time.
+
+    ``redact_job_id``, when present, names a ``redact_artifact`` job the route
+    queued because the collection itself had no redaction anywhere yet —
+    collecting with redaction switched off is now a choice, not only
+    something an older stored collection could be missing, so a package built
+    from either reads its redacted bundle and report from that job instead of
+    demanding the collection have produced them itself. Absent covers two
+    different cases the same way: the collection redacted itself (the common
+    case), or a raw-only collection's bundle was already redacted earlier by
+    some other job — the Collect page's own "Redact now" button, or a prior
+    package build — found here by the same rules-aware lookup the Jobs page
+    uses to refuse a duplicate redaction, so this job never re-redacts a 433
+    MB bundle that a stored copy already answers for.
     """
     job = get_job(context.conn, context.job_id)
     params = job.params if job else {}
@@ -77,10 +93,24 @@ def run(context: JobContext) -> None:
         context, params.get("inventory_job_id"), INVENTORY_KIND, "inventory"
     )
 
-    redacted_bundle = _find_artifact(context, collection.id, suffix=".redacted.")
-    redaction_report = redaction_report_from_job(context.conn, context.data_dir, collection.id)
+    redact_job_id = params.get("redact_job_id")
+    if isinstance(redact_job_id, str) and redact_job_id:
+        context.progress(30, "Checking the redaction")
+        redaction_source = _resolve_job(context, redact_job_id, REDACT_KIND, "redaction")
+    else:
+        redaction_source = _existing_redaction_source(context, collection)
+
+    # Checked before looking for the bundle itself: a collection with
+    # redaction switched off, no ``redact_job_id`` chained behind it, and no
+    # earlier redaction found either has neither report nor bundle, and "no
+    # redaction report" is the actionable message — the operator needs to
+    # know to redact it, not that a file search came up empty.
+    redaction_report = redaction_report_from_job(
+        context.conn, context.data_dir, redaction_source.id
+    )
     if redaction_report is None:
         raise ValueError(f"Collection {collection.id} has no redaction report to package.")
+    redacted_bundle = _find_artifact(context, redaction_source.id, suffix=".redacted.")
 
     findings_json = _find_artifact(context, findings_job.id, name=FINDINGS_ARTIFACT)
     findings_md = _find_artifact(context, findings_job.id, name=FINDINGS_MARKDOWN)
@@ -140,6 +170,39 @@ def run(context: JobContext) -> None:
     context.progress(100, f"{package.name} ready — {package.size_human}")
 
 
+def _existing_redaction_source(context: JobContext, collection: Job) -> Job:
+    """Where this collection's redaction report actually lives, if anywhere.
+
+    The collection itself, when it redacted as part of its own run — still
+    the common case. Failing that, the collection's raw bundle may already
+    have been redacted by a separate ``redact_artifact`` job (the Collect
+    page's "Redact now" button, or an earlier package build), found the same
+    way the Jobs page finds a duplicate to refuse re-redacting one: by
+    rules-aware report content, not by which job happened to produce it.
+    Falling back to the collection itself when nothing is found keeps the
+    caller's "no redaction report" error pointed at the collection, which is
+    what the operator actually needs to act on.
+    """
+    if redaction_report_from_job(context.conn, context.data_dir, collection.id) is not None:
+        return collection
+
+    raw_bundle = next(
+        (
+            item
+            for item in list_for_job(context.conn, collection.id)
+            if item.name.endswith("-logs.tgz")
+        ),
+        None,
+    )
+    if raw_bundle is None:
+        return collection
+
+    earlier = existing_redaction(
+        context.conn, context.data_dir, raw_bundle.id, enabled_rules(context.conn)
+    )
+    return earlier if earlier is not None else collection
+
+
 def _resolve_job(context: JobContext, job_id: object, expected_kind: str, label: str) -> Job:
     """A finished, successful job of the expected kind, or raise plainly.
 
@@ -182,7 +245,7 @@ def _find_artifact(
     else:
         assert suffix is not None
         found = next((item for item in produced if suffix in item.name), None)
-        wanted = f"a file containing {suffix!r}"
+        wanted = f"file containing {suffix!r}"
     if found is None:
         raise ValueError(f"Job {job_id} produced no {wanted}.")
     return found

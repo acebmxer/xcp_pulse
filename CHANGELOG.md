@@ -10,6 +10,30 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+### Added
+
+- **Redaction can now happen on demand instead of only at collection time.**
+  A collection always redacted immediately, using whichever rules happened to
+  be switched on at that moment — changing a rule afterwards meant collecting
+  the whole bundle again. The Collect page now has a "Redact using the rules
+  switched on in Redaction" checkbox, ticked by default, next to the existing
+  audit-trail checkbox; unticking it stores the raw bundle only, with no
+  redacted copy and no report. A collection card with no report shows a
+  warning that the bundle is unmasked and a "Redact now" button that runs the
+  existing "Redact a stored file" job against it — the same job the Jobs page
+  has offered since v0.5.2, now also reachable from Collect and from a fresh
+  collection queued raw-only. A support package built from a raw-only
+  collection queues that redaction as part of its own job chain rather than
+  failing, the same way it already fills in a missing findings run or
+  inventory refresh — and reuses an earlier redaction of the same bundle
+  rather than repeating it, so packaging the same raw-only collection twice
+  does not silently redact a 433 MB bundle a second time. Pressing "Redact
+  now" on the Collect page itself now updates that same collection's card
+  once the redaction finishes — its report and redacted copy are produced by
+  a separate job, so the card's own report and file lookups now check for
+  that job's output the same rules-aware way, instead of reading "not
+  redacted" forever after it plainly had been.
+
 ### Changed
 
 - **The container image's internals were undocumented.** The Dockerfile pins

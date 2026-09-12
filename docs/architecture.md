@@ -63,7 +63,7 @@ streaming download.
 | `app/job_runner.py` | The worker that runs queued jobs, and the registry of job kinds. |
 | `app/job_inventory.py` | The **Refresh inventory** job — the worked example of a job. |
 | `app/job_redact.py` | The **Redact artifact** job: masks a stored file, writes the report. |
-| `app/job_collect.py` | The **Collect logs** job: downloads a host's bundle (and optionally its audit trail), keeps raw and redacted copies. |
+| `app/job_collect.py` | The **Collect logs** job: downloads a host's bundle (and optionally its audit trail), redacting it unless that step was switched off, in which case `app/job_redact.py` handles it later. |
 | `app/findings.py` | Turns Xen Orchestra API reads into findings: severity, title, evidence, action, source. |
 | `app/job_findings.py` | The **API findings** job: runs the sources, stores the report as JSON and Markdown. |
 | `app/job_log_findings.py` | The **log findings** job: reads a stored `*-logs.tgz` bundle, stores the report as JSON and Markdown. |

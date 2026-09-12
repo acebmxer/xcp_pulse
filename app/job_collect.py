@@ -14,6 +14,13 @@ What it produces, per host:
   the collection asked for it;
 * ``redaction-report.json`` — what was masked across the whole run.
 
+**Redacting immediately is a choice, not a given.** ``params['redact']``
+governs it, absent meaning on so a job queued before the checkbox existed
+still gets the behaviour it was queued expecting. Switched off, this job
+stores only the raw file(s) and no report — an operator who wants a different
+rule set later runs the existing "Redact a stored file" job against the raw
+bundle from the Jobs page, in seconds, without a second download.
+
 **The audit trail is off unless asked for.** ``xen-bugtool`` already collects
 ``/var/log/audit.log`` and its rotated copies into the bundle above, so the
 separate ``audit.txt`` route duplicates them — and at a measured 770 MiB it is
@@ -106,6 +113,10 @@ def run(context: JobContext) -> None:
     # caller that omits the flag, get the smaller run rather than the 770 MiB
     # download that duplicates what is already inside the bundle.
     include_audit = bool(params.get("include_audit"))
+    # Absent means on: a collection queued before this checkbox existed, or by
+    # any caller that omits the flag, keeps redacting immediately rather than
+    # silently starting to leave bundles unmasked.
+    redact = bool(params.get("redact", True))
 
     context.progress(2, "Connecting to Xen Orchestra")
     client = build_client(context.conn, context.settings.secret_key)
@@ -140,38 +151,50 @@ def run(context: JobContext) -> None:
         )
         produced.append(raw_audit)
 
-    context.progress(_REDACT_FROM, "Redacting the bundle")
-    redacted_logs = _redact_tarball(context, raw_logs, enabled, counts)
-    produced.append(redacted_logs)
+    if redact:
+        context.progress(_REDACT_FROM, "Redacting the bundle")
+        redacted_logs = _redact_tarball(context, raw_logs, enabled, counts)
+        produced.append(redacted_logs)
 
-    redacted_audit = None
-    if raw_audit is not None:
-        context.progress(_REDACT_TO, "Redacting the audit trail")
-        redacted_audit = _redact_text_artifact(context, raw_audit, enabled, counts)
-        produced.append(redacted_audit)
+        redacted_audit = None
+        if raw_audit is not None:
+            context.progress(_REDACT_TO, "Redacting the audit trail")
+            redacted_audit = _redact_text_artifact(context, raw_audit, enabled, counts)
+            produced.append(redacted_audit)
 
-    context.progress(95, "Writing the report")
-    report = build_report(
-        host_id=host_id,
-        host_name=host_name,
-        enabled=enabled,
-        counts=counts,
-        raw=[item for item in (raw_logs, raw_audit) if item is not None],
-        redacted=[item for item in (redacted_logs, redacted_audit) if item is not None],
-    )
-    store_json(
-        context.conn,
-        context.data_dir,
-        job_id=context.job_id,
-        name=REPORT_ARTIFACT,
-        payload=report,
-    )
+        context.progress(95, "Writing the report")
+        report = build_report(
+            host_id=host_id,
+            host_name=host_name,
+            enabled=enabled,
+            counts=counts,
+            raw=[item for item in (raw_logs, raw_audit) if item is not None],
+            redacted=[item for item in (redacted_logs, redacted_audit) if item is not None],
+        )
+        store_json(
+            context.conn,
+            context.data_dir,
+            job_id=context.job_id,
+            name=REPORT_ARTIFACT,
+            payload=report,
+        )
 
-    total_bytes = sum(item.size_bytes for item in produced)
-    context.progress(
-        100,
-        f"{host_name}: {report['total_hits']} value(s) masked, {human_bytes(total_bytes)} stored",
-    )
+        total_bytes = sum(item.size_bytes for item in produced)
+        masked = report["total_hits"]
+        context.progress(
+            100,
+            f"{host_name}: {masked} value(s) masked, {human_bytes(total_bytes)} stored",
+        )
+    else:
+        # No report: there is nothing to report on. `report_from_job` already
+        # treats a missing report as "not yet redacted" rather than an error,
+        # which is exactly what this collection is until someone runs the
+        # existing "Redact a stored file" job against the raw bundle above.
+        total_bytes = sum(item.size_bytes for item in produced)
+        context.progress(
+            100,
+            f"{host_name}: {human_bytes(total_bytes)} stored, unredacted",
+        )
 
 
 def _download(
