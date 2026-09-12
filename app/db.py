@@ -138,6 +138,47 @@ def connect(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
+class _LockedCursor:
+    """A ``sqlite3.Cursor`` wrapper that holds ``_LockedConnection``'s lock
+    for every fetch, not just for the ``execute()`` call that produced it.
+
+    A cursor steps the connection's own execution state on each fetch, the
+    same as ``execute()`` does — so a fetch left unlocked can still
+    interleave with another thread's statement on the shared connection and
+    read back a corrupted ``sqlite3.Row``. See ``_LockedConnection`` for the
+    crash this closes.
+    """
+
+    def __init__(self, cursor: sqlite3.Cursor, lock: threading.RLock) -> None:
+        self._cursor = cursor
+        self._lock = lock
+
+    def fetchone(self):
+        with self._lock:
+            return self._cursor.fetchone()
+
+    def fetchall(self):
+        with self._lock:
+            return self._cursor.fetchall()
+
+    def fetchmany(self, *args, **kwargs):
+        with self._lock:
+            return self._cursor.fetchmany(*args, **kwargs)
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        with self._lock:
+            row = self._cursor.fetchone()
+        if row is None:
+            raise StopIteration
+        return row
+
+    def __getattr__(self, name: str):
+        return getattr(self._cursor, name)
+
+
 class _LockedConnection:
     """A ``sqlite3.Connection`` wrapper that serialises every call with a lock.
 
@@ -162,6 +203,17 @@ class _LockedConnection:
     ``with transaction(conn):`` block that then calls another function taking
     the same ``conn`` must not deadlock against itself on the same thread.
 
+    ``execute()`` returns a ``_LockedCursor`` rather than the raw
+    ``sqlite3.Cursor``, and that wrapper holds the same lock for every fetch.
+    A ``sqlite3.Cursor`` is not a result set — it is a live handle into the
+    connection's own execution state, and ``fetchall()``/``fetchone()`` step
+    that shared state exactly as ``execute()`` does. Releasing the lock as
+    soon as ``execute()`` returns left every fetch racing the *other*
+    thread's ``execute()`` and fetches against the same underlying
+    connection, which is what produced ``IndexError: tuple index out of
+    range`` reading a ``sqlite3.Row`` mid-corruption — the lock was held for
+    the one call that wasn't the race.
+
     Only the **web app's** connection is wrapped, via ``init_db`` below. The
     background job worker (``job_runner.JobWorker``) opens and uses its own
     connection on a single dedicated thread, so it was never part of this
@@ -174,7 +226,8 @@ class _LockedConnection:
 
     def execute(self, *args, **kwargs):
         with self._lock:
-            return self._conn.execute(*args, **kwargs)
+            cursor = self._conn.execute(*args, **kwargs)
+            return _LockedCursor(cursor, self._lock)
 
     def executescript(self, *args, **kwargs):
         with self._lock:
@@ -182,7 +235,8 @@ class _LockedConnection:
 
     def executemany(self, *args, **kwargs):
         with self._lock:
-            return self._conn.executemany(*args, **kwargs)
+            cursor = self._conn.executemany(*args, **kwargs)
+            return _LockedCursor(cursor, self._lock)
 
     def commit(self) -> None:
         with self._lock:

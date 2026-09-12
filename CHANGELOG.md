@@ -10,6 +10,24 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+### Fixed
+
+- **`app.state.db`'s lock only covered `execute()`, not the fetch that came
+  after it, so the concurrent-access race it was meant to close could still
+  corrupt a row.** `_LockedConnection` serialises `execute()` calls on the
+  shared connection, but `execute()` returns a live `sqlite3.Cursor` tied to
+  that same connection, and `fetchall()`/`fetchone()` step the connection's
+  execution state exactly as `execute()` does. Releasing the lock as soon as
+  `execute()` returned left every fetch free to interleave with another
+  thread's statement on the same connection object — reproducing the
+  original crash (`IndexError: tuple index out of range` reading a
+  `sqlite3.Row` mid-corruption) intermittently under the test suite's own
+  concurrency test. `execute()` and `executemany()` now return a
+  `_LockedCursor` that holds the same lock for every fetch, not just for
+  obtaining the cursor. Confirmed by running the regression test
+  (`tests/test_db.py::test_the_wrapped_connection_never_corrupts_a_concurrent_read`)
+  eight times back to back with no failures, plus the full suite.
+
 ### Added
 
 - **CI now scans the built Docker image for known vulnerabilities with
