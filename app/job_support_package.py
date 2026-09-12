@@ -39,6 +39,8 @@ from app.artifacts import (
     store_file,
 )
 from app.job_collect import KIND as COLLECT_KIND
+from app.job_extract import KIND as EXTRACT_KIND
+from app.job_extract import report_from_job as extract_report_from_job
 from app.job_findings import FINDINGS_ARTIFACT, FINDINGS_MARKDOWN
 from app.job_findings import KIND as FINDINGS_KIND
 from app.job_inventory import INVENTORY_ARTIFACT
@@ -80,6 +82,16 @@ def run(context: JobContext) -> None:
     package build — found here by the same rules-aware lookup the Jobs page
     uses to refuse a duplicate redaction, so this job never re-redacts a 433
     MB bundle that a stored copy already answers for.
+
+    ``extract_job_id``, when present, names an ``extract_categories`` job the
+    route chained ahead of this one because a date range was given — every
+    category, narrowed to the range, so the package ships a date-filtered
+    bundle in place of the full redacted copy. Its own report already carries
+    the same rule rows a redaction report does (``job_extract.build_report``
+    reuses ``job_redact.build_report``'s shape), so it stands in for
+    ``redaction_report`` below without a second code path. Absent means the
+    common case: no date range was asked for, so the full redacted bundle
+    ships, exactly as before this parameter existed.
     """
     job = get_job(context.conn, context.job_id)
     params = job.params if job else {}
@@ -93,24 +105,33 @@ def run(context: JobContext) -> None:
         context, params.get("inventory_job_id"), INVENTORY_KIND, "inventory"
     )
 
-    redact_job_id = params.get("redact_job_id")
-    if isinstance(redact_job_id, str) and redact_job_id:
-        context.progress(30, "Checking the redaction")
-        redaction_source = _resolve_job(context, redact_job_id, REDACT_KIND, "redaction")
+    extract_job_id = params.get("extract_job_id")
+    if isinstance(extract_job_id, str) and extract_job_id:
+        context.progress(30, "Checking the date-filtered extraction")
+        extraction = _resolve_job(context, extract_job_id, EXTRACT_KIND, "extraction")
+        redaction_report = extract_report_from_job(context.conn, context.data_dir, extraction.id)
+        if redaction_report is None:
+            raise ValueError(f"Extraction {extraction.id} produced no report to package.")
+        redacted_bundle = _find_artifact(context, extraction.id, suffix=".tgz")
     else:
-        redaction_source = _existing_redaction_source(context, collection)
+        redact_job_id = params.get("redact_job_id")
+        if isinstance(redact_job_id, str) and redact_job_id:
+            context.progress(30, "Checking the redaction")
+            redaction_source = _resolve_job(context, redact_job_id, REDACT_KIND, "redaction")
+        else:
+            redaction_source = _existing_redaction_source(context, collection)
 
-    # Checked before looking for the bundle itself: a collection with
-    # redaction switched off, no ``redact_job_id`` chained behind it, and no
-    # earlier redaction found either has neither report nor bundle, and "no
-    # redaction report" is the actionable message — the operator needs to
-    # know to redact it, not that a file search came up empty.
-    redaction_report = redaction_report_from_job(
-        context.conn, context.data_dir, redaction_source.id
-    )
-    if redaction_report is None:
-        raise ValueError(f"Collection {collection.id} has no redaction report to package.")
-    redacted_bundle = _find_artifact(context, redaction_source.id, suffix=".redacted.")
+        # Checked before looking for the bundle itself: a collection with
+        # redaction switched off, no ``redact_job_id`` chained behind it, and
+        # no earlier redaction found either has neither report nor bundle,
+        # and "no redaction report" is the actionable message — the operator
+        # needs to know to redact it, not that a file search came up empty.
+        redaction_report = redaction_report_from_job(
+            context.conn, context.data_dir, redaction_source.id
+        )
+        if redaction_report is None:
+            raise ValueError(f"Collection {collection.id} has no redaction report to package.")
+        redacted_bundle = _find_artifact(context, redaction_source.id, suffix=".redacted.")
 
     findings_json = _find_artifact(context, findings_job.id, name=FINDINGS_ARTIFACT)
     findings_md = _find_artifact(context, findings_job.id, name=FINDINGS_MARKDOWN)
@@ -274,6 +295,12 @@ def build_manifest(
     every rule on — this states it up front. ``rules_disabled`` is lifted
     straight from the redaction report rather than re-derived, so the manifest
     can never disagree with the report sitting next to it in the same archive.
+
+    ``date_start``/``date_end`` come the same way, from whichever report was
+    packaged — an extraction's report carries them when a date range narrowed
+    the bundle (see ``run``), and a full collection's redaction report always
+    has both ``None``, which is what "the whole bundle, unfiltered" means
+    here.
     """
     return {
         "host_name": host_name,
@@ -289,6 +316,8 @@ def build_manifest(
             "sha256": redacted_bundle.sha256,
         },
         "rules_disabled": redaction_report.get("rules_disabled", []),
+        "date_start": redaction_report.get("date_start"),
+        "date_end": redaction_report.get("date_end"),
         "findings_job_id": findings_job.id,
         "inventory_job_id": inventory_job.id,
     }

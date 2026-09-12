@@ -285,6 +285,7 @@ def _redact_tarball(
     counts: dict[str, int],
     *,
     member_filter=None,
+    line_filter=None,
     working_name: str = "repacking.tmp",
     store_name: str | None = None,
     progress_band: tuple[int, int] | None = None,
@@ -309,6 +310,13 @@ def _redact_tarball(
     instead of a second copy of the streaming/salvage/masking logic: a filtered
     extraction and a full redacted copy are the same operation with a different
     answer to "does this member belong in the output?".
+
+    ``line_filter(line)``, when given, decides whether one line of a kept text
+    member survives into the output — applied after masking, in the same pass,
+    so a date-range filter never needs a second read of the archive. Not
+    applied to binary members, which have no lines. This is what lets a date
+    range narrow a file that straddles the window edge (the current
+    ``xensource.log``, say) without a separate loop over its content.
     """
     source_path = artifact_path(context.data_dir, source.job_id, source.id)
     if not source_path.is_file():
@@ -376,7 +384,9 @@ def _redact_tarball(
                     out.addfile(member, _BytesReader(payload))
                     continue
 
-                masked, complete = _mask_stream(body, rules, counts, member.size)
+                masked, complete = _mask_stream(
+                    body, rules, counts, member.size, line_filter=line_filter
+                )
                 if not complete:
                     raise _IncompleteMember(member.name)
                 # The masked body is a different length — a placeholder rarely
@@ -434,7 +444,9 @@ class _IncompleteMember(Exception):
     """
 
 
-def _mask_stream(body, rules, counts: dict[str, int], declared: int) -> tuple[bytes, bool]:
+def _mask_stream(
+    body, rules, counts: dict[str, int], declared: int, *, line_filter=None
+) -> tuple[bytes, bool]:
     """Mask one archive member, returning its new body.
 
     A member is held in memory where the whole bundle never is: tar needs a
@@ -444,6 +456,11 @@ def _mask_stream(body, rules, counts: dict[str, int], declared: int) -> tuple[by
 
     ``surrogateescape`` so one malformed byte in a log does not fail a
     collection: the byte survives the round trip untouched.
+
+    ``line_filter(line)``, when given, is checked on the *masked* line — a
+    dropped line was never a candidate for redaction hit counts either way,
+    since it never reaches the output — and a line it rejects is left out of
+    the returned body entirely, not blanked.
     """
     out: list[str] = []
     read = 0
@@ -454,6 +471,8 @@ def _mask_stream(body, rules, counts: dict[str, int], declared: int) -> tuple[by
             line, hits = rule.apply(line)
             if hits:
                 counts[rule.name] = counts.get(rule.name, 0) + hits
+        if line_filter is not None and not line_filter(line):
+            continue
         out.append(line)
     # Short of what the header declared means the source ran out mid-member.
     return "".join(out).encode("utf-8", errors="surrogateescape"), read >= declared

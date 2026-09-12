@@ -18,6 +18,7 @@ from app import retention
 from app.artifacts import get_artifact, human_bytes, list_for_job
 from app.dependencies import login_required, redirect, serve_artifact, templates, wake_worker
 from app.job_collect import KIND as COLLECT_KIND
+from app.job_extract import KIND as EXTRACT_KIND
 from app.job_findings import KIND as FINDINGS_KIND
 from app.job_inventory import KIND as INVENTORY_KIND
 from app.job_inventory import known_inventory
@@ -26,6 +27,7 @@ from app.job_redact import existing_redaction
 from app.job_support_package import KIND as SUPPORT_PACKAGE_KIND
 from app.job_support_package import package_from_job
 from app.jobs import SUCCEEDED, enqueue, get_job, has_active, list_jobs
+from app.log_categories import category_keys
 from app.redact import enabled_rules
 from app.xo_connection import get_connection
 
@@ -106,6 +108,9 @@ def package_collection(
     job_id: str,
     request: Request,
     username: str = Depends(login_required),
+    date_preset: str = Form(default=""),
+    date_start: str = Form(default=""),
+    date_end: str = Form(default=""),
 ) -> Response:
     """Package an already-stored collection.
 
@@ -127,6 +132,12 @@ def package_collection(
     lives under that job's own id. Reading only the collection's own id would
     call the bundle unredacted forever and re-redact it — 433 MB and a couple
     of minutes — on every single package built from it.
+
+    A date range (any of the three fields non-blank) skips that redaction
+    check entirely and instead chains a date-filtered ``extract_categories``
+    job — every category, narrowed to the range — ahead of the package. See
+    ``job_support_package.run`` for why the extraction's own report and
+    bundle stand in for the collection's full redacted copy.
     """
     db = request.app.state.db
     data_dir = request.app.state.settings.data_dir
@@ -138,10 +149,37 @@ def package_collection(
     if _busy(db):
         return redirect("/support-package?notice=A+collection+or+package+is+already+running.")
 
-    redact_source_job_id = None
     raw_bundle = next(
         (item for item in list_for_job(db, job_id) if item.name.endswith("-logs.tgz")), None
     )
+
+    if date_preset or date_start or date_end:
+        if raw_bundle is None:
+            return redirect(
+                "/support-package?error=That+collection+has+no+log+bundle+to+package+from."
+            )
+        extract_job = enqueue(
+            db,
+            EXTRACT_KIND,
+            {
+                "artifact_id": raw_bundle.id,
+                "categories": list(category_keys()),
+                "include_rotated": True,
+                "date_preset": date_preset,
+                "date_start": date_start,
+                "date_end": date_end,
+            },
+        )
+        _enqueue_chain(request, source_job_id=job_id, extract_job_id=extract_job.id)
+        log.info(
+            "queued %s for existing collection %s by %s, date-filtered",
+            SUPPORT_PACKAGE_KIND,
+            job_id,
+            username,
+        )
+        return redirect("/support-package?notice=Building+the+support+package.")
+
+    redact_source_job_id = None
     if raw_bundle is not None:
         earlier = existing_redaction(db, data_dir, raw_bundle.id, enabled_rules(db))
         if earlier is None:
@@ -162,6 +200,9 @@ def collect_and_package(
     username: str = Depends(login_required),
     host_id: str = Form(...),
     include_audit: str = Form(default=""),
+    date_preset: str = Form(default=""),
+    date_start: str = Form(default=""),
+    date_end: str = Form(default=""),
 ) -> Response:
     """Collect a host's logs, then package the result.
 
@@ -169,6 +210,11 @@ def collect_and_package(
     ahead of the same findings/inventory/package sequence ``package_collection``
     queues, addressed by ``source_job_id`` the same way the Collect page
     chains an extraction behind a fresh collection.
+
+    A date range chains a date-filtered ``extract_categories`` job too,
+    addressed by ``source_job_id`` rather than an artifact id — the same
+    "collect, then extract" path the Collect page already uses, since the
+    collection here has not produced its raw bundle yet at enqueue time.
     """
     db = request.app.state.db
     data_dir = request.app.state.settings.data_dir
@@ -204,7 +250,24 @@ def collect_and_package(
     log.info(
         "queued %s job %s for host %s by %s", COLLECT_KIND, collect_job.id, host.name, username
     )
-    _enqueue_chain(request, source_job_id=collect_job.id)
+
+    extract_job_id = None
+    if date_preset or date_start or date_end:
+        extract_job = enqueue(
+            db,
+            EXTRACT_KIND,
+            {
+                "source_job_id": collect_job.id,
+                "categories": list(category_keys()),
+                "include_rotated": True,
+                "date_preset": date_preset,
+                "date_start": date_start,
+                "date_end": date_end,
+            },
+        )
+        extract_job_id = extract_job.id
+
+    _enqueue_chain(request, source_job_id=collect_job.id, extract_job_id=extract_job_id)
     return redirect(
         f"/support-package?notice=Collecting+from+{host.name}+and+building+the+package."
     )
@@ -262,11 +325,16 @@ def _busy(db) -> bool:
         or has_active(db, FINDINGS_KIND)
         or has_active(db, INVENTORY_KIND)
         or has_active(db, REDACT_KIND)
+        or has_active(db, EXTRACT_KIND)
     )
 
 
 def _enqueue_chain(
-    request: Request, *, source_job_id: str, redact_source_job_id: str | None = None
+    request: Request,
+    *,
+    source_job_id: str,
+    redact_source_job_id: str | None = None,
+    extract_job_id: str | None = None,
 ) -> None:
     """Queue whichever of findings/inventory/redaction the package needs, then
     the package itself.
@@ -286,6 +354,13 @@ def _enqueue_chain(
     queued against it too, addressed by ``source_job_id`` the same way
     ``job_extract`` reads a collection's raw bundle once that collection has
     actually run.
+
+    ``extract_job_id``, when given, is a date-filtered ``extract_categories``
+    job the caller already enqueued (it needs a real raw bundle id up front,
+    unlike the jobs above, so it is queued by the caller rather than here) —
+    passed straight through as the package's own ``extract_job_id`` param. It
+    is never combined with ``redact_source_job_id``: a date range replaces the
+    redaction check entirely, per ``package_collection``.
     """
     db = request.app.state.db
 
@@ -304,6 +379,7 @@ def _enqueue_chain(
             "findings_job_id": findings_job.id,
             "inventory_job_id": inventory_job.id,
             "redact_job_id": redact_job_id,
+            "extract_job_id": extract_job_id,
         },
     )
     wake_worker(request)

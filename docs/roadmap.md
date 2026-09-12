@@ -361,6 +361,8 @@ first row in the user table and continues to work.
 
 ### Date ranges
 
+*In progress — built, not yet confirmed working or version-bumped.*
+
 *Prerequisite met: full-bundle collection shipped in v0.6.0.*
 
 Ask for the window you care about instead of everything on the host.

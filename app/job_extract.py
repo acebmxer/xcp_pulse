@@ -32,6 +32,7 @@ from app.job_redact import build_report as _redact_report
 from app.job_runner import register
 from app.jobs import CANCELLED, FAILED, JobContext, get_job
 from app.log_categories import CATEGORIES, canonical_name, category_by_key, classify
+from app.log_dates import DateRange, line_in_range, mtime_in_range, range_from_form
 from app.redact import enabled_rules
 
 KIND = "extract_categories"
@@ -58,6 +59,19 @@ def run(context: JobContext) -> None:
     claimed, a collection enqueued first is guaranteed to have finished —
     successfully or not, which is why a failed source job is reported here
     rather than assumed.
+
+    A date range is optional, stored as ``date_preset``/``date_start``/
+    ``date_end`` rather than pre-resolved timestamps — the same fields the
+    form submits — so a range is re-derived from the same rules at run time
+    instead of trusting a value computed when the job was queued, which for
+    a relative preset ("last 24 hours") could be minutes stale by the time
+    the job actually runs. When given, it narrows *within* whatever
+    ``include_rotated`` already selected: rotated files outside the window
+    are skipped by modification time (the roadmap's "skip the 28 older
+    files rather than downloading and discarding them" — nothing here can
+    avoid the download, only what gets kept), and any kept text file has its
+    individual lines filtered by parsed timestamp, best-effort, for a file
+    that straddles the window edge (the current, unrotated log).
     """
     job = get_job(context.conn, context.job_id)
     params = job.params if job else {}
@@ -67,6 +81,11 @@ def run(context: JobContext) -> None:
         raise ValueError("No log category was selected.")
 
     include_rotated = bool(params.get("include_rotated"))
+    date_range = range_from_form(
+        preset=params.get("date_preset"),
+        start_date=params.get("date_start"),
+        end_date=params.get("date_end"),
+    )
 
     source = _resolve_source(context, params)
     _check_source(context, source)
@@ -107,6 +126,17 @@ def run(context: JobContext) -> None:
             return canonical_name(member.name) in selected_dirs
         if not include_rotated and _member_is_rotated(member.name):
             return False
+        # A rotated file outside the date range is skipped by modification
+        # time before it is ever read — the point of filtering at the file
+        # level at all, per the module docstring: no smaller download exists
+        # to ask Xen Orchestra for, but a rotated log already on disk that the
+        # range rules out need not be read, masked or written.
+        if (
+            date_range is not None
+            and _member_is_rotated(member.name)
+            and not mtime_in_range(member.mtime, date_range)
+        ):
+            return False
         name = canonical_name(member.name)
         key = category_cache.get(name)
         if key is None:
@@ -117,12 +147,15 @@ def run(context: JobContext) -> None:
         matched[key] += 1
         return True
 
+    line_filter = (lambda line: line_in_range(line, date_range)) if date_range is not None else None
+
     extracted = _redact_tarball(
         context,
         source,
         enabled,
         counts,
         member_filter=member_filter,
+        line_filter=line_filter,
         working_name="extracting.tmp",
         store_name=_output_name(source.name, keys),
         progress_band=(10, 90),
@@ -136,6 +169,7 @@ def run(context: JobContext) -> None:
         categories=keys,
         matched=matched,
         include_rotated=include_rotated,
+        date_range=date_range,
         enabled=enabled,
         counts=counts,
     )
@@ -280,6 +314,7 @@ def build_report(
     categories: list[str],
     matched: dict[str, int],
     include_rotated: bool,
+    date_range: DateRange | None,
     enabled,
     counts: dict[str, int],
 ) -> dict[str, Any]:
@@ -305,6 +340,8 @@ def build_report(
             for key in categories
         ],
         "include_rotated": include_rotated,
+        "date_start": date_range.start if date_range else None,
+        "date_end": date_range.end if date_range else None,
         "created_at": time.time(),
     }
 

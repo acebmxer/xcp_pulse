@@ -39,6 +39,7 @@ import zlib
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.log_dates import DateRange, line_in_range
 from app.redact import RULES, redact_line
 from app.xo_client import Pool, XoClient, XoError
 
@@ -433,6 +434,12 @@ class Report:
     window_days: int = DEFAULT_WINDOW_DAYS
     created_at: float = 0.0
 
+    # Set only when this run used an explicit date range rather than
+    # ``window_days`` — both None means "the last window_days days", which is
+    # the common case and needs no extra fields to describe.
+    date_start: float | None = None
+    date_end: float | None = None
+
     # Redaction rules that were switched off when this ran, by title.
     #
     # Recorded because the evidence below is masked with whatever was on at the
@@ -470,6 +477,26 @@ class Report:
     def is_clean(self) -> bool:
         return not self.findings
 
+    @property
+    def coverage_text(self) -> str:
+        """How to phrase the window this report covers, in one sentence
+        fragment — used by both the page header and the Markdown copy, so
+        the two can never disagree about what a run covered.
+
+        A run with an explicit date range says so with real dates rather
+        than "the last N days", since ``window_days`` is left at its default
+        and would otherwise describe a window this run did not actually use.
+        """
+        if self.date_start is None and self.date_end is None:
+            return f"the last {self.window_days} days"
+        start = _coverage_date(self.date_start) if self.date_start else "the beginning"
+        end = _coverage_date(self.date_end) if self.date_end else "now"
+        return f"{start} to {end}"
+
+
+def _coverage_date(at: float) -> str:
+    return time.strftime("%Y-%m-%d", time.gmtime(at))
+
 
 def collect_findings(
     client: XoClient,
@@ -477,6 +504,7 @@ def collect_findings(
     *,
     enabled=None,
     window_days: int = DEFAULT_WINDOW_DAYS,
+    date_range: DateRange | None = None,
     now: float | None = None,
     progress=None,
 ) -> Report:
@@ -493,13 +521,30 @@ def collect_findings(
 
     One source failing never fails the run. Each is tried, and a failure is
     recorded against that source with its reason.
+
+    ``date_range``, when given, replaces ``window_days`` as the window an
+    event has to fall in to be reported — an explicit start and/or end rather
+    than only "the last N days back from now". ``window_days`` stays the
+    default for a caller that gives neither, so an existing findings run is
+    unaffected. Xen Orchestra's own routes take only a lower bound (see
+    ``XoClient.messages`` and its siblings) — there is no server-side way to
+    ask for "before this date" — so an upper bound is applied here, against
+    records the server already returned, the same way a lower bound already
+    is in ``_classify_events``/``_failed_runs``.
     """
     moment = time.time() if now is None else now
-    cutoff = moment - window_days * 86400
+    if date_range is not None:
+        cutoff = date_range.start if date_range.start is not None else 0.0
+        end = date_range.end
+    else:
+        cutoff = moment - window_days * 86400
+        end = None
     report = Report(
         window_days=window_days,
         created_at=moment,
         rules_disabled=disabled_rule_titles(enabled),
+        date_start=date_range.start if date_range is not None else None,
+        date_end=date_range.end if date_range is not None else None,
     )
 
     steps = (
@@ -507,22 +552,32 @@ def collect_findings(
             SOURCE_MESSAGES,
             10,
             "Reading XAPI messages",
-            lambda: _from_messages(client, cutoff, enabled),
+            lambda: _from_messages(client, cutoff, enabled, end=end),
         ),
-        (SOURCE_ALARMS, 25, "Reading alarms", lambda: _from_alarms(client, cutoff, enabled)),
-        (SOURCE_TASKS, 40, "Reading tasks", lambda: _from_tasks(client, cutoff, enabled)),
+        (
+            SOURCE_ALARMS,
+            25,
+            "Reading alarms",
+            lambda: _from_alarms(client, cutoff, enabled, end=end),
+        ),
+        (
+            SOURCE_TASKS,
+            40,
+            "Reading tasks",
+            lambda: _from_tasks(client, cutoff, enabled, end=end),
+        ),
         (SOURCE_PATCHES, 55, "Checking patches", lambda: _from_patches(client, pools, enabled)),
         (
             SOURCE_BACKUPS,
             70,
             "Reading backup runs",
-            lambda: _from_backups(client, cutoff, moment, enabled),
+            lambda: _from_backups(client, cutoff, moment, enabled, end=end),
         ),
         (
             SOURCE_RESTORES,
             80,
             "Reading restore runs",
-            lambda: _from_restores(client, cutoff, enabled),
+            lambda: _from_restores(client, cutoff, enabled, end=end),
         ),
         (
             SOURCE_DASHBOARD,
@@ -750,7 +805,9 @@ _LOG_SOURCE_FAMILIES: dict[str, str] = {
 }
 
 
-def collect_log_findings(bundle_path, *, enabled=None, progress=None) -> Report:
+def collect_log_findings(
+    bundle_path, *, enabled=None, date_range: DateRange | None = None, progress=None
+) -> Report:
     """Inspect a collected tar bundle without contacting Xen Orchestra.
 
     ``progress(percent, step)``, when given, is called once per archive member
@@ -766,6 +823,13 @@ def collect_log_findings(bundle_path, *, enabled=None, progress=None) -> Report:
     ``Report.truncated`` says so, rather than the whole run failing on the
     ``EOFError`` the last few missing bytes raise. Nothing readable at all is a
     different matter and still raises.
+
+    ``date_range``, when given, narrows which lines can produce a finding —
+    the same best-effort, keep-on-failure-to-parse rule ``log_dates.line_in_range``
+    applies to extraction, so a line whose timestamp cannot be parsed is never
+    excluded by this. Only file-level filtering (which files are scanned at
+    all) is left to the caller — this always reads every member offered to it,
+    since a bundle read for findings has no rotated-history toggle to filter by.
     """
     grouped: dict[tuple[str, str], dict[str, Any]] = {}
     examined = {source: 0 for source, *_ in LOG_FINDING_RULES}
@@ -786,6 +850,8 @@ def collect_log_findings(bundle_path, *, enabled=None, progress=None) -> Report:
                     if handle is not None:
                         for raw_line in handle:
                             line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
+                            if date_range is not None and not line_in_range(line, date_range):
+                                continue
                             for source, severity, title, action, pattern in LOG_FINDING_RULES:
                                 if not pattern.search(line):
                                     continue
@@ -838,19 +904,25 @@ def collect_log_findings(bundle_path, *, enabled=None, progress=None) -> Report:
         created_at=time.time(),
         rules_disabled=disabled_rule_titles(enabled),
         truncated=truncated,
+        date_start=date_range.start if date_range is not None else None,
+        date_end=date_range.end if date_range is not None else None,
     )
 
 
 # -- sources -------------------------------------------------------------
 
 
-def _from_messages(client: XoClient, cutoff: float, enabled) -> tuple[list[Finding], int]:
+def _from_messages(
+    client: XoClient, cutoff: float, enabled, *, end: float | None = None
+) -> tuple[list[Finding], int]:
     """Findings from XAPI messages, grouped so a repeat is one row with a count."""
     records = client.messages(cutoff)
-    return _classify_events(records, cutoff, enabled, SOURCE_MESSAGES), len(records)
+    return _classify_events(records, cutoff, enabled, SOURCE_MESSAGES, end=end), len(records)
 
 
-def _from_alarms(client: XoClient, cutoff: float, enabled) -> tuple[list[Finding], int]:
+def _from_alarms(
+    client: XoClient, cutoff: float, enabled, *, end: float | None = None
+) -> tuple[list[Finding], int]:
     """Findings from alarms.
 
     An alarm XO has not matched to a rule is still reported, at warning, rather
@@ -858,7 +930,9 @@ def _from_alarms(client: XoClient, cutoff: float, enabled) -> tuple[list[Finding
     likely to matter than an unrecognised message.
     """
     records = client.alarms(cutoff)
-    findings = _classify_events(records, cutoff, enabled, SOURCE_ALARMS, report_unknown=True)
+    findings = _classify_events(
+        records, cutoff, enabled, SOURCE_ALARMS, report_unknown=True, end=end
+    )
     return findings, len(records)
 
 
@@ -869,6 +943,7 @@ def _classify_events(
     source: str,
     *,
     report_unknown: bool = False,
+    end: float | None = None,
 ) -> list[Finding]:
     """Turn message-shaped records into findings, one row per repeated event.
 
@@ -876,12 +951,17 @@ def _classify_events(
     the same SR are one finding that happened four times, not four findings.
     The evidence and time kept are the most recent occurrence's, because that
     is the state the pool is in now.
+
+    ``end``, when given, additionally excludes anything after it — Xen
+    Orchestra's own routes have no upper-bound filter (see ``collect_findings``),
+    so a date range's end is enforced here against records the server already
+    returned.
     """
     grouped: dict[tuple[str, str], dict[str, Any]] = {}
 
     for record in records:
         at = _seconds(record.get("time"))
-        if at is None or at < cutoff:
+        if at is None or at < cutoff or (end is not None and at > end):
             continue
 
         name = str(record.get("name") or "").strip()
@@ -949,7 +1029,9 @@ def _message_rule(name: str) -> tuple[str, str, str] | None:
     return None
 
 
-def _from_tasks(client: XoClient, cutoff: float, enabled) -> tuple[list[Finding], int]:
+def _from_tasks(
+    client: XoClient, cutoff: float, enabled, *, end: float | None = None
+) -> tuple[list[Finding], int]:
     """Findings from failed XO tasks.
 
     Failed logins are dropped. They are the largest group on a real instance
@@ -968,7 +1050,7 @@ def _from_tasks(client: XoClient, cutoff: float, enabled) -> tuple[list[Finding]
             continue
 
         at = _millis(record.get("end")) or _millis(record.get("start"))
-        if at is None or at < cutoff:
+        if at is None or at < cutoff or (end is not None and at > end):
             continue
 
         message = _task_message(record)
@@ -1089,21 +1171,27 @@ def _from_patches(client: XoClient, pools: list[Pool], enabled) -> tuple[list[Fi
 
 
 def _from_backups(
-    client: XoClient, cutoff: float, now: float, enabled
+    client: XoClient, cutoff: float, now: float, enabled, *, end: float | None = None
 ) -> tuple[list[Finding], int]:
     """Findings from backup runs: failures, and jobs that have stopped running.
 
     A job whose last run failed and a job that has not run at all are different
     problems with the same consequence, so both are reported. The second is the
     one nobody notices, because every dashboard it appears on looks green.
+
+    Staleness (``_stale_backups``) is a state check against the *latest* run
+    regardless of ``end`` — a date range narrows which failures are reported,
+    not whether a job has stopped firing right now.
     """
     records = client.backup_logs(cutoff)
-    findings = _failed_runs(records, cutoff, enabled, SOURCE_BACKUPS, "Backup")
+    findings = _failed_runs(records, cutoff, enabled, SOURCE_BACKUPS, "Backup", end=end)
     findings.extend(_stale_backups(records, now, enabled))
     return findings, len(records)
 
 
-def _from_restores(client: XoClient, cutoff: float, enabled) -> tuple[list[Finding], int]:
+def _from_restores(
+    client: XoClient, cutoff: float, enabled, *, end: float | None = None
+) -> tuple[list[Finding], int]:
     """Findings from restore runs.
 
     A failed restore is reported at critical rather than warning: a backup that
@@ -1111,7 +1199,9 @@ def _from_restores(client: XoClient, cutoff: float, enabled) -> tuple[list[Findi
     the worst possible moment.
     """
     records = client.restore_logs(cutoff)
-    findings = _failed_runs(records, cutoff, enabled, SOURCE_RESTORES, "Restore", severity=CRITICAL)
+    findings = _failed_runs(
+        records, cutoff, enabled, SOURCE_RESTORES, "Restore", severity=CRITICAL, end=end
+    )
     return findings, len(records)
 
 
@@ -1123,6 +1213,7 @@ def _failed_runs(
     noun: str,
     *,
     severity: str = WARNING,
+    end: float | None = None,
 ) -> list[Finding]:
     """One finding per job whose runs failed, counting the failures."""
     grouped: dict[str, dict[str, Any]] = {}
@@ -1133,7 +1224,7 @@ def _failed_runs(
             continue
 
         at = _millis(record.get("end")) or _millis(record.get("start"))
-        if at is None or at < cutoff:
+        if at is None or at < cutoff or (end is not None and at > end):
             continue
 
         name = str(record.get("jobName") or record.get("jobId") or "unnamed job")

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_date_range.html" as date_range %}
 {% block title %}Findings — XCP Pulse{% endblock %}
 
 {% block content %}
@@ -25,13 +26,14 @@
         It downloads nothing and takes a second or two.
       </p>
     </div>
-    <form method="post" action="/findings" class="inline">
+    <form method="post" action="/findings" class="inline" id="findings-form">
       <button type="submit" class="btn btn-primary"
               {% if not connection or running %}disabled{% endif %}>
         {% if running %}Running…{% else %}Run now{% endif %}
       </button>
     </form>
   </div>
+  {{ date_range.date_range_picker("findings-form") }}
   {% if active_job and active_job.is_active %}
   <div class="progress" role="progressbar" aria-valuenow="{{ active_job.progress }}"
        aria-valuemin="0" aria-valuemax="100">
@@ -60,7 +62,7 @@
       </p>
     </div>
     {% if log_artifacts %}
-    <form method="post" action="/findings/from-logs" class="inline">
+    <form method="post" action="/findings/from-logs" class="inline" id="log-findings-form">
       <label for="log-artifact">Bundle</label>
       <select id="log-artifact" name="artifact_id"{% if log_running %} disabled{% endif %}>
         {% for artifact in log_artifacts %}
@@ -75,6 +77,9 @@
     <p class="note">Collect a host log bundle first. Stored <code>*-logs.tgz</code> files will appear here.</p>
     {% endif %}
   </div>
+  {% if log_artifacts %}
+  {{ date_range.date_range_picker("log-findings-form") }}
+  {% endif %}
   {% if active_log_job and active_log_job.is_active %}
   <div class="progress" role="progressbar" aria-valuenow="{{ active_log_job.progress }}"
        aria-valuemin="0" aria-valuemax="100">
@@ -167,7 +172,7 @@
       {% endif %}
     </h2>
     <p class="inventory-source">
-      Read {{ report.created_at | age }}, covering the last {{ window_days }} days
+      Read {{ report.created_at | age }}, covering {{ report | date_coverage }}
     </p>
   </div>
 
@@ -238,8 +243,8 @@
   <span class="empty-mark">◇</span>
   <h2>Nothing to report</h2>
   <p>
-    Every source that could be read reported nothing in the last
-    {{ window_days }} days.
+    Every source that could be read reported nothing, covering
+    {{ report | date_coverage }}.
   </p>
 </div>
 {% else %}

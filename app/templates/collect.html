@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% import "_date_range.html" as date_range %}
 {% block title %}Collect — XCP Pulse{% endblock %}
 
 {% block content %}
@@ -66,6 +67,13 @@
     <a href="/jobs">Jobs</a> once you know which rules you want — useful if
     you plan to change a rule before sending anything.
   </p>
+
+  <p class="note">
+    A date range collects and redacts as normal, then extracts every category
+    narrowed to that window into a second, smaller archive — the full bundle
+    is still downloaded either way, this only shrinks what is kept afterwards.
+  </p>
+  {{ date_range.date_range_picker("collect-form") }}
 
   <details class="category-picker">
     <summary>Also extract specific log categories after collecting</summary>
@@ -241,6 +249,7 @@
           <input type="checkbox" name="include_rotated" value="1" form="extract-form-{{ job.id }}">
           <span>Include rotated history, not just current logs</span>
         </label>
+        {{ date_range.date_range_picker("extract-form-" ~ job.id) }}
         <div class="row-actions">
           <button type="submit" class="btn btn-quiet" {% if any_active %}disabled{% endif %}>
             Extract

@@ -124,6 +124,15 @@ rather than estimated:
   collect a host and package it in one action. Building one always runs a
   fresh findings check and inventory refresh alongside it, so it never ships
   with a gap.
+- **Narrow any of the above to a date range** — presets for the last 24 hours,
+  7 days, 30 days, since the last reboot, or a custom start/end. Xen
+  Orchestra's `logs.tgz` still has no date filter of its own, so the first
+  download of a bundle is unchanged; a range only shrinks what gets kept
+  afterwards — a rotated log file outside the window is skipped by its
+  modification time, and a file straddling the window edge has its lines
+  filtered by a best-effort timestamp parse. Available when extracting log
+  categories, reading findings from the API or from collected logs, and
+  building a support package.
 
 ## Configuration
 

@@ -526,6 +526,43 @@ def test_no_categories_ticked_queues_no_extraction(with_inventory: TestClient) -
     assert list_jobs(app.state.db, kind=EXTRACT_KIND) == []
 
 
+def test_a_date_range_with_no_categories_ticked_extracts_every_category(
+    with_inventory: TestClient,
+) -> None:
+    """A date range alone queues the same extraction every category would —
+    an operator narrowing by date should not also have to tick every box."""
+    from app.log_categories import category_keys
+
+    app = with_inventory.app  # type: ignore[attr-defined]
+
+    with_inventory.post("/collect", data={"host_id": HOST.id, "date_preset": "7d"})
+    with patch("app.job_collect.build_client", return_value=_FakeClient()):
+        run_pending_jobs(app)
+
+    extract_job = list_jobs(app.state.db, kind=EXTRACT_KIND, limit=1)[0]
+    assert set(extract_job.params["categories"]) == set(category_keys())
+    assert extract_job.params["date_preset"] == "7d"
+    # Rotated files must not be excluded outright before the date filter
+    # gets a chance to run — otherwise the whole point of the range (keeping
+    # rotated history inside the window) never happens.
+    assert extract_job.params["include_rotated"] is True
+
+
+def test_date_range_and_ticked_categories_both_apply(with_inventory: TestClient) -> None:
+    app = with_inventory.app  # type: ignore[attr-defined]
+
+    with_inventory.post(
+        "/collect",
+        data={"host_id": HOST.id, "categories": ["xapi"], "date_preset": "7d"},
+    )
+    with patch("app.job_collect.build_client", return_value=_FakeClient()):
+        run_pending_jobs(app)
+
+    extract_job = list_jobs(app.state.db, kind=EXTRACT_KIND, limit=1)[0]
+    assert extract_job.params["categories"] == ["xapi"]
+    assert extract_job.params["date_preset"] == "7d"
+
+
 def test_extracting_from_an_existing_collection(with_inventory: TestClient) -> None:
     app = with_inventory.app  # type: ignore[attr-defined]
     job_id = _collect(with_inventory)

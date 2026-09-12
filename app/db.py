@@ -8,6 +8,7 @@ collection) by appending a migration, never by editing an applied one.
 from __future__ import annotations
 
 import sqlite3
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -137,6 +138,72 @@ def connect(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
+class _LockedConnection:
+    """A ``sqlite3.Connection`` wrapper that serialises every call with a lock.
+
+    FastAPI runs synchronous route handlers in a thread pool, so a single
+    request-serving connection (``app.state.db``) is called from whichever
+    thread happens to be handling a given request — several at once, under
+    load. ``check_same_thread=False`` only disables Python's same-thread
+    assertion; it does not make SQLite's C-level connection object safe for
+    concurrent statement execution from multiple threads, and two requests
+    landing at the same instant can interleave cursor state on the shared
+    connection. Reported as a real crash: ``/jobs`` returned a 500 with
+    ``IndexError: tuple index out of range`` reading back a ``sqlite3.Row``
+    that a concurrent query had corrupted mid-fetch, while the underlying
+    data was intact — a second, uncontended read of the same rows worked.
+
+    This wraps the connection itself (rather than requiring every call site to
+    take a lock, which the whole codebase would have to remember to do) so
+    ``app.state.db`` behaves exactly like a plain connection to every caller,
+    with every method — ``execute``, ``executescript``, ``executemany``,
+    ``commit``, ``rollback``, ``close`` and attribute access alike — going
+    through one re-entrant lock. Re-entrant because a caller inside a
+    ``with transaction(conn):`` block that then calls another function taking
+    the same ``conn`` must not deadlock against itself on the same thread.
+
+    Only the **web app's** connection is wrapped, via ``init_db`` below. The
+    background job worker (``job_runner.JobWorker``) opens and uses its own
+    connection on a single dedicated thread, so it was never part of this
+    race and does not need the overhead of a lock it cannot contend.
+    """
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+        self._lock = threading.RLock()
+
+    def execute(self, *args, **kwargs):
+        with self._lock:
+            return self._conn.execute(*args, **kwargs)
+
+    def executescript(self, *args, **kwargs):
+        with self._lock:
+            return self._conn.executescript(*args, **kwargs)
+
+    def executemany(self, *args, **kwargs):
+        with self._lock:
+            return self._conn.executemany(*args, **kwargs)
+
+    def commit(self) -> None:
+        with self._lock:
+            self._conn.commit()
+
+    def rollback(self) -> None:
+        with self._lock:
+            self._conn.rollback()
+
+    def close(self) -> None:
+        with self._lock:
+            self._conn.close()
+
+    def __getattr__(self, name: str):
+        # Anything not overridden above (row_factory reads, cursor(), etc.)
+        # passes straight through to the real connection, unlocked — those
+        # are either read-only attribute access or already-safe factory calls
+        # that do not themselves touch shared cursor state.
+        return getattr(self._conn, name)
+
+
 @contextmanager
 def transaction(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
     """Run a block in a transaction, committing on success."""
@@ -169,7 +236,16 @@ def migrate(conn: sqlite3.Connection) -> int:
 
 
 def init_db(db_path: Path) -> sqlite3.Connection:
-    """Open the database and bring its schema up to date."""
+    """Open the database and bring its schema up to date.
+
+    Used for the web app's own connection (``app.state.db`` in ``main.py``),
+    which is shared across whichever thread-pool thread happens to be serving
+    a given request — so the connection this returns is wrapped in
+    ``_LockedConnection`` to serialise concurrent access. See its docstring
+    for the crash this fixes. The background job worker calls ``connect``
+    directly instead, on its own single dedicated thread, and does not need
+    the wrapper.
+    """
     conn = connect(db_path)
     migrate(conn)
-    return conn
+    return _LockedConnection(conn)

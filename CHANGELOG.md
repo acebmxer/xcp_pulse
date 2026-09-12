@@ -12,6 +12,34 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ### Added
 
+- **Date ranges narrow what a collection, extraction, findings run or support
+  package keeps and reports, instead of always covering the whole bundle or
+  the last 30 days.** A date-range picker — presets for the last 24 hours, 7
+  days, 30 days, since the last reboot, or a custom start/end — now appears on
+  the Collect page (both when collecting and when extracting from an
+  existing collection), the Findings page (both the API run and the log
+  analysis), and the Support package page (both "Collect + Package" and
+  "Package this collection"). Xen Orchestra's own routes still have no date
+  filter of any kind, so the first download of a bundle is unchanged — a range
+  only affects what gets kept and shown afterwards, exactly as the roadmap
+  describes. A rotated log file outside the window is skipped by its
+  modification time before it is ever read; a file that straddles the window
+  edge (the current, unrotated log) has its individual lines filtered by a
+  best-effort timestamp parser covering XAPI's own log format and classic
+  syslog — a line whose timestamp cannot be parsed is always kept, never
+  silently dropped. On the Collect page, a date range applies whether or not
+  any log categories are ticked: with none ticked, it queues an extraction of
+  every category narrowed to that window (the same shape a date range takes
+  on the Support package page), so narrowing by date doesn't also require
+  picking categories by hand; picking categories still works as before, with
+  the range applied to whichever ones are ticked. A date range on the API
+  findings run replaces the fixed "last 30 days" window with an explicit
+  start and/or end; on the log findings analysis it narrows which lines can
+  raise a finding the same best-effort way extraction does. A date range on
+  the Support package page ships a date-filtered log bundle in place of the
+  full redacted copy, and narrows the findings packaged alongside it to
+  match.
+
 - **Redaction can now happen on demand instead of only at collection time.**
   A collection always redacted immediately, using whichever rules happened to
   be switched on at that moment — changing a rule afterwards meant collecting
@@ -47,6 +75,25 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
   `docs/architecture.md` now states all of this under "Shape", and notes that
   the base image tag floats with upstream so the exact Debian point release
   isn't pinned by this project.
+
+### Fixed
+
+- **A concurrent request could crash any page reading jobs or artifacts.**
+  FastAPI runs synchronous routes in a thread pool, and every request read and
+  wrote through the one connection stored in `app.state.db` — so that
+  connection was called from whichever thread happened to be serving a given
+  request, several at once under load. `check_same_thread=False` only
+  disables Python's same-thread assertion; it does not make SQLite's C-level
+  connection object safe for concurrent statement execution, and two requests
+  landing at the same instant could interleave cursor state on the shared
+  connection. Reproduced live: extracting log categories right after a
+  collection (one background job, one page poll, close together) turned
+  `GET /jobs` into a 500 with `IndexError: tuple index out of range` reading
+  back a `sqlite3.Row`, while the underlying data was intact — a second,
+  uncontended request for the same page worked. `app.state.db` is now wrapped
+  in a lock that serialises every call, transparently to every existing call
+  site; the background job worker keeps its own separate, single-threaded
+  connection and was never part of this race.
 
 ## [0.7.1] - 2026-09-11
 

@@ -25,7 +25,7 @@ from app.job_extract import report_from_job as extract_report_from_job
 from app.job_inventory import known_inventory
 from app.job_redact import REPORT_ARTIFACT, existing_redaction, report_from_job, report_rows
 from app.jobs import enqueue, get_job, has_active, list_jobs
-from app.log_categories import CATEGORIES
+from app.log_categories import CATEGORIES, category_keys
 from app.redact import enabled_rules
 from app.xo_connection import get_connection
 
@@ -126,6 +126,9 @@ def start_collection(
     redact: str = Form(default=""),
     categories: list[str] = _CATEGORIES_FIELD,
     include_rotated: str = Form(default=""),
+    date_preset: str = Form(default=""),
+    date_start: str = Form(default=""),
+    date_end: str = Form(default=""),
 ) -> Response:
     """Queue a collection for one host, and optionally an extraction after it.
 
@@ -150,6 +153,12 @@ def start_collection(
     the collection has not produced its bundle yet at this point in the
     request. See ``job_extract.run`` for how that is resolved once the
     collection has actually finished.
+
+    A date range with no categories ticked queues that same extraction job
+    anyway, against every category — the same "narrow instead of picking
+    categories" shape the Support package page's date range takes: an
+    operator narrowing by date does not also want to have to think about
+    which log families to tick.
     """
     db = request.app.state.db
     data_dir = request.app.state.settings.data_dir
@@ -182,6 +191,10 @@ def start_collection(
     log.info("queued %s job %s for host %s by %s", COLLECT_KIND, job.id, host.name, username)
 
     keys = _valid_category_keys(categories)
+    has_date_range = bool(date_preset or date_start or date_end)
+    if not keys and has_date_range:
+        keys = list(category_keys())
+
     if keys:
         extract_job = enqueue(
             db,
@@ -189,7 +202,10 @@ def start_collection(
             {
                 "source_job_id": job.id,
                 "categories": keys,
-                "include_rotated": bool(include_rotated),
+                "include_rotated": bool(include_rotated) or has_date_range,
+                "date_preset": date_preset,
+                "date_start": date_start,
+                "date_end": date_end,
             },
         )
         log.info(
@@ -210,6 +226,9 @@ def start_extraction(
     username: str = Depends(login_required),
     categories: list[str] = _CATEGORIES_FIELD,
     include_rotated: str = Form(default=""),
+    date_preset: str = Form(default=""),
+    date_start: str = Form(default=""),
+    date_end: str = Form(default=""),
 ) -> Response:
     """Queue an extraction from one already-stored collection's raw bundle.
 
@@ -248,6 +267,9 @@ def start_extraction(
             "artifact_id": bundle.id,
             "categories": keys,
             "include_rotated": bool(include_rotated),
+            "date_preset": date_preset,
+            "date_start": date_start,
+            "date_end": date_end,
         },
     )
     wake_worker(request)
