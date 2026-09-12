@@ -249,6 +249,29 @@ this plainly, rather than surfacing a bare `403`.
 > Enterprise.** Role-based access control is not available on the lower XOA
 > tiers. Installations from the sources are not restricted.
 
+### v0.8.0 — Date ranges
+
+Ask for the window you care about instead of everything on the host.
+
+- A date-range picker wherever a range makes sense: collection, category
+  downloads, findings, the support package
+- Rotated logs selected by **modification time**, so "the last three days" skips
+  the 28 older `xensource.log.N.gz` files rather than downloading and discarding
+- Line-level filtering by parsed timestamp for files straddling the window edge
+- Presets — last 24 hours, last 7 days, since the last reboot
+
+Of a measured 433 MB bundle, 418 MB is rotated history, so a narrow window is a
+large saving on what you keep and send.
+
+> [!NOTE]
+> **The first collection still downloads the whole bundle.** Xen Orchestra's
+> `logs.tgz` accepts no date parameter and supports no range requests, so
+> filtering happens here, after the download. A date range shrinks what you keep
+> and send, not the 100 seconds of the initial fetch.
+>
+> There is nothing to filter until a bundle exists, which is why this follows
+> collection rather than standing on its own.
+
 ---
 
 ## Planned — free to pick up in any order
@@ -358,33 +381,6 @@ More than one person can use XCP Pulse, with their own credentials.
 
 Migration is automatic: the existing environment-configured admin becomes the
 first row in the user table and continues to work.
-
-### Date ranges
-
-*In progress — built, not yet confirmed working or version-bumped.*
-
-*Prerequisite met: full-bundle collection shipped in v0.6.0.*
-
-Ask for the window you care about instead of everything on the host.
-
-- A date-range picker wherever a range makes sense: collection, category
-  downloads, findings, the support package
-- Rotated logs selected by **modification time**, so "the last three days" skips
-  the 28 older `xensource.log.N.gz` files rather than downloading and discarding
-- Line-level filtering by parsed timestamp for files straddling the window edge
-- Presets — last 24 hours, last 7 days, since the last reboot
-
-Of a measured 433 MB bundle, 418 MB is rotated history, so a narrow window is a
-large saving on what you keep and send.
-
-> [!NOTE]
-> **The first collection still downloads the whole bundle.** Xen Orchestra's
-> `logs.tgz` accepts no date parameter and supports no range requests, so
-> filtering happens here, after the download. A date range shrinks what you keep
-> and send, not the 100 seconds of the initial fetch.
->
-> There is nothing to filter until a bundle exists, which is why this follows
-> collection rather than standing on its own.
 
 ---
 

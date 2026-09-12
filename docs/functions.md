@@ -118,7 +118,7 @@ genuinely invalidates rather than merely asking the browser to forget.
 | `redirect` | `(url: str, status_code: int = 303) -> RedirectResponse` | Redirect, defaulting to see-other | `routes/auth` | v0.1.0 |
 | `wake_worker` | `(request) -> None` | Tells the job worker to look now rather than at its next poll | every route that enqueues a job | v0.6.0 |
 | `serve_artifact` | `(request, artifact_id: str, *, on_error: str) -> Response` | Streams one stored artifact to the browser, shared by every page that lists artifacts | `routes.collect.download_artifact`, `routes.jobs.download_job_artifact` | v0.6.3 |
-| `date_coverage` | `(report, fallback: str = "") -> str` | How to phrase a findings report's date window, delegating to `Report.coverage_text` so the page and the downloaded Markdown never disagree | `findings.html`, as the `date_coverage` filter | unreleased |
+| `date_coverage` | `(report, fallback: str = "") -> str` | How to phrase a findings report's date window, delegating to `Report.coverage_text` so the page and the downloaded Markdown never disagree | `findings.html`, as the `date_coverage` filter | 0.8.0 |
 
 `templates` is the shared Jinja environment; `RedirectToLogin` is the exception
 `login_required` raises, handled in `main.create_app`.
@@ -275,7 +275,7 @@ job lands on them.
 | Function | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
 | `inventory_from_job` | `(conn, data_dir, job_id: str) -> Inventory \| None` | Rebuilds the Inventory a job stored | `routes.dashboard.dashboard`, `known_inventory` | v0.4.0 |
-| `known_inventory` | `(conn, data_dir) -> Inventory` | The last successful refresh's pools and hosts, or an empty Inventory | `routes.collect`, `routes.support_package`, `job_findings.run` | unreleased |
+| `known_inventory` | `(conn, data_dir) -> Inventory` | The last successful refresh's pools and hosts, or an empty Inventory | `routes.collect`, `routes.support_package`, `job_findings.run` | 0.8.0 |
 | `run` | `(context: JobContext) -> None` | Reads XO and stores the inventory as an artifact | `job_runner`, via `register` | v0.4.0 |
 
 `inventory_from_job` drops unknown keys and leaves missing ones at their
@@ -372,11 +372,11 @@ module does not try to cover every one of them.
 
 | Function | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
-| `line_in_range` | `(line: str, date_range: DateRange \| None, *, now: float \| None = None) -> bool` | Whether one log line belongs in a date-filtered output; unparsable lines always pass | `job_extract.run`, `findings.collect_log_findings` | unreleased |
-| `mtime_in_range` | `(mtime: float, date_range: DateRange \| None) -> bool` | Whether a file's modification time falls inside the range | `job_extract.run` | unreleased |
-| `parse_log_timestamp` | `(line: str, *, now: float \| None = None) -> float \| None` | Best-effort Unix timestamp from the start of one log line, or `None` | `line_in_range` | unreleased |
-| `preset_range` | `(key: str, *, now: float \| None = None, uptime_seconds: float \| None = None) -> DateRange \| None` | The range a preset key (`24h`, `7d`, `30d`, `since_reboot`) resolves to | `range_from_form` | unreleased |
-| `range_from_form` | `(*, preset: str \| None, start_date: str \| None, end_date: str \| None, now: float \| None = None, uptime_seconds: float \| None = None) -> DateRange \| None` | The range a date-picker form submitted, or `None` for "no filtering" | `job_extract.run`, `job_findings.run`, `job_log_findings.run`, `routes.collect`, `routes.support_package` | unreleased |
+| `line_in_range` | `(line: str, date_range: DateRange \| None, *, now: float \| None = None) -> bool` | Whether one log line belongs in a date-filtered output; unparsable lines always pass | `job_extract.run`, `findings.collect_log_findings` | 0.8.0 |
+| `mtime_in_range` | `(mtime: float, date_range: DateRange \| None) -> bool` | Whether a file's modification time falls inside the range | `job_extract.run` | 0.8.0 |
+| `parse_log_timestamp` | `(line: str, *, now: float \| None = None) -> float \| None` | Best-effort Unix timestamp from the start of one log line, or `None` | `line_in_range` | 0.8.0 |
+| `preset_range` | `(key: str, *, now: float \| None = None, uptime_seconds: float \| None = None) -> DateRange \| None` | The range a preset key (`24h`, `7d`, `30d`, `since_reboot`) resolves to | `range_from_form` | 0.8.0 |
+| `range_from_form` | `(*, preset: str \| None, start_date: str \| None, end_date: str \| None, now: float \| None = None, uptime_seconds: float \| None = None) -> DateRange \| None` | The range a date-picker form submitted, or `None` for "no filtering" | `job_extract.run`, `job_findings.run`, `job_log_findings.run`, `routes.collect`, `routes.support_package` | 0.8.0 |
 
 ## `app/job_extract.py` — the Extract categories job
 
