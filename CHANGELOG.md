@@ -78,6 +78,19 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ### Fixed
 
+- **The published image carried dozens of known CVEs in Debian base-OS
+  packages, including several critical ones in `perl-base` (arbitrary Perl
+  execution via a crafted `Archive::Tar` symlink or output glob, among
+  others).** The Dockerfile never runs `apt-get` — `python:3.14-slim` is used
+  as-is — so the image only picked up Debian's security point-release fixes
+  whenever Docker Hub happened to refresh that tag, which could lag well
+  behind Debian's own patches. Both build stages now run
+  `apt-get update && apt-get upgrade -y` right after `FROM`, so every build
+  pulls the latest point release for the base OS regardless of tag timing.
+  This alone moves `perl-base` to `5.40.1-6+deb13u1`, `libc6`/`libc-bin` to
+  `2.41-12+deb13u4`, `libpcre2-8-0` to `10.46-1~deb13u2`, `libsqlite3-0` to
+  `3.46.1-7+deb13u2`, and `gzip` to `1.13-1+deb13u1` in a rebuilt image.
+
 - **A concurrent request could crash any page reading jobs or artifacts.**
   FastAPI runs synchronous routes in a thread pool, and every request read and
   wrote through the one connection stored in `app.state.db` — so that

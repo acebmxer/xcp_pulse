@@ -20,6 +20,11 @@ check the image at `docker run --rm ghcr.io/acebmxer/xcp_pulse:<tag> cat
 
 Other facts about the image worth knowing before debugging or hardening it:
 
+- **Every build runs `apt-get upgrade`** in both stages, right after `FROM`.
+  The app never installs OS packages itself, but the base image's own
+  packages (glibc, perl, etc.) still carry Debian's security fixes, and this
+  keeps the image on the latest point release for those on every build rather
+  than only whenever Docker Hub happens to refresh the `slim` tag.
 - **Runs as a non-root user**, `pulse` (uid 10001) — not root, and not the
   base image's default user.
 - **Cannot install packages at runtime.** pip, setuptools and wheel are
