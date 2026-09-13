@@ -75,7 +75,10 @@ streaming download.
 | `app/retention.py` | What stored collections to delete, always previewed before it acts. |
 | `app/artifacts.py` | What a job produced: files on the volume, metadata in the database. |
 | `app/redact.py` | The masking rules. The **only** place a redaction pattern is written. |
+| `app/docs_render.py` | Renders the in-app User manual (`/help`): `docs/user-guide/` (one page per feature area, collapsible in the sidebar), plus Installation, Configuration and Architecture. |
+| `app/tls.py` | Validates an uploaded TLS certificate/key pair and signals nginx to reload it (built-in HTTPS). |
 | `app/security.py` | Password hashing, sessions, login throttling. |
+| `app/totp.py` | Optional TOTP two-factor: code generation/verification, backup codes, and the QR code rendered for enrollment. |
 | `app/dependencies.py` | Shared route plumbing: the template environment, `login_required`. |
 | `app/routes/` | HTTP endpoints, one module per area. |
 | `app/main.py` | Builds the app and wires it together. |
@@ -115,6 +118,27 @@ download leaves a half-written file and an open connection. Cancellation is
 recorded on the row, and the body notices it at its next progress report —
 which is why reporting progress and checking for cancellation are the same
 call.
+
+## Self-update does not use the job queue
+
+Applying an update (`app/update.py`) deliberately does **not** go through
+`app/jobs.py`, even though it is exactly the kind of long-running background
+work that system exists for. The reason is what it has to survive: a
+successful update replaces *this container*, and the job queue's model —
+the same process that started a job stays alive to finish it, and a job row
+still `running` at startup means the process that owned it died — is the
+opposite of correct here. Reaching startup with an update `in_progress` means
+the update **worked**, not that it needs to be reaped, so `app/update.py`
+keeps its own single-row `update_state` table and its own thread rather than
+teaching the shared queue an exception to its restart-means-failure rule.
+
+The mechanism, and why applying needs the Docker socket at all, is opt-in and
+covered in [Configuration](configuration.md#xcp_pulse_enable_self_update) and
+the [Update](user-guide/update.md) user guide page — the short version
+is that a container cannot reliably replace itself, so a throwaway container
+outside the compose project does the recreation, and the *replacement*
+container confirms success on its own startup rather than the process that
+triggered it (which does not survive to see the outcome).
 
 ## The artifact store
 
@@ -168,17 +192,87 @@ The IPv6 pattern is written as whole-address alternatives rather than "a run of
 hex and colons", because the looser form matched the `12:30:45` timestamp that
 prefixes nearly every syslog line.
 
-## Authentication
+## Authentication and authorization
 
-A single admin user, whose Argon2id password hash comes from the environment.
+Accounts are rows in a `users` table, each with an Argon2id password hash and
+one of three roles: **admin**, **operator**, or **viewer**. The only role
+distinction enforced in code is the `*_required` FastAPI dependency a route
+declares (`login_required`, `operator_required`, `admin_required`) — there is
+no separate permissions table, since three fixed, strictly nested tiers don't
+need one. The first admin account is seeded from
+`XCP_PULSE_ADMIN_USER`/`XCP_PULSE_ADMIN_PASSWORD_HASH` on first start, once,
+when the `users` table is still empty; every account after that is created
+from the Users page. Disabling or demoting the last active admin is refused
+in `app/users.py`, so the app can never end up with no way to manage it.
 
 Sessions are **rows in SQLite** referenced by a signed cookie. The signature
 stops a client forging a session id; the row is what makes logout genuinely
 invalidate a session rather than merely asking the browser to forget it. The
-expiry slides forward on use.
+expiry slides forward on use. A session is also checked against the `users`
+table on every request, not only at login, so disabling an account
+invalidates its live sessions immediately rather than waiting for them to
+expire on their own.
 
 Failed logins are recorded per address and counted inside a window. Being locked
 out cannot be bypassed by then supplying the correct password.
+
+Each account can turn on TOTP two-factor for itself, from `/account/totp` —
+an instance-wide switch would be wrong here, since it's the user's own
+credential to opt into, not an operational setting. The secret is generated
+and shown as a QR code (rendered server-side, `app/totp.py`) and only takes
+effect once the user proves they can generate a matching code, at which
+point ten one-time backup codes are issued. When a user has 2FA on, a correct
+password no longer creates a session by itself: `login_submit` instead sets a
+short-lived signed cookie, scoped to `/login/2fa` and valid for 5 minutes,
+that proves only "the password step just succeeded" — the real session is
+created only after `/login/2fa` accepts a live TOTP code or a backup code.
+The secret is encrypted at rest the same way as the Xen Orchestra token
+(`app/crypto.py`, AES-GCM derived from the application secret key); backup
+codes are stored as salted hashes and a used one is removed from the stored
+list so it cannot be replayed. An admin can turn off another user's 2FA with
+no code or password check — the recovery path when someone loses both their
+device and their backup codes, the same role a password reset already plays
+for a lost password.
+
+Every state-changing request is recorded in an `activity_log` table —
+logins, settings changes, jobs started or deleted, user management — readable
+from the in-app Activity page by admin and operator accounts.
+
+## Built-in HTTPS
+
+Optional and off by default (`XCP_PULSE_ENABLE_HTTPS`). When on, a small
+nginx bundled into the image terminates TLS in front of uvicorn instead of
+uvicorn owning the port directly — `docker/entrypoint.sh` decides which of
+the two actually happens, and `docker/nginx.conf` is nginx's whole config.
+
+- **uvicorn moves to loopback.** With HTTPS on, uvicorn binds
+  `127.0.0.1:8081` rather than `0.0.0.0:8080`, and nginx alone holds `8080`
+  (redirects to HTTPS) and `8443` (terminates it, proxies to uvicorn) — the
+  app is never reachable except through nginx once this is on.
+- **Fully non-root, still.** Both HTTPS ports are unprivileged, so nginx
+  never needs the traditional root-then-drop-privileges start; the image
+  runs nginx as the same `pulse` user as uvicorn, with all of nginx's own
+  state (logs, pid, temp directories) redirected under `/tmp/nginx` instead
+  of the root-owned defaults a stock install expects.
+- **A self-signed certificate on first run.** The entrypoint generates one
+  with `openssl` at `<data_dir>/tls/` if none exists yet, so HTTPS works
+  immediately with no setup — at the cost of a browser warning until an
+  operator either accepts it or uploads a real certificate. Uploading one
+  (`app/tls.py`, from Settings) validates the pair, writes it to the same
+  path, and signals nginx's master process with `SIGHUP` to reload it —
+  nginx's own documented reload signal, which re-reads the certificate
+  without dropping an in-flight request. No app restart, no container
+  restart.
+- **One process failing takes the container down.** The entrypoint starts
+  both processes and `wait -n`s on either exiting, rather than a supervisor
+  restarting a crashed one — a container Docker's own restart policy
+  (`restart: unless-stopped`) brings back is simpler than managing partial
+  failure inside it.
+
+`XCP_PULSE_HTTPS` (the session cookie's `Secure` flag) is a separate,
+older setting for the case of an *external* reverse proxy terminating TLS —
+built-in HTTPS implies it automatically, since nginx being right there means
+XCP Pulse always knows the browser is on HTTPS without being told.
 
 ## Database
 

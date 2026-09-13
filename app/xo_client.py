@@ -22,7 +22,6 @@ API_BASE = "/rest/v0"
 # Measured: a restricted account is refused with exactly this action named in
 # the 403 body.
 LOG_EXPORT_ACTION = "export:logs"
-LOG_EXPORT_RESOURCE = "host"
 
 # The two log routes. Both need LOG_EXPORT_ACTION; both are plain file bodies
 # rather than JSON, and neither accepts a date parameter or a byte range, which
@@ -46,11 +45,6 @@ DOWNLOAD_TIMEOUT = 60.0
 # Written to disk a megabyte at a time. Large enough that a 433 MB body is not
 # 433 000 writes, small enough that cancellation is noticed promptly.
 DOWNLOAD_CHUNK_BYTES = 1024 * 1024
-
-# Granting every action on hosts implies log export. It is full host
-# administration, so it is reported as such rather than as a way to stay
-# restricted.
-WILDCARD_ACTION = "*"
 
 # Administrator-only because it carries no ACL middleware. Used to tell an
 # administrator from a restricted account: routes that are ACL-filtered answer
@@ -125,7 +119,6 @@ class LogExportSupport:
 
     available: bool
     reason: str
-    grantable: bool = True
 
     @property
     def summary(self) -> str:
@@ -450,62 +443,59 @@ class XoClient:
         response = self._get(DASHBOARD_PATH)
         return response.status_code == 200
 
-    def grantable_host_actions(self) -> set[str]:
-        """Return the host actions this instance can grant to a role.
+    def probe_log_export(self, host_id: str) -> bool:
+        """Ask XO directly whether this account can reach a host's audit trail.
 
-        The privilege catalogue is stored per instance and can be older than
-        the API serving it, so what a role may be granted is a question about
-        this deployment rather than about a version number.
+        ``/acl-privileges`` looks like a catalogue of what a role *could* be
+        granted, but it is not: it lists privilege rows already attached to
+        existing roles on this instance, so an instance where no current role
+        happens to hold ``export:logs`` looked identical to one where the
+        privilege could not be granted at all — verified wrong against a live
+        instance, where creating a single-privilege role and assigning it to a
+        restricted account was accepted immediately. There is no route that
+        answers "may I?" without asking to do the thing, so this opens
+        ``audit.txt`` — the smaller of the two log routes, gated by the same
+        ``host:export:logs`` check as ``logs.tgz`` — and reads only the status
+        line, closing the connection before any body arrives.
         """
-        response = self._get("/acl-privileges", fields="action,resource", limit=1000)
-        if response.status_code != 200:
-            return set()
-        try:
-            records = response.json()
-        except ValueError:
-            return set()
-        return {
-            record["action"]
-            for record in records
-            if isinstance(record, dict)
-            and record.get("resource") == LOG_EXPORT_RESOURCE
-            and "action" in record
-        }
+        with self._client() as client:
+            try:
+                with client.stream("GET", AUDIT_PATH.format(host_id=host_id)) as response:
+                    return response.status_code == 200
+            except httpx.HTTPError:
+                return False
 
-    def check_log_export(self, *, is_admin: bool) -> LogExportSupport:
-        """Work out whether this connection will be able to download logs.
+    def check_log_export(
+        self, *, is_admin: bool, host_ids: list[str] | None = None
+    ) -> LogExportSupport:
+        """Work out whether this connection can download logs, by trying to.
 
-        An administrator always can. For anyone else the answer depends on the
-        instance: XO requires ``host:export:logs`` for the log routes, but some
-        instances carry a privilege catalogue seeded before that action
-        existed, and cannot grant it to a role at all. Where that is so, the
-        only privilege reaching the logs is ``host:*`` — full host
-        administration, which is not a restricted account in any useful sense.
+        An administrator always can. For anyone else, a host to probe is
+        needed — with none visible yet, the honest answer is that this is not
+        yet known, not that it is unavailable.
         """
         if is_admin:
             return LogExportSupport(True, "the account is an administrator")
 
-        actions = self.grantable_host_actions()
-        if not actions:
+        if not host_ids:
             return LogExportSupport(
                 False,
-                "the account cannot read this instance's privilege catalogue, "
-                "so log access could not be determined",
+                "no host is visible yet to check against — run Refresh "
+                "inventory, then test the connection again",
             )
 
-        if LOG_EXPORT_ACTION in actions:
+        if self.probe_log_export(host_ids[0]):
             return LogExportSupport(
-                False,
-                f"the account needs the host {LOG_EXPORT_ACTION!r} privilege, "
-                f"which this instance can grant",
+                True, "the account already holds the host export:logs privilege"
             )
 
         detail = (
-            f"this Xen Orchestra cannot grant host {LOG_EXPORT_ACTION!r} to a role — "
-            f"its privilege catalogue offers only {', '.join(sorted(actions))}. "
-            f"Log collection needs an administrator account here"
+            f"the account needs the host {LOG_EXPORT_ACTION!r} privilege. No "
+            f"built-in Xen Orchestra role grants it — create a custom role, add "
+            f"an export:logs privilege on host to it, and assign it to this "
+            f"account (see docs/configuration.md for the exact steps)"
         )
-        return LogExportSupport(False, detail, grantable=False)
+        return LogExportSupport(False, detail)
 
     # -- log download ----------------------------------------------------
 
@@ -681,7 +671,8 @@ class XoClient:
 
         hosts = self.list_hosts()
         is_admin = self.is_admin()
-        log_export = self.check_log_export(is_admin=is_admin)
+        host_ids = [href.rsplit("/", 1)[-1] for href in hosts]
+        log_export = self.check_log_export(is_admin=is_admin, host_ids=host_ids)
 
         warnings: list[str] = []
         if not pools:

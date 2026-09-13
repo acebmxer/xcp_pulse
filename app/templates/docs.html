@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}{% if page %}{{ page.title }} — {% endif %}User manual — XCP Pulse{% endblock %}
+{% block main_class %}wrap docs-wrap{% endblock %}
+
+{% block content %}
+<div class="docs-layout">
+  <nav class="docs-nav" aria-label="Documentation pages">
+    <form method="get" action="/help/search" class="docs-search" role="search">
+      <input
+        type="search"
+        name="q"
+        value="{{ query }}"
+        placeholder="Search docs…"
+        aria-label="Search documentation"
+      >
+    </form>
+    <ol class="docs-page-list">
+      {% for group_name, group_pages in groups %}
+      {% if group_name %}
+      {% set group_open = group_pages | selectattr('slug', 'equalto', active_slug) | list %}
+      <li class="docs-group">
+        <details{% if group_open or not active_slug %} open{% endif %}>
+          <summary class="docs-group-title">{{ group_name }}</summary>
+          <ol class="docs-page-list docs-sublist">
+            {% for p in group_pages %}
+            <li>
+              <a
+                href="/help/{{ p.slug }}"
+                class="docs-nav-link{% if p.slug == active_slug %} active{% endif %}"
+              >{{ p.title }}</a>
+            </li>
+            {% endfor %}
+          </ol>
+        </details>
+      </li>
+      {% else %}
+      {% for p in group_pages %}
+      <li>
+        <a
+          href="/help/{{ p.slug }}"
+          class="docs-nav-link{% if p.slug == active_slug %} active{% endif %}"
+        >{{ p.title }}</a>
+      </li>
+      {% endfor %}
+      {% endif %}
+      {% endfor %}
+    </ol>
+  </nav>
+
+  <div class="docs-content">
+    {% if error %}
+    <p class="alert alert-error" role="alert">{{ error }}</p>
+    {% endif %}
+
+    {% if results is not none %}
+      <h1 class="page-title">Search results for "{{ query }}"</h1>
+      {% if results %}
+      <ul class="docs-results">
+        {% for result_page, snippet in results %}
+        <li class="docs-result">
+          <a href="/help/{{ result_page.slug }}">{{ result_page.title }}</a>
+          <p class="docs-snippet">…{{ snippet }}…</p>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="note">No pages match "{{ query }}".</p>
+      {% endif %}
+    {% elif page %}
+      <article class="docs-page">
+        {{ page.html | safe }}
+      </article>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

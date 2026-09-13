@@ -32,6 +32,12 @@
 <div class="alert alert-error">{{ error }}</div>
 {% endif %}
 
+{% if update_available %}
+<p class="alert" role="status">
+  A new version of XCP Pulse is available. <a href="/update">Review and apply</a>
+</p>
+{% endif %}
+
 {% if not connection %}
 <div class="card empty-state">
   <span class="empty-mark">◇</span>
@@ -246,40 +252,4 @@
 </section>
 {% endif %}
 
-{#
-  "What is coming" is a KEEPER, not scaffolding.
-
-  Nick asked for this to stay on the dashboard until he decides it is no longer
-  needed or no longer appropriate. It is not a placeholder to be quietly
-  removed once there is real content to show — as stages ship, update the rows
-  and their state, and keep the section.
-
-  Do not delete it without asking him first.
-#}
-<section class="roadmap">
-  <h2>What is coming</h2>
-
-  <h3 class="stages-group">Planned — any order</h3>
-  <ol class="stages">
-    <li class="stage">
-      <span class="stage-name">Finalise the dashboard and the UI</span>
-    </li>
-    <li class="stage">
-      <span class="stage-name">Self-update from the UI</span>
-    </li>
-    <li class="stage">
-      <span class="stage-name">Documentation in the web UI</span>
-    </li>
-    <li class="stage">
-      <span class="stage-name">Built-in HTTPS without a reverse proxy</span>
-    </li>
-    <li class="stage">
-      <span class="stage-name">Multiple users, roles and activity log</span>
-    </li>
-  </ol>
-
-  <p class="note">
-    The full plan lives in <code>docs/roadmap.md</code>.
-  </p>
-</section>
 {% endblock %}

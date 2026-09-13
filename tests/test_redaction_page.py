@@ -87,9 +87,11 @@ def test_the_preview_requires_a_login(client: TestClient) -> None:
 def test_the_stylesheet_url_carries_a_cache_busting_token(logged_in: TestClient) -> None:
     """A CSS change must actually reach the browser.
 
-    StaticFiles sends an ETag and Last-Modified but no Cache-Control, so a
-    browser may reuse a cached stylesheet without revalidating — a fix then
-    reaches the container and never the page, which is invisible server-side.
+    The stylesheet is served with a long-lived, immutable Cache-Control (see
+    app/main.py:_CacheableStaticFiles) — safe only because this token changes
+    the URL itself the moment the file's bytes change, so a fix always reaches
+    the page under a new URL rather than depending on a browser choosing to
+    revalidate a cached one.
     """
     body = logged_in.get("/redaction").text
     assert "/static/style.css?v=" in body

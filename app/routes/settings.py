@@ -1,13 +1,21 @@
-"""The Xen Orchestra connection settings page."""
+"""The Xen Orchestra connection settings page, and the TLS certificate."""
 
 from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, Response
 
-from app.dependencies import login_required, redirect, templates
+from app.activity import log_activity
+from app.dependencies import admin_required, redirect, templates
+from app.security import client_ip
+from app.tls import (
+    CertificateError,
+    current_certificate_info,
+    install_certificate,
+    validate_certificate_pair,
+)
 from app.xo_client import XoClient, XoError
 from app.xo_connection import (
     ACCOUNT_TYPES,
@@ -22,6 +30,18 @@ from app.xo_connection import (
 router = APIRouter()
 log = logging.getLogger("xcp_pulse.settings")
 
+# A cert and a key together are a few KB; this is generous headroom rather
+# than a tuned limit, just enough to reject someone pasting the wrong file
+# (a multi-megabyte bundle export, say) with a clear message instead of
+# reading it entirely first.
+MAX_CERT_FILE_BYTES = 1_000_000
+
+# Module-level singletons because a call in an argument default would be a
+# mutable shared between requests — the same reason redaction.py's rule
+# checkboxes use a module-level Form().
+_CERT_FILE_FIELD = File(...)
+_KEY_FILE_FIELD = File(...)
+
 
 def _render(
     request: Request,
@@ -30,8 +50,13 @@ def _render(
     error: str | None = None,
     notice: str | None = None,
     test: object | None = None,
+    tls_error: str | None = None,
     status_code: int = 200,
 ) -> Response:
+    settings = request.app.state.settings
+    current_cert = (
+        current_certificate_info(settings.data_dir / "tls") if settings.enable_https else None
+    )
     return templates.TemplateResponse(
         request,
         "settings.html",
@@ -42,20 +67,23 @@ def _render(
             "error": error,
             "notice": notice,
             "test": test,
+            "enable_https": settings.enable_https,
+            "current_cert": current_cert,
+            "tls_error": tls_error,
         },
         status_code=status_code,
     )
 
 
 @router.get("/settings", response_class=HTMLResponse)
-def settings_page(request: Request, username: str = Depends(login_required)) -> Response:
+def settings_page(request: Request, username: str = Depends(admin_required)) -> Response:
     return _render(request, username)
 
 
 @router.post("/settings", response_class=HTMLResponse)
 def settings_save(
     request: Request,
-    username: str = Depends(login_required),
+    username: str = Depends(admin_required),
     url: str = Form(...),
     token: str = Form(...),
     account_type: str = Form("admin"),
@@ -76,8 +104,9 @@ def settings_save(
     if account_type not in ACCOUNT_TYPES:
         return _render(request, username, error="Unknown account type.", status_code=400)
 
+    conn = request.app.state.db
     save_connection(
-        request.app.state.db,
+        conn,
         url=url,
         token=token,
         account_type=account_type,
@@ -85,11 +114,12 @@ def settings_save(
         secret_key=request.app.state.settings.secret_key,
     )
     log.info("Xen Orchestra connection saved for %s", url)
+    log_activity(conn, username, "settings.connection", detail=url, ip=client_ip(request))
     return redirect("/settings?saved=1")
 
 
 @router.post("/settings/test", response_class=HTMLResponse)
-def settings_test(request: Request, username: str = Depends(login_required)) -> Response:
+def settings_test(request: Request, username: str = Depends(admin_required)) -> Response:
     """Test the stored connection and report what the account can reach."""
     conn = request.app.state.db
     try:
@@ -123,8 +153,54 @@ def settings_test(request: Request, username: str = Depends(login_required)) -> 
 
 
 @router.post("/settings/delete")
-def settings_delete(request: Request, username: str = Depends(login_required)) -> Response:
+def settings_delete(request: Request, username: str = Depends(admin_required)) -> Response:
     """Forget the connection, including the stored token."""
-    delete_connection(request.app.state.db)
+    conn = request.app.state.db
+    delete_connection(conn)
     log.info("Xen Orchestra connection deleted")
+    log_activity(conn, username, "settings.connection_deleted", ip=client_ip(request))
     return redirect("/settings?deleted=1")
+
+
+@router.post("/settings/tls", response_class=HTMLResponse)
+async def settings_tls_upload(
+    request: Request,
+    username: str = Depends(admin_required),
+    cert_file: UploadFile = _CERT_FILE_FIELD,
+    key_file: UploadFile = _KEY_FILE_FIELD,
+) -> Response:
+    """Replace the certificate nginx serves with an operator-supplied pair.
+
+    Only reachable when built-in HTTPS is on — the form itself is hidden
+    otherwise, and there is no nginx to hand a certificate to. Checked again
+    here rather than trusted from the hidden form, since a hidden control is
+    not an access control.
+    """
+    if not request.app.state.settings.enable_https:
+        return _render(
+            request,
+            username,
+            tls_error="Built-in HTTPS is not enabled — nothing to upload a certificate to.",
+            status_code=400,
+        )
+
+    cert_pem = await cert_file.read(MAX_CERT_FILE_BYTES + 1)
+    key_pem = await key_file.read(MAX_CERT_FILE_BYTES + 1)
+    if len(cert_pem) > MAX_CERT_FILE_BYTES or len(key_pem) > MAX_CERT_FILE_BYTES:
+        return _render(
+            request,
+            username,
+            tls_error="That file is too large to be a certificate or private key.",
+            status_code=400,
+        )
+
+    try:
+        validate_certificate_pair(cert_pem, key_pem)
+    except CertificateError as exc:
+        return _render(request, username, tls_error=str(exc), status_code=400)
+
+    tls_dir = request.app.state.settings.data_dir / "tls"
+    install_certificate(tls_dir, cert_pem, key_pem)
+    log.info("TLS certificate replaced by %s", username)
+    log_activity(request.app.state.db, username, "settings.tls_certificate", ip=client_ip(request))
+    return redirect("/settings?tls_saved=1")

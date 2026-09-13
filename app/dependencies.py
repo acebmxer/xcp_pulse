@@ -17,6 +17,7 @@ from fastapi.templating import Jinja2Templates
 from app import __version__
 from app.artifacts import artifact_path, get_artifact
 from app.security import current_user
+from app.users import get_user
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
@@ -30,11 +31,16 @@ templates.env.globals["app_version"] = __version__
 def _asset_token() -> str:
     """A cache-busting token for the stylesheet, from its own mtime.
 
-    Starlette's StaticFiles sends an ETag and Last-Modified but no Cache-Control,
-    so a browser is free to reuse a cached stylesheet without revalidating it.
-    In practice it does: a CSS change would reach the container and still not
-    reach the page, which is invisible from the server side and looks exactly
-    like a fix that did not work.
+    Pairs with app/main.py's _CacheableStaticFiles, which tells the browser to
+    cache this file for a year without ever revalidating it — safe only
+    because this token changes the URL itself the moment the file's bytes
+    change, so the same URL never resolves to two different versions of the
+    file. Before _CacheableStaticFiles existed, Starlette's StaticFiles sent
+    an ETag and Last-Modified but no Cache-Control, leaving the browser to
+    fall back to its own heuristics for how long to trust a cached copy — in
+    practice a stale copy could survive even a hard reload, so a CSS fix could
+    reach the container and still not reach the page, which is invisible from
+    the server side and looks exactly like a fix that did not work.
 
     The version string alone is not enough, because it does not move between
     builds during development — which is precisely when the stylesheet changes
@@ -145,6 +151,65 @@ def login_required(request: Request) -> str:
     if username is None:
         raise RedirectToLogin(request.url.path)
     return username
+
+
+class Forbidden(Exception):
+    """Raised by operator_required / admin_required when the signed-in user's
+    role isn't high enough. Turned into a 403 by the exception handler in
+    main.py — a redirect (as login_required uses) would be wrong here, since
+    the caller is authenticated, just not permitted.
+    """
+
+    def __init__(self, required_role: str) -> None:
+        self.required_role = required_role
+        super().__init__(f"requires {required_role} role")
+
+
+def operator_required(request: Request) -> str:
+    """Return the username if it belongs to an operator or admin.
+
+    Everything an operator can do, an admin can also do — see the role
+    ordering in app/users.py's module docstring — so this checks "at least
+    operator", not "exactly operator".
+    """
+    username = login_required(request)
+    user = get_user(request.app.state.db, username)
+    if user is None or user.role not in ("admin", "operator"):
+        raise Forbidden("operator")
+    return username
+
+
+def admin_required(request: Request) -> str:
+    """Return the username if it belongs to an admin."""
+    username = login_required(request)
+    user = get_user(request.app.state.db, username)
+    if user is None or user.role != "admin":
+        raise Forbidden("admin")
+    return username
+
+
+def current_role(request: Request) -> str | None:
+    """The signed-in user's role, or None if not signed in.
+
+    For templates deciding whether to render an action button at all — a
+    button that 403s when clicked is worse than no button, per the plan this
+    followed. Returns None rather than raising, unlike the *_required
+    dependencies, because an anonymous page (like /login itself) still needs
+    to ask "is anyone signed in" without being redirected for asking.
+    """
+    username = current_user(request)
+    if username is None:
+        return None
+    user = get_user(request.app.state.db, username)
+    return user.role if user is not None else None
+
+
+# Lets base.html decide which nav links to show without every route handler
+# having to add "role" to its own template context — Jinja2Templates already
+# puts `request` in context for us, so a global function taking it is enough.
+# Registered here, after the def, rather than beside the other globals near
+# the top of this module, because current_role is defined below them.
+templates.env.globals["current_role"] = current_role
 
 
 def wake_worker(request: Request) -> None:

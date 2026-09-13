@@ -7,8 +7,8 @@ The queue is a table, not an in-memory structure. That is the whole design:
 * the web request that shows progress reads rows, sharing nothing with the
   thread writing them;
 * claiming a job is a conditional UPDATE, which SQLite applies atomically, so a
-  second consumer — the separate worker process the roadmap anticipates — can
-  be added without changing the schema or this module.
+  second consumer — a separate worker process, for isolation — can be added
+  without changing the schema or this module.
 
 This module owns the ``jobs`` table. Nothing else writes to it; a job body
 reports what it is doing through the ``JobContext`` handed to it.

@@ -28,10 +28,14 @@ def settings(tmp_path: Path) -> Settings:
         admin_password_hash=hash_password(TEST_PASSWORD),
         secret_key="test-secret-key-not-for-production",
         https_only=False,
+        enable_https=False,
         session_hours=12,
         login_max_attempts=5,
         login_lockout_minutes=15,
         log_level="WARNING",
+        enable_self_update=False,
+        compose_project_dir="",
+        is_dev_build=False,
     )
 
 

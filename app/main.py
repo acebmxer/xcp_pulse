@@ -5,13 +5,14 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.responses import Response
 
 from app import __version__
 from app.config import Settings, load_settings
 from app.db import init_db
-from app.dependencies import STATIC_DIR, RedirectToLogin
+from app.dependencies import STATIC_DIR, Forbidden, RedirectToLogin, templates
 
 # Importing a job module is what registers its kind with the runner, which
 # deliberately holds no list of its own. Anything defining a job kind has to be
@@ -26,12 +27,16 @@ from app.job_runner import JobWorker
 from app.job_support_package import KIND as _SUPPORT_PACKAGE_KIND  # noqa: F401
 from app.jobs import reset_orphans
 from app.logging_conf import configure_logging
-from app.routes import auth, collect, dashboard, health, redaction
+from app.routes import auth, collect, dashboard, docs, health, redaction
 from app.routes import findings as findings_routes
 from app.routes import jobs as job_routes
 from app.routes import settings as settings_routes
 from app.routes import support_package as support_package_routes
-from app.security import purge_expired_sessions, purge_old_login_attempts
+from app.routes import update as update_routes
+from app.routes import users as users_routes
+from app.security import current_user, purge_expired_sessions, purge_old_login_attempts
+from app.update import finish_pending_update, start_background_checker
+from app.users import bootstrap_admin
 
 
 @asynccontextmanager
@@ -40,6 +45,10 @@ async def lifespan(app: FastAPI):
     log = configure_logging(settings.log_level)
 
     app.state.db = init_db(settings.db_path)
+
+    # Creates the first admin account from the environment, but only if the
+    # users table is still empty — see app/users.py:bootstrap_admin.
+    bootstrap_admin(app.state.db, settings.admin_user, settings.admin_password_hash)
 
     # Rows from a previous run are worthless: expired sessions cannot be used
     # and stale failures would keep an address locked out past its window.
@@ -52,6 +61,11 @@ async def lifespan(app: FastAPI):
     orphans = reset_orphans(app.state.db)
     if orphans:
         log.warning("marked %d interrupted job(s) as failed", orphans)
+
+    # Reaching startup with an update in flight means this process is the
+    # container the update just created — see app/update.py:finish_pending_update.
+    finish_pending_update(app.state.db)
+    start_background_checker(settings, settings.db_path)
 
     app.state.job_worker = JobWorker(settings.db_path, settings.data_dir, settings)
     app.state.job_worker.start()
@@ -69,6 +83,26 @@ async def lifespan(app: FastAPI):
     app.state.job_worker.stop()
     app.state.db.close()
     log.info("XCP Pulse stopped")
+
+
+class _CacheableStaticFiles(StaticFiles):
+    """Static files served with an explicit long-lived, immutable cache.
+
+    Starlette's StaticFiles sends an ETag and Last-Modified but no
+    Cache-Control, which leaves the browser to fall back to its own
+    heuristics for how long to trust a cached copy — and heuristic caching is
+    exactly what let a fixed stylesheet sit stale in a browser after a hard
+    reload (see app/dependencies.py:_asset_token, which this pairs with):
+    every reference to this file already carries a `?v=<mtime>` query string
+    that changes the moment the file does, so the URL itself is the
+    invalidation — there is no case where the same URL should ever resolve to
+    different bytes, which is exactly what `immutable` promises the browser.
+    """
+
+    def file_response(self, *args: object, **kwargs: object) -> Response:
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -90,7 +124,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def _redirect_to_login(request: Request, exc: RedirectToLogin) -> RedirectResponse:
         return RedirectResponse(url=f"/login?next={exc.next_url}", status_code=303)
 
-    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+    @app.exception_handler(Forbidden)
+    async def _forbidden(request: Request, exc: Forbidden) -> HTMLResponse:
+        # Reached only once already authenticated (operator_required /
+        # admin_required both call login_required first), so current_user()
+        # here is just re-reading the session already proven valid — this is
+        # what lets the topbar still render on the 403 page, the same as any
+        # other page a signed-in user can land on.
+        return templates.TemplateResponse(
+            request,
+            "403.html",
+            {"required_role": exc.required_role, "username": current_user(request)},
+            status_code=403,
+        )
+
+    app.mount("/static", _CacheableStaticFiles(directory=str(STATIC_DIR)), name="static")
     app.include_router(health.router)
     app.include_router(auth.router)
     app.include_router(dashboard.router)
@@ -100,6 +148,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(collect.router)
     app.include_router(findings_routes.router)
     app.include_router(support_package_routes.router)
+    app.include_router(docs.router)
+    app.include_router(users_routes.router)
+    app.include_router(update_routes.router)
     return app
 
 

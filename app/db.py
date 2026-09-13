@@ -121,6 +121,95 @@ _MIGRATIONS: list[str] = [
         disabled_at REAL NOT NULL
     );
     """,
+    # 4 -> 5: multiple users, roles, and the activity log.
+    #
+    # Before this, "who is logged in" was a single username/password-hash pair
+    # read from the environment (XCP_PULSE_ADMIN_USER /
+    # XCP_PULSE_ADMIN_PASSWORD_HASH) and sessions.username was never checked
+    # against anything but that pair. Those two variables still work, but only
+    # as the seed for the first admin row (see app/users.py) — the environment
+    # is no longer where accounts live.
+    #
+    # role is checked in code (app/dependencies.py), not just here, but the
+    # CHECK constraint stops a bad value ever reaching the table regardless of
+    # which code path wrote it.
+    #
+    # sessions.username has no foreign key to this table (same reasoning as the
+    # existing table: it is a bare string already). A disabled or deleted
+    # user's old sessions are rejected by checking users at lookup time
+    # (get_session_user), not by a constraint here.
+    """
+    CREATE TABLE users (
+        id              TEXT PRIMARY KEY,
+        username        TEXT NOT NULL UNIQUE,
+        password_hash   TEXT NOT NULL,
+        role            TEXT NOT NULL CHECK (role IN ('admin', 'operator', 'viewer')),
+        disabled        INTEGER NOT NULL DEFAULT 0,
+        created_at      REAL NOT NULL
+    );
+
+    -- One row per action worth being able to answer "who did this, and when"
+    -- about later: login/logout, settings changed, a job run, an artifact
+    -- deleted, a user added or disabled. username is a bare string for the
+    -- same reason sessions.username is: the record must survive the account
+    -- being deleted later.
+    CREATE TABLE activity_log (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        username    TEXT NOT NULL,
+        action      TEXT NOT NULL,
+        detail      TEXT NOT NULL DEFAULT '',
+        ip          TEXT,
+        created_at  REAL NOT NULL
+    );
+    CREATE INDEX idx_activity_log_created ON activity_log (created_at DESC);
+    """,
+    # 5 -> 6: self-update (see app/update.py).
+    #
+    # A single row, pinned by a CHECK to id = 1 — same reasoning as
+    # xo_connection: there is exactly one running deployment to track, so no
+    # code path has to decide which of several rows is current. Read from the
+    # database rather than kept in memory so the state survives this process
+    # being replaced mid-update, which is the whole point of the feature.
+    """
+    CREATE TABLE update_state (
+        id                  INTEGER PRIMARY KEY CHECK (id = 1),
+        latest_digest       TEXT NOT NULL DEFAULT '',
+        latest_checked_at   REAL,
+        available           INTEGER NOT NULL DEFAULT 0,
+        in_progress         INTEGER NOT NULL DEFAULT 0,
+        started_at          REAL,
+        last_result         TEXT NOT NULL DEFAULT '',
+        last_result_at      REAL
+    );
+    """,
+    # 6 -> 7: optional TOTP two-factor, per user.
+    #
+    # Off by default and per-account (unlike self-update's single env-driven
+    # switch) because a login credential is each user's own to opt into, the
+    # same way their password is theirs to change. totp_secret_encrypted uses
+    # the same AES-GCM-over-the-app-secret-key scheme as xo_connection's
+    # token (app/crypto.py) — a TOTP secret is as sensitive as the XO token
+    # it sits beside in this database: whoever holds it can generate valid
+    # login codes forever.
+    #
+    # The secret is written the moment a user starts enrolling (GET
+    # /account/totp/setup generates and stores it) but totp_enabled stays 0
+    # until they prove they can generate a matching code — see
+    # app/users.py's totp_confirm. This means an abandoned enrollment leaves
+    # a secret in the table but never turns on the second factor, which is
+    # what makes it safe to regenerate the secret on every visit to the setup
+    # page rather than needing a separate "pending" state.
+    #
+    # Backup codes are stored as a JSON array of salted-hash strings
+    # (app/totp.py's hash_backup_code) — never the plaintext, which is shown
+    # to the user exactly once, at generation time. A used code is removed
+    # from the array rather than flagged, so the array's length is always
+    # "codes remaining" with no extra bookkeeping.
+    """
+    ALTER TABLE users ADD COLUMN totp_secret_encrypted TEXT;
+    ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE users ADD COLUMN totp_backup_codes TEXT NOT NULL DEFAULT '[]';
+    """,
 ]
 
 
@@ -136,6 +225,47 @@ def connect(db_path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA busy_timeout = 30000")
     return conn
+
+
+class _LockedCursor:
+    """A ``sqlite3.Cursor`` wrapper that holds ``_LockedConnection``'s lock
+    for every fetch, not just for the ``execute()`` call that produced it.
+
+    A cursor steps the connection's own execution state on each fetch, the
+    same as ``execute()`` does — so a fetch left unlocked can still
+    interleave with another thread's statement on the shared connection and
+    read back a corrupted ``sqlite3.Row``. See ``_LockedConnection`` for the
+    crash this closes.
+    """
+
+    def __init__(self, cursor: sqlite3.Cursor, lock: threading.RLock) -> None:
+        self._cursor = cursor
+        self._lock = lock
+
+    def fetchone(self):
+        with self._lock:
+            return self._cursor.fetchone()
+
+    def fetchall(self):
+        with self._lock:
+            return self._cursor.fetchall()
+
+    def fetchmany(self, *args, **kwargs):
+        with self._lock:
+            return self._cursor.fetchmany(*args, **kwargs)
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        with self._lock:
+            row = self._cursor.fetchone()
+        if row is None:
+            raise StopIteration
+        return row
+
+    def __getattr__(self, name: str):
+        return getattr(self._cursor, name)
 
 
 class _LockedConnection:
@@ -162,6 +292,17 @@ class _LockedConnection:
     ``with transaction(conn):`` block that then calls another function taking
     the same ``conn`` must not deadlock against itself on the same thread.
 
+    ``execute()`` returns a ``_LockedCursor`` rather than the raw
+    ``sqlite3.Cursor``, and that wrapper holds the same lock for every fetch.
+    A ``sqlite3.Cursor`` is not a result set — it is a live handle into the
+    connection's own execution state, and ``fetchall()``/``fetchone()`` step
+    that shared state exactly as ``execute()`` does. Releasing the lock as
+    soon as ``execute()`` returns left every fetch racing the *other*
+    thread's ``execute()`` and fetches against the same underlying
+    connection, which is what produced ``IndexError: tuple index out of
+    range`` reading a ``sqlite3.Row`` mid-corruption — the lock was held for
+    the one call that wasn't the race.
+
     Only the **web app's** connection is wrapped, via ``init_db`` below. The
     background job worker (``job_runner.JobWorker``) opens and uses its own
     connection on a single dedicated thread, so it was never part of this
@@ -174,7 +315,8 @@ class _LockedConnection:
 
     def execute(self, *args, **kwargs):
         with self._lock:
-            return self._conn.execute(*args, **kwargs)
+            cursor = self._conn.execute(*args, **kwargs)
+            return _LockedCursor(cursor, self._lock)
 
     def executescript(self, *args, **kwargs):
         with self._lock:
@@ -182,7 +324,8 @@ class _LockedConnection:
 
     def executemany(self, *args, **kwargs):
         with self._lock:
-            return self._conn.executemany(*args, **kwargs)
+            cursor = self._conn.executemany(*args, **kwargs)
+            return _LockedCursor(cursor, self._lock)
 
     def commit(self) -> None:
         with self._lock:

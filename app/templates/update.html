@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %}Update — XCP Pulse{% endblock %}
+
+{#
+  Placed in head_extra rather than loose at the top of this file: content
+  outside a named block in a template that {% extends %} another is silently
+  discarded by Jinja, never rendered at all — which is what actually happened
+  here before head_extra existed on base.html. jobs.html has the identical
+  loose placement and the identical bug; not touched here, since fixing a bug
+  I only noticed while working on this file is a separate change — flagged
+  to Nick rather than folded in.
+
+  content="3;url=/update": the bare path, not the current URL. A plain
+  content="3" re-fetches whatever URL is on screen right now, including its
+  query string — so a refresh from /update?update_started=1 keeps refreshing
+  into /update?update_started=1 forever, even once state.in_progress goes
+  false, because update_started (see update_page below) comes from the query
+  string alone and nothing ever clears it. The bare path drops that param on
+  the very next refresh, so the page reaches state.last_result's real branches
+  (success/failure) instead of being stuck showing "Update started" on a
+  loop after the update has already finished.
+#}
+{% block head_extra %}
+{% if state and (state.in_progress or update_started) %}
+<meta http-equiv="refresh" content="3;url=/update">
+{% endif %}
+{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Update</h1>
+
+{% if error %}
+<p class="alert alert-error" role="alert">{{ error }}</p>
+{% endif %}
+
+{% if notice %}
+<p class="alert" role="status">{{ notice }}</p>
+{% endif %}
+
+{% if not enabled %}
+<div class="card">
+  <p class="note">
+    Self-update is not enabled on this deployment. Applying an update needs the
+    Docker socket mounted into the container — effectively host root — so it is
+    opt-in. Set <code>XCP_PULSE_ENABLE_SELF_UPDATE=true</code>, mount
+    <code>/var/run/docker.sock</code>, join the host's <code>docker</code>
+    group, and set <code>XCP_PULSE_COMPOSE_PROJECT_DIR</code> to the host
+    directory the stack runs from. See
+    <a href="/help/update">the user manual</a> for the full steps, or keep
+    updating by hand with
+    <code>docker compose pull &amp;&amp; docker compose up -d</code>.
+  </p>
+</div>
+{% else %}
+
+<div class="card">
+  <dl class="kv">
+    <dt>Running version</dt>
+    <dd>v{{ version }}{% if is_dev_build %} (local dev build){% endif %}</dd>
+    <dt>Last checked</dt>
+    <dd>{{ state.latest_checked_at | age }}</dd>
+  </dl>
+
+  {% if is_dev_build %}
+  <p class="note">
+    This is a local dev build, not a copy of the published image — checking
+    here can't tell whether it's ahead of or behind
+    <code>ghcr.io/acebmxer/xcp_pulse:latest</code>, so it never reports an
+    update available against itself. <strong>Run update anyway</strong>
+    below runs the real pull-and-restart cycle against the actual published
+    image, so you can watch the mechanism work — it does not preserve
+    whatever dev-branch code is running now.
+  </p>
+  {% endif %}
+
+  {% if state.in_progress %}
+  <p class="alert" role="status">
+    Update in progress — pulling the new image and restarting. This page will
+    refresh itself.
+  </p>
+  {% elif update_started %}
+  <p class="alert" role="status">
+    Update started — pulling the new image and restarting. This page will
+    refresh itself.
+  </p>
+  {% elif state.last_result == "success" %}
+  <p class="alert" role="status">Update applied successfully. Running v{{ version }}.</p>
+  <form method="post" action="/update/dismiss" class="inline">
+    <button type="submit" class="btn btn-quiet">Dismiss</button>
+  </form>
+  {% elif state.last_result %}
+  <p class="alert alert-error" role="alert">Update failed: {{ state.last_result }}</p>
+  <form method="post" action="/update/dismiss" class="inline">
+    <button type="submit" class="btn btn-quiet">Dismiss</button>
+  </form>
+  {% elif state.available %}
+  <p class="alert" role="status">
+    Update available.
+    <a href="https://github.com/acebmxer/xcp_pulse/releases" target="_blank" rel="noopener">
+      See release notes
+    </a>
+  </p>
+  {% else %}
+  <p class="note">Up to date.</p>
+  {% endif %}
+
+  {% if state.available and not state.in_progress %}
+  <p class="note">
+    Applying pulls the new image and restarts XCP Pulse — the page will be
+    briefly unavailable while it does.
+  </p>
+  {% endif %}
+
+  <div class="row-actions">
+    <form method="post" action="/update/check" class="inline">
+      <button type="submit" class="btn btn-quiet" {% if state.in_progress %}disabled{% endif %}>
+        Check now
+      </button>
+    </form>
+    {% if state.available and not state.in_progress %}
+    <form method="post" action="/update/apply" class="inline">
+      <button type="submit" class="btn btn-primary">Apply update</button>
+    </form>
+    {% endif %}
+    {% if is_dev_build and not state.in_progress %}
+    <a href="/update/apply-anyway" class="btn btn-quiet">Run update anyway</a>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+{% endblock %}

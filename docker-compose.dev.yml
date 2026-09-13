@@ -8,4 +8,14 @@
 
 services:
   xcp-pulse:
-    build: .
+    build:
+      context: .
+      args:
+        # Tells self-update this is a local build, not the published image —
+        # see the Dockerfile's own comment on this ARG. Without it, a locally
+        # built image kept under the same ghcr.io/... tag (as the comment
+        # above explains this override does) still gets a real, different
+        # digest from the one on GHCR, and the Update page would report
+        # "update available" against a build that's actually ahead of
+        # :latest, not behind it.
+        XCP_PULSE_DEV_BUILD: "true"

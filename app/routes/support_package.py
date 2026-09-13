@@ -15,8 +15,16 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, Response
 
 from app import retention
+from app.activity import log_activity
 from app.artifacts import get_artifact, human_bytes, list_for_job
-from app.dependencies import login_required, redirect, serve_artifact, templates, wake_worker
+from app.dependencies import (
+    login_required,
+    operator_required,
+    redirect,
+    serve_artifact,
+    templates,
+    wake_worker,
+)
 from app.job_collect import KIND as COLLECT_KIND
 from app.job_extract import KIND as EXTRACT_KIND
 from app.job_findings import KIND as FINDINGS_KIND
@@ -29,6 +37,7 @@ from app.job_support_package import package_from_job
 from app.jobs import SUCCEEDED, enqueue, get_job, has_active, list_jobs
 from app.log_categories import category_keys
 from app.redact import enabled_rules
+from app.security import client_ip
 from app.xo_connection import get_connection
 
 router = APIRouter()
@@ -107,7 +116,7 @@ def support_package_page(
 def package_collection(
     job_id: str,
     request: Request,
-    username: str = Depends(login_required),
+    username: str = Depends(operator_required),
     date_preset: str = Form(default=""),
     date_start: str = Form(default=""),
     date_end: str = Form(default=""),
@@ -177,6 +186,7 @@ def package_collection(
             job_id,
             username,
         )
+        log_activity(db, username, "package.start", detail=job_id, ip=client_ip(request))
         return redirect("/support-package?notice=Building+the+support+package.")
 
     redact_source_job_id = None
@@ -191,13 +201,14 @@ def package_collection(
         redact_source_job_id=redact_source_job_id,
     )
     log.info("queued %s for existing collection %s by %s", SUPPORT_PACKAGE_KIND, job_id, username)
+    log_activity(db, username, "package.start", detail=job_id, ip=client_ip(request))
     return redirect("/support-package?notice=Building+the+support+package.")
 
 
 @router.post("/support-package/collect")
 def collect_and_package(
     request: Request,
-    username: str = Depends(login_required),
+    username: str = Depends(operator_required),
     host_id: str = Form(...),
     include_audit: str = Form(default=""),
     date_preset: str = Form(default=""),
@@ -268,6 +279,7 @@ def collect_and_package(
         extract_job_id = extract_job.id
 
     _enqueue_chain(request, source_job_id=collect_job.id, extract_job_id=extract_job_id)
+    log_activity(db, username, "collect_and_package.start", detail=host.name, ip=client_ip(request))
     return redirect(
         f"/support-package?notice=Collecting+from+{host.name}+and+building+the+package."
     )
@@ -280,9 +292,11 @@ def download_package(
     username: str = Depends(login_required),
 ) -> Response:
     """Serve one stored support package as a download."""
-    artifact = get_artifact(request.app.state.db, artifact_id)
+    db = request.app.state.db
+    artifact = get_artifact(db, artifact_id)
     if artifact is not None:
         log.info("%s downloaded %s (%s)", username, artifact.name, artifact.size_human)
+        log_activity(db, username, "artifact.download", detail=artifact.name, ip=client_ip(request))
     return serve_artifact(request, artifact_id, on_error="/support-package")
 
 
@@ -290,7 +304,7 @@ def download_package(
 def delete_package(
     job_id: str,
     request: Request,
-    username: str = Depends(login_required),
+    username: str = Depends(operator_required),
 ) -> Response:
     """Delete one support package and the archive it produced."""
     db = request.app.state.db
@@ -300,6 +314,7 @@ def delete_package(
     if retention.delete_job(db, data_dir, job_id, kind=SUPPORT_PACKAGE_KIND):
         name = package.name if package is not None else job_id
         log.info("%s deleted support package %s", username, name)
+        log_activity(db, username, "package.delete", detail=name, ip=client_ip(request))
         return redirect("/support-package?notice=Support+package+deleted.")
     return redirect("/support-package?error=There+is+no+such+package+to+delete.")
 

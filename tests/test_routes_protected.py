@@ -6,7 +6,6 @@ route added later is covered without anyone remembering to add it here.
 
 from __future__ import annotations
 
-import re
 from collections.abc import Iterable
 
 from fastapi.routing import APIRoute
@@ -67,19 +66,3 @@ def test_anonymous_dashboard_redirect_preserves_destination(client: TestClient) 
     response = client.get("/")
     assert response.status_code == 303
     assert response.headers["location"] == "/login?next=/"
-
-
-def test_dashboard_keeps_the_roadmap_section(logged_in: TestClient) -> None:
-    """ "What is coming" is a permanent part of the dashboard.
-
-    It stays until Nick decides otherwise — it is not scaffolding to be removed
-    once the dashboard has real content. This test exists so that removing it
-    is a deliberate act rather than a tidy-up nobody notices.
-    """
-    body = logged_in.get("/").text
-    assert "What is coming" in body
-    # A heading with no stages under it would be the same loss by another route.
-    # Match the row class exactly: 'class="stage"' and 'class="stage ...'
-    # rather than the prefix, which also hits stages-group and stage-name.
-    rows = re.findall(r'class="stage(?:\s[^"]*)?"', body)
-    assert len(rows) >= 5, f"expected the stage rows to still be listed, found {len(rows)}"

@@ -156,6 +156,24 @@ def test_the_page_only_auto_refreshes_while_something_is_running(
     assert 'http-equiv="refresh"' not in connected.get("/jobs").text
 
 
+def test_the_refresh_tag_is_actually_inside_head(connected: TestClient) -> None:
+    """A <meta> tag outside <head> is invalid HTML and browsers ignore it —
+    which is exactly how this tag sat for a while: rendered into
+    {% block content %} (the page body), present in the response text so a
+    plain substring check like the test above never noticed, but inert in a
+    real browser. head_extra is the block base.html defines inside <head> for
+    this; assert the tag actually lands there, not merely that it's present
+    somewhere in the page.
+    """
+    app = connected.app  # type: ignore[attr-defined]
+    enqueue(app.state.db, INVENTORY_KIND)
+    body = connected.get("/jobs").text
+
+    head = re.search(r"<head>(.*?)</head>", body, re.DOTALL)
+    assert head is not None
+    assert 'http-equiv="refresh"' in head.group(1)
+
+
 # ---- redaction from the jobs page ----
 #
 # What matters here is not that a job was queued — that is the same enqueue

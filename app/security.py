@@ -19,6 +19,13 @@ from itsdangerous import BadSignature, URLSafeSerializer
 
 SESSION_COOKIE = "xcp_pulse_session"
 
+# The cookie that carries a username between the password step and the TOTP
+# code step of a two-factor login. Deliberately not a session: it proves only
+# that the password was just verified, not that the user is signed in, and it
+# expires in minutes rather than hours — see sign_pending_2fa / verify_pending_2fa.
+PENDING_2FA_COOKIE = "xcp_pulse_pending_2fa"
+PENDING_2FA_MINUTES = 5
+
 # argon2-cffi's defaults are the RFC 9106 low-memory profile — appropriate here,
 # where the cost is paid on a single interactive login rather than in bulk.
 _hasher = PasswordHasher()
@@ -55,6 +62,44 @@ def unsign_session_id(cookie_value: str, secret_key: str) -> str | None:
     return value if isinstance(value, str) else None
 
 
+def _pending_2fa_serializer(secret_key: str) -> URLSafeSerializer:
+    # A different salt from _serializer's, so a pending-2FA cookie and a real
+    # session cookie can never be confused for one another even if somehow
+    # presented in the other's place.
+    return URLSafeSerializer(secret_key, salt="xcp-pulse-pending-2fa")
+
+
+def sign_pending_2fa(username: str, secret_key: str) -> str:
+    """Wrap a username, plus the time it was issued, in a signed cookie value.
+
+    The timestamp is what makes the window enforceable: itsdangerous signs
+    the payload but does not expire it on its own for a plain dumps()/loads()
+    pair, so the expiry check happens in verify_pending_2fa by comparing this
+    timestamp against PENDING_2FA_MINUTES.
+    """
+    payload = {"username": username, "issued_at": time.time()}
+    return _pending_2fa_serializer(secret_key).dumps(payload)
+
+
+def verify_pending_2fa(cookie_value: str, secret_key: str) -> str | None:
+    """Recover the username from a pending-2FA cookie, or None if the
+    signature is bad or the window (PENDING_2FA_MINUTES) has passed.
+    """
+    try:
+        payload = _pending_2fa_serializer(secret_key).loads(cookie_value)
+    except BadSignature:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    username = payload.get("username")
+    issued_at = payload.get("issued_at")
+    if not isinstance(username, str) or not isinstance(issued_at, (int, float)):
+        return None
+    if time.time() - issued_at > PENDING_2FA_MINUTES * 60:
+        return None
+    return username
+
+
 def create_session(conn: sqlite3.Connection, username: str, session_hours: int) -> str:
     """Record a new session and return its id."""
     session_id = secrets.token_urlsafe(32)
@@ -68,7 +113,15 @@ def create_session(conn: sqlite3.Connection, username: str, session_hours: int) 
 
 
 def get_session_user(conn: sqlite3.Connection, session_id: str) -> str | None:
-    """Return the username for a live session, None if missing or expired."""
+    """Return the username for a live session, None if missing, expired, or
+    the account behind it no longer exists or has been disabled.
+
+    The account check is what makes disabling or deleting a user take effect
+    immediately rather than only on their next login: sessions.username has no
+    foreign key to users (same as before multiple accounts existed), so a
+    disabled user's existing cookie would otherwise keep working until it
+    expired on its own, up to XCP_PULSE_SESSION_HOURS later.
+    """
     row = conn.execute(
         "SELECT username, expires_at FROM sessions WHERE id = ?", (session_id,)
     ).fetchone()
@@ -77,6 +130,14 @@ def get_session_user(conn: sqlite3.Connection, session_id: str) -> str | None:
     if row["expires_at"] < time.time():
         destroy_session(conn, session_id)
         return None
+
+    user_row = conn.execute(
+        "SELECT disabled FROM users WHERE username = ?", (row["username"],)
+    ).fetchone()
+    if user_row is None or user_row["disabled"]:
+        destroy_session(conn, session_id)
+        return None
+
     return row["username"]
 
 

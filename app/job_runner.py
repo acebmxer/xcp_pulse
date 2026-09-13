@@ -11,10 +11,10 @@ job already running?" a question with an obvious answer.
 
 **This is one implementation of a consumer, not the design.** The queue lives in
 the database and jobs are claimed with an atomic conditional UPDATE, so a
-separate worker *process* — which the roadmap anticipates for isolation — can be
-added as a second consumer of the same table without changing app/jobs.py, the
-schema, or any job body. What would change is only this file: the loop moves out
-of the web process, and ``start_worker`` stops being called from the lifespan.
+separate worker *process*, for isolation, can be added as a second consumer of
+the same table without changing app/jobs.py, the schema, or any job body. What
+would change is only this file: the loop moves out of the web process, and
+``start_worker`` stops being called from the lifespan.
 Nothing else here assumes the worker shares a process with the app.
 """
 

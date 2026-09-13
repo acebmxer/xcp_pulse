@@ -10,6 +10,385 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-13
+
+### Fixed
+
+- **"Test connection" decided whether a restricted account could download logs
+  by reading `/acl-privileges`, which does not answer that question — it lists
+  privileges already attached to existing roles on the instance, not what can
+  be granted.** None of Xen Orchestra's built-in role templates carry
+  `export:logs`, so every restricted account read back the same three actions
+  (`read`, `allow-vm`, `*`) and was told log collection needed full host
+  administration, in the UI and in the docs, regardless of what a custom role
+  could actually be given. Verified wrong against a live instance: a
+  restricted account holding only a custom role — created through
+  `POST /rest/v0/acl-roles` and `POST /rest/v0/acl-privileges` with
+  `export:logs` on host — was accepted immediately.
+
+  `check_log_export` (`app/xo_client.py`) no longer reads that catalogue at
+  all. It now asks the real question: a lightweight probe
+  (`probe_log_export`) opens `/hosts/{id}/audit.txt` — the smaller of the two
+  log routes, gated by the same privilege as `logs.tgz` — and reads only the
+  status code, closing the connection before any body arrives. With no host
+  visible yet to probe, it says so plainly ("not yet known", pointing at
+  Refresh inventory) rather than reporting collection as unavailable. The now
+  meaningless `grantable_host_actions()` and the `LogExportSupport.grantable`
+  field it fed are removed.
+
+  Corrected the docs and on-screen notes that reported this as a hard limit
+  — [roadmap.md](docs/roadmap.md), [configuration.md](docs/configuration.md),
+  [first-login.md](docs/user-guide/first-login.md), and the notes in
+  [collect.html](app/templates/collect.html) and
+  [settings.html](app/templates/settings.html) — to describe the actual fix
+  (create a custom role, grant it `export:logs`, assign it) instead. Also
+  clarified two things easy to conflate with this: an existing XO 5 ACL grants
+  nothing here, since it's a separate system with no `export:logs` action to
+  give in the first place; and XCP Pulse's admin/restricted detection reads
+  only the XO account's own Administrator/User permission, unaffected by
+  groups, ACLs or RBAC roles either way. No UI exists yet on either XO version
+  to create the role — XO 5's ACLs page predates RBAC v2, and XO 6's own
+  Roles/Groups pages currently redirect back to that same XO 5 page — so the
+  fix is three REST API calls, now documented in
+  [configuration.md](docs/configuration.md); nothing here needs to change
+  once a Roles UI ships, since it would just be a different way of making
+  the same calls.
+
+### Removed
+
+- **`docs/roadmap.md`.** It was a staged-development log for the pre-1.0
+  build, tracking what had shipped and what was next by version number —
+  useful while the feature set and configuration surface were still moving,
+  redundant now that both have settled ahead of v1.0.0: this CHANGELOG already
+  records what shipped when. Its one piece of durable reference content — the
+  "Which Xen Orchestra account to use" section on `export:logs` and RBAC —
+  moved into [configuration.md](docs/configuration.md), the permanent doc it
+  was already being linked from, rather than being lost. Its "Not planned"
+  list moved there too, as "What XCP Pulse will not do". Every reference to
+  it — the README table, the dashboard's own "What is coming" panel (also
+  removed, per Nick — it was explicitly kept until he said otherwise), on-screen
+  error text, and docstrings in `app/docs_render.py`, `app/xo_client.py`,
+  `app/job_runner.py`, `app/jobs.py`, `app/job_extract.py`, `app/update.py`,
+  `SECURITY.md` and `docs/functions.md` — now points at
+  [configuration.md](docs/configuration.md) or has been reworded to carry its
+  own reasoning inline.
+
+### Changed
+
+- **Moved Dashboard, Collect, Findings, Jobs, Redaction and User manual off the
+  top bar and into a single "☰ Menu" dropdown**, alongside Settings
+  (admin-only, same guard as before) and Change password / 2FA. Dashboard was
+  previously only reachable by clicking the "XCP Pulse" brand link; it's now
+  also the first item in the menu. Support package, Activity and Update are
+  dropped entirely from navigation — their routes and pages are unchanged,
+  `/activity` and `/update` still work, just not linked anywhere. The top bar
+  itself now holds only the brand, the Menu dropdown, the username and Log
+  out. It's a plain `<details>`/`<summary>` element (`.account-menu` in
+  [base.html](app/templates/base.html)) — this project has no client-side
+  JavaScript and none was needed here.
+
+  Change password and two-factor authentication, previously two separate
+  pages (`/account/password` and `/account/totp`), are now one combined page
+  at `GET /account` — a password-change form and the 2FA on/off panel stacked
+  on the same screen. The old GET routes and their templates
+  (`account_password.html`, `account_totp.html`) are removed; the `POST`
+  endpoints they submitted to are unchanged. The multi-step TOTP setup and
+  backup-codes pages still get their own screens, since that flow is
+  inherently a QR code, a confirm step, and a one-time codes reveal.
+
+### Fixed
+
+- **The "Run update anyway" button on a dev build ran the real pull-and-recreate
+  cycle from a single, unconfirmed click, and the button's own docstring said
+  plainly that it does not preserve whatever dev-branch code is running —
+  exactly what happened on a live dev container.** The mechanism itself was
+  working as designed; what was missing was anything standing between an idle
+  click and losing a running dev build. `GET /update/apply-anyway` now serves a
+  confirmation page (`app/routes/update.py:apply_anyway_confirm`,
+  `app/templates/update_confirm.html`) explaining what the button does before
+  its own form can `POST` to the real route; the button on the Update page is
+  now a link to that page instead of a form that submits directly. This app has
+  no client-side JavaScript, so there was no existing confirm pattern to reuse
+  (every other destructive action here, like the Jobs page's Delete, is also
+  one click) — this introduces the pattern rather than following one.
+
+  That confirmation page also exposed a real layout bug: `.row-actions` (the
+  flex row every action-button pair sits in) had no `align-items`, so it
+  defaulted to `stretch`. Every existing `.row-actions` row only ever held
+  `<button>` elements of identical height, so stretch was invisible there —
+  this was the first row to mix a `<button>` with an `<a class="btn">`
+  ("Cancel", linking back to `/update`), and the anchor stretched to match its
+  sibling's full row height instead of sizing to its own content, rendering as
+  a visibly oversized, misaligned button next to "Yes, run it". Fixed with
+  `align-items: center` on `.row-actions`, which changes nothing for any
+  existing all-button row.
+
+  Diagnosing this also exposed a real gap: this project already knew that
+  Starlette's `StaticFiles` sends no `Cache-Control` header, and had worked
+  around it with a `?v=<mtime>` token on the stylesheet URL — but the token
+  alone only helps a browser that chooses to revalidate; with no
+  `Cache-Control` at all, a browser is free to serve a cached copy of
+  `style.css` from browser heuristics alone, indefinitely, surviving even a
+  hard reload. A CSS fix could sit correct on disk, correct in the running
+  container, and still never reach the screen it was meant to fix — which is
+  exactly what happened testing the button above. `/static` is now served by
+  `app/main.py:_CacheableStaticFiles`, which adds
+  `Cache-Control: public, max-age=31536000, immutable` — safe specifically
+  because the mtime token already makes the URL itself change the moment the
+  file's bytes do, so the same URL never needs to resolve to two different
+  versions of the file.
+
+  Once the stale-cache issue was ruled out, one real visual defect remained on
+  this confirmation page: "Cancel" used `.btn-quiet`, the small secondary-link
+  size used for things like Delete and Download throughout the app, sitting
+  next to "Yes, run it" at the larger `.btn-primary` size — correct by that
+  convention everywhere else, but wrong here, where the two are an equally
+  weighted either/or choice rather than a primary action with a minor link
+  beside it. Added `.btn-secondary` (full `.btn-primary` size, bordered like
+  `.btn-quiet` instead of filled) and used it for Cancel.
+
+- **The Jobs page's meta-refresh tag never actually auto-refreshed anything: it
+  sat inside `{% block content %}`, which renders into `<body>`, and a
+  `<meta http-equiv="refresh">` outside `<head>` is invalid HTML that browsers
+  ignore.** The identical bug was already fixed on the Update page by moving its
+  tag into the `head_extra` block `base.html` defines inside `<head>`; the same
+  fix is applied here. The existing regression test only checked that the tag's
+  text appeared and disappeared with `any_active`, which can't tell "in `<head>`"
+  from "in `<body>`" from "absent" — a new test on both pages now parses the
+  response and asserts the tag is actually inside `<head>`, closing the gap that
+  let both instances of this bug ship with a green suite.
+
+- **The TLS certificate section on Settings had two problems: its upload
+  fields were labelled "(PEM)" while their file pickers actually accepted
+  `.crt` and `.cer` for the certificate and `.key` for the private key too,
+  and its description text ("XCP Pulse is currently serving HTTPS with a
+  self-signed certificate") stayed on screen verbatim after uploading a real
+  one.** The labels now name the accepted extensions directly ("Certificate
+  (.pem, .crt or .cer)", "Private key (.pem or .key, unencrypted)"). The
+  description is replaced with a table read from the certificate actually
+  installed — subject, whether it's self-signed or uploaded, and its expiry
+  — via a new `app/tls.py:current_certificate_info`, so the page describes
+  whatever nginx is really serving at the moment it's viewed rather than a
+  claim that was only ever true before the first upload.
+
+- **`app.state.db`'s lock only covered `execute()`, not the fetch that came
+  after it, so the concurrent-access race it was meant to close could still
+  corrupt a row.** `_LockedConnection` serialises `execute()` calls on the
+  shared connection, but `execute()` returns a live `sqlite3.Cursor` tied to
+  that same connection, and `fetchall()`/`fetchone()` step the connection's
+  execution state exactly as `execute()` does. Releasing the lock as soon as
+  `execute()` returned left every fetch free to interleave with another
+  thread's statement on the same connection object — reproducing the
+  original crash (`IndexError: tuple index out of range` reading a
+  `sqlite3.Row` mid-corruption) intermittently under the test suite's own
+  concurrency test. `execute()` and `executemany()` now return a
+  `_LockedCursor` that holds the same lock for every fetch, not just for
+  obtaining the cursor. Confirmed by running the regression test
+  (`tests/test_db.py::test_the_wrapped_connection_never_corrupts_a_concurrent_read`)
+  eight times back to back with no failures, plus the full suite.
+
+### Added
+
+- **Optional TOTP two-factor authentication, per user, with a QR code for
+  setup.** Off by default, and each account turns it on for itself — a
+  `/account/totp` page — rather than an instance-wide switch, since a login
+  credential is each user's own to opt into, the same as their password.
+  Setup (`/account/totp/setup`) generates a secret, shows a QR code for
+  scanning into an authenticator app (Google Authenticator, Authy,
+  1Password, etc.) alongside the secret as plain text for entering by hand,
+  and only turns 2FA on once the user proves they can generate a matching
+  code — at which point ten one-time backup codes are shown, once, for
+  recovering access if the device is lost. The QR code is rendered entirely
+  server-side as inline SVG (`app/totp.py`, using `segno`, a pure-Python,
+  zero-dependency QR encoder newly added to `pyproject.toml`) — no image
+  library, no client-side JavaScript (this app has none), and the
+  `otpauth://` URI carrying the secret is never sent to any external
+  service, only encoded directly into the SVG this process renders. The
+  secret is stored encrypted at rest using the same AES-GCM-over-the-app-
+  secret-key scheme as the Xen Orchestra token (`app/crypto.py`); backup
+  codes are stored as salted hashes, never plaintext, and a used one is
+  removed from the stored list so it cannot be replayed. Turning 2FA off
+  requires the current password, the same bar as changing it. Admins get a
+  separate recovery path on the Users page — turning off another user's 2FA
+  with no code or password check — for someone who has lost both their
+  device and all ten backup codes, the same role a password reset already
+  plays for a lost password.
+
+  The login flow (`app/routes/auth.py`) now branches on whether the account
+  has 2FA on: a correct password alone no longer creates a session for such
+  an account. Instead it sets a short-lived, narrowly-scoped signed cookie
+  (5 minutes, path-restricted to `/login/2fa`) proving only that the
+  password step just succeeded, and redirects to a new code-entry page that
+  accepts either a live TOTP code or a backup code before a real session is
+  created. Login throttling (`is_rate_limited`) applies to the code step the
+  same as it does to the password step. Accounts without 2FA enrolled are
+  unaffected — password alone still creates a session directly, exactly as
+  before.
+
+  Verified against a real QR decoder during development: the exact SVG this
+  module renders was rasterized and scanned back with `zbar`, confirming the
+  `otpauth://` payload round-trips correctly and the code is genuinely
+  scannable, not just visually plausible.
+
+- **Self-update: check for and apply new releases from a new Update page,
+  opt-in and off by default.** `XCP_PULSE_ENABLE_SELF_UPDATE=false` is the
+  default; turning it on alone changes nothing until the Docker socket is
+  also mounted in, because applying an update needs it and it is effectively
+  host root — the opposite of this project's normal footprint, so it stays a
+  deliberate, separate step (see `docs/configuration.md`). Checking is
+  independent of applying and needs no socket: a new `app/update.py`
+  compares the digest GHCR's `latest` tag currently points at against the
+  digest the running container was actually created from (read via the
+  socket, when mounted — never trusted from a remembered value, so a manual
+  `docker compose pull && up -d` on the host can't leave the app advertising
+  an update that's already installed) and runs once at startup and once a
+  day in the background. Applying pulls the new image and hands the restart
+  to a throwaway container outside the compose project (`xcp_pulse_updater`)
+  — this container cannot reliably recreate itself, since `docker compose up
+  -d` would be killing the very process running it partway through. The
+  *replacement* container confirms success on its own startup, since the
+  process that started the update does not survive to see it finish; a
+  recreation that never completes is reaped after 3 minutes with an error
+  naming the manual command to finish the job. New page: **Update**
+  (`/update`, admin and operator — keeping the app current is day-to-day
+  running, not configuration, so it isn't folded into the admin-only
+  Settings page), plus a dashboard banner when an update is available and
+  self-update is on. The image now ships Docker's own `docker-ce-cli` and
+  `docker-compose-plugin` (from `download.docker.com`, not Debian's older
+  bundled `docker-compose`, which lacks the `env_file`/`format: raw` support
+  `xcp-pulse.env` depends on) — client binaries only, present at no
+  additional privilege since nothing in the image can reach a socket that
+  isn't explicitly mounted in. Because this container runs as a non-root
+  user, reaching the socket at all also needs the host's `docker` group
+  joined via `group_add`, which needs its host-specific GID supplied through
+  a genuinely bare `.env` file (kept separate from `xcp-pulse.env`
+  specifically to avoid Compose's own `$`-interpolation mangling the Argon2
+  hash inside it) — both spelled out in `docker-compose.yml.example` and
+  `docs/configuration.md`. A locally built image (`docker-compose.dev.yml`)
+  keeps the same `ghcr.io/...` tag the published image uses, so it gets a
+  real, different digest the moment anything changes — including a change
+  that's ahead of `:latest`, not behind it, which a bare digest comparison
+  can't tell apart from genuinely being outdated. `XCP_PULSE_DEV_BUILD`, set
+  only by that override's build arg, stops a dev build from ever reporting
+  an update against itself; the Update page explains this and offers **Run
+  update anyway**, which runs the real pull-and-restart cycle against the
+  published image so the mechanism can still be watched end to end without
+  the false claim.
+
+- **Multiple user accounts, three roles, and an activity log — XCP Pulse is no
+  longer a single shared login.** Before this, "who is logged in" was one
+  username/password-hash pair read from `XCP_PULSE_ADMIN_USER` /
+  `XCP_PULSE_ADMIN_PASSWORD_HASH`, checked against every login attempt with no
+  concept of a second account. A new `users` table (migration 5) holds any
+  number of accounts, each with a role — **admin** (everything, including
+  user management, the Xen Orchestra connection, and redaction rules),
+  **operator** (run collections, redactions, extractions and support
+  packages; delete artifacts; view the activity log — everything short of
+  changing settings), or **viewer** (read-only: dashboard, findings, jobs,
+  activity log — and, deliberately, still able to download anything already
+  stored, since reading a finished report or bundle isn't an action a
+  read-only account should be blocked from). The
+  two environment variables still work, but only as the seed for the very
+  first admin account (`app/users.py:bootstrap_admin`, run once at startup);
+  once any row exists in `users`, they are no longer read. A new **Users**
+  page under Settings (admin-only) adds, disables, re-enables and changes the
+  role of any account, and resets anyone's password without needing their
+  current one; every signed-in user, regardless of role, can change their own
+  password from a new `/account/password` page reachable from their name in
+  the top bar — that one does require the current password. Disabling or
+  deleting the last active admin is refused outright, so the app can never be
+  left with no way to manage it. A new `activity_log` table and
+  `app/activity.py:log_activity` record who did what and when — every login
+  and logout, every settings change, every job started, downloaded or
+  deleted, every user added, disabled or reset — shown on a new **Activity**
+  page (admin and operator). Disabling a user takes effect immediately, not
+  just on their next login: `get_session_user` now also checks the account
+  behind an existing session cookie still exists and isn't disabled, closing
+  what would otherwise be a live session outliving the account for up to
+  `XCP_PULSE_SESSION_HOURS`. Every new-password field — adding a user,
+  admin resetting someone's password, and self-service password change — now
+  asks for it twice and rejects a mismatch before writing anything, and
+  signing in to a disabled account with the correct password says so
+  ("This account has been disabled.") instead of the generic wrong-password
+  message; a wrong password against a disabled account still gets the
+  generic message, so only someone who already knows the real password
+  learns the account is disabled.
+
+- **Built-in HTTPS, no reverse proxy required.** `XCP_PULSE_ENABLE_HTTPS`
+  (off by default) bundles a small `nginx-light` into the image to terminate
+  TLS in front of uvicorn, rather than uvicorn holding the port directly.
+  `docker/entrypoint.sh` decides which of the two actually runs; when it's
+  nginx, uvicorn moves to `127.0.0.1:8081` and nginx alone holds `8080`
+  (redirects every request to HTTPS, so an old bookmark still lands) and
+  `8443` (terminates TLS, proxies to uvicorn) — `docker/nginx.conf` is the
+  whole config. On first start with no certificate at `<data_dir>/tls/`, the
+  entrypoint generates a self-signed one with `openssl`; a new **TLS
+  certificate** section in Settings (visible only when built-in HTTPS is on)
+  lets an operator upload their own instead — `app/tls.py` checks the
+  uploaded cert and key are a valid, matching, unexpired PEM pair before
+  writing them and sending nginx's master process `SIGHUP` to reload, which
+  re-reads the certificate without dropping an in-flight request or needing
+  a restart. Both HTTPS ports are unprivileged, so nginx runs as the same
+  non-root `pulse` user as uvicorn throughout — no root-then-drop-privileges
+  start, and none of nginx's own state (logs, pid, temp directories) touches
+  its usual root-owned defaults, all of it redirected under `/tmp/nginx`
+  instead. `XCP_PULSE_ENABLE_HTTPS=true` also implies `XCP_PULSE_HTTPS`'s
+  Secure cookie flag automatically, since nginx terminating TLS right there
+  means XCP Pulse always knows the browser is on HTTPS without being told
+  separately — `XCP_PULSE_HTTPS` remains for the different case of an
+  external reverse proxy. The container healthcheck checks nginx itself
+  (over HTTPS, with certificate verification disabled — it runs inside the
+  same container as the certificate it would otherwise have to trust) when
+  built-in HTTPS is on, rather than only uvicorn behind it, so a wedged
+  nginx with a live uvicorn does not report healthy. `installation.md` gained
+  worked examples for the alternative — fronting XCP Pulse with
+  nginx-proxy-manager, Caddy or Traefik instead — since that gap existed even
+  though the underlying `XCP_PULSE_HTTPS` cookie mechanism already worked.
+
+- **A User manual (`/help`) renders how to use XCP Pulse inside the app**, so
+  it can be read without leaving XCP Pulse or checking out the repo: a new
+  `docs/user-guide/` — one page per feature area (first login and connecting
+  to Xen Orchestra, Dashboard, Collect, Redaction, Jobs, Findings, Support
+  package, Date ranges, Settings), collapsible as a "User guide" group in the
+  sidebar — plus Installation, Configuration and Architecture as top-level
+  entries, the three GitHub docs still useful to a user rather than a
+  contributor. `README.md` and `docs/functions.md` are deliberately not
+  rendered here — a contributor reference and the project's public face,
+  not part of using the app — and `docs/roadmap.md` never was, since it
+  documents the roadmap process itself. Every page under `docs/user-guide/`
+  exists only to be rendered in-app: none of it is linked from README's own
+  docs table or part of the GitHub-facing doc set. A new `app/docs_render.py`
+  reads and renders these once per process (they ship inside the image now —
+  the Dockerfile previously copied neither `docs/` nor `README.md` into the
+  runtime stage, only the build stage, so this is also the fix that makes
+  "docs match the version you are running" actually true), using the new
+  `markdown` dependency plus a small pass of its own: GitHub's
+  `[!NOTE]`/`[!WARNING]` callout syntax becomes a styled block (plain
+  Markdown treats it as an ordinary blockquote), the
+  `[← back to the README]` line each mirrored page opens with is dropped in
+  favour of the sidebar that replaces it, and `.md` links are rewritten — to
+  another rendered page's `/help/<slug>` route if this module renders it, or
+  to an absolute GitHub URL (opened in a new tab) if it does not, since a
+  relative link such as `docs/functions.md` or `docs/roadmap.md` would 404
+  served from a UI route instead of from its real location on GitHub. A
+  search box does a case-insensitive substring scan across all pages with a
+  snippet per match. Served under `/help` rather than the more obvious
+  `/docs`, because FastAPI reserves `/docs` for its own auto-generated API
+  documentation, which this app deliberately disables since it sits in front
+  of credentials; a route at that path would have silently un-disabled it in
+  effect. The nav link reads "User manual".
+
+- **CI now scans the built Docker image for known vulnerabilities with
+  [Trivy](https://github.com/aquasecurity/trivy) on every push and pull
+  request**, failing the build on any HIGH or CRITICAL finding with a fix
+  available (`ignore-unfixed: true`, since there's nothing to act on for one
+  that isn't). This is the automated version of the manual CVE sweep that
+  produced `7f5360d` (upgrading base-OS packages during the image build): the
+  same class of finding is now caught continuously instead of by hand.
+  Accepted exceptions, if any are ever needed, go in `.trivyignore` with a
+  comment explaining why. See the new CI job in
+  [ci.yml](.github/workflows/ci.yml).
+
 ## [0.8.0] - 2026-09-12
 
 ### Added

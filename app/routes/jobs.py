@@ -15,10 +15,12 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 from app import retention
+from app.activity import log_activity
 from app.artifacts import get_artifact, list_for_job
 from app.dependencies import (
     age,
     login_required,
+    operator_required,
     redirect,
     serve_artifact,
     templates,
@@ -35,6 +37,7 @@ from app.job_redact import (
 )
 from app.jobs import enqueue, get_job, has_active, list_jobs, request_cancel
 from app.redact import RULES, enabled_rules
+from app.security import client_ip
 from app.xo_connection import get_connection
 
 router = APIRouter()
@@ -76,7 +79,9 @@ def jobs_page(request: Request, username: str = Depends(login_required)) -> Resp
 
 
 @router.post("/jobs/refresh-inventory")
-def start_inventory_refresh(request: Request, username: str = Depends(login_required)) -> Response:
+def start_inventory_refresh(
+    request: Request, username: str = Depends(operator_required)
+) -> Response:
     """Queue an inventory refresh, unless one is already pending."""
     db = request.app.state.db
 
@@ -89,13 +94,14 @@ def start_inventory_refresh(request: Request, username: str = Depends(login_requ
     job = enqueue(db, INVENTORY_KIND)
     wake_worker(request)
     log.info("queued %s job %s for %s", INVENTORY_KIND, job.id, username)
+    log_activity(db, username, "inventory.refresh", ip=client_ip(request))
     return redirect("/jobs?notice=Inventory+refresh+queued.")
 
 
 @router.post("/jobs/redact")
 def start_redaction(
     request: Request,
-    username: str = Depends(login_required),
+    username: str = Depends(operator_required),
     artifact_id: str = Form(...),
 ) -> Response:
     """Queue a redaction of one stored artifact.
@@ -124,6 +130,7 @@ def start_redaction(
     job = enqueue(db, REDACT_KIND, {"artifact_id": artifact_id})
     wake_worker(request)
     log.info("queued %s job %s for %s", REDACT_KIND, job.id, username)
+    log_activity(db, username, "redact.start", detail=artifact_id, ip=client_ip(request))
     return redirect("/jobs?notice=Redaction+queued.")
 
 
@@ -134,9 +141,11 @@ def download_job_artifact(
     username: str = Depends(login_required),
 ) -> Response:
     """Serve one stored artifact as a download."""
-    artifact = get_artifact(request.app.state.db, artifact_id)
+    db = request.app.state.db
+    artifact = get_artifact(db, artifact_id)
     if artifact is not None:
         log.info("%s downloaded %s (%s)", username, artifact.name, artifact.size_human)
+        log_activity(db, username, "artifact.download", detail=artifact.name, ip=client_ip(request))
     return serve_artifact(request, artifact_id, on_error="/jobs")
 
 
@@ -144,7 +153,7 @@ def download_job_artifact(
 def delete_redaction(
     job_id: str,
     request: Request,
-    username: str = Depends(login_required),
+    username: str = Depends(operator_required),
 ) -> Response:
     """Delete one redaction and the files it produced.
 
@@ -157,13 +166,18 @@ def delete_redaction(
 
     if retention.delete_job(db, data_dir, job_id, kind=REDACT_KIND):
         log.info("%s deleted redaction %s", username, job_id)
+        log_activity(db, username, "redact.delete", detail=job_id, ip=client_ip(request))
         return redirect("/jobs?notice=Redaction+deleted.")
     return redirect("/jobs?error=There+is+no+such+redaction+to+delete.")
 
 
 @router.post("/jobs/{job_id}/cancel")
-def cancel_job(job_id: str, request: Request, username: str = Depends(login_required)) -> Response:
-    if request_cancel(request.app.state.db, job_id):
+def cancel_job(
+    job_id: str, request: Request, username: str = Depends(operator_required)
+) -> Response:
+    db = request.app.state.db
+    if request_cancel(db, job_id):
+        log_activity(db, username, "job.cancel", detail=job_id, ip=client_ip(request))
         return redirect("/jobs?notice=Cancellation+requested.")
     return redirect("/jobs?error=That+job+has+already+finished.")
 

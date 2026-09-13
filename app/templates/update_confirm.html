@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Confirm test update — XCP Pulse{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Run update anyway?</h1>
+
+<div class="card">
+  <p class="alert alert-error" role="alert">
+    This pulls the real published <code>ghcr.io/acebmxer/xcp_pulse:latest</code>
+    image and restarts onto it. It does not preserve whatever dev-branch code
+    is running now — this dev container will end up running the last
+    published release instead, until it is rebuilt.
+  </p>
+  <div class="row-actions">
+    <form method="post" action="/update/apply-anyway" class="inline">
+      <button type="submit" class="btn btn-primary">Yes, run it</button>
+    </form>
+    <a href="/update" class="btn btn-secondary">Cancel</a>
+  </div>
+</div>
+{% endblock %}

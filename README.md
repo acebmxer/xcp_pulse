@@ -7,24 +7,17 @@
 [![Issues](https://img.shields.io/github/issues/acebmxer/xcp_pulse)](https://github.com/acebmxer/xcp_pulse/issues)
 [![Stars](https://img.shields.io/github/stars/acebmxer/xcp_pulse)](https://github.com/acebmxer/xcp_pulse/stargazers)
 [![Forks](https://img.shields.io/github/forks/acebmxer/xcp_pulse)](https://github.com/acebmxer/xcp_pulse/forks)
-[![Unique cloners](https://img.shields.io/badge/unique%20cloners-134-brightgreen)](https://github.com/acebmxer/xcp_pulse/graphs/traffic)
+[![Unique cloners](https://img.shields.io/badge/unique%20cloners-149-brightgreen)](https://github.com/acebmxer/xcp_pulse/graphs/traffic)
 [![Python](https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white)](pyproject.toml)
 [![Docker](https://img.shields.io/badge/docker-compose-2496ED?logo=docker&logoColor=white)](docker-compose.yml.example)
 [![Platform: Linux](https://img.shields.io/badge/platform-linux-333333?logo=linux&logoColor=white)](#requirements)
-[![Tests](https://img.shields.io/badge/tests-504%20unit-informational)](https://github.com/acebmxer/xcp_pulse/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-675%20unit-informational)](https://github.com/acebmxer/xcp_pulse/actions/workflows/ci.yml)
 [![Ruff](https://img.shields.io/badge/ruff-clean-brightgreen)](https://github.com/acebmxer/xcp_pulse/actions/workflows/ci.yml)
+[![Trivy](https://img.shields.io/badge/trivy-scanned-brightgreen)](https://github.com/acebmxer/xcp_pulse/actions/workflows/ci.yml)
 
 Collects XCP-ng and Xen Orchestra logs, bundles them for download, analyses
 them, and reports findings — for your own troubleshooting or to attach to a
 Vates support ticket.
-
-> [!NOTE]
-> XCP Pulse is being built in stages. **Log collection shipped in v0.6.0: it
-> downloads a host's full log bundle, keeps the raw copy, and produces a
-> redacted copy to send — with a report of what was masked. Findings from the
-> API and from collected logs, individual log-category extraction and the
-> Vates support package shipped in v0.7.0.**
-> See [the roadmap](docs/roadmap.md) for what is planned and what is done.
 
 ## Read next
 
@@ -33,7 +26,6 @@ Vates support ticket.
 | [Installation](docs/installation.md) | Getting the container running |
 | [Configuration](docs/configuration.md) | Every setting, its default and what it does |
 | [Architecture](docs/architecture.md) | How the pieces fit together |
-| [Roadmap](docs/roadmap.md) | Current and upcoming features, with status |
 | [Function index](docs/functions.md) | Every function in the codebase, in one place |
 | [Contributing](CONTRIBUTING.md) | Development setup and conventions |
 | [Security](SECURITY.md) | Threat model and reporting a vulnerability |
@@ -133,6 +125,19 @@ rather than estimated:
   filtered by a best-effort timestamp parse. Available when extracting log
   categories, reading findings from the API or from collected logs, and
   building a support package.
+- **Learn to use it without leaving it** — a User manual at `/help` covers
+  setup after the container is running and what each page does, alongside
+  Installation, Configuration and Architecture, searchable, with GitHub's
+  `[!NOTE]`/`[!WARNING]` callouts styled instead of shown as plain
+  blockquotes. Docs ship inside the image, so what renders matches the
+  version you are running.
+- **Serve HTTPS with no reverse proxy of your own** — `XCP_PULSE_ENABLE_HTTPS`
+  bundles a small nginx into the image that terminates TLS in front of the
+  app: a self-signed certificate on first run, a plain-HTTP listener that
+  redirects to it, and an upload form in Settings for your own certificate
+  that nginx starts using immediately, no restart needed. Off by default;
+  already running nginx-proxy-manager, Caddy or Traefik for other services
+  works exactly as before.
 
 ## Configuration
 
@@ -141,17 +146,19 @@ you are most likely to change:
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `XCP_PULSE_ADMIN_USER` | `admin` | Login username |
-| `XCP_PULSE_ADMIN_PASSWORD_HASH` | *(none)* | Argon2id hash; required |
-| `XCP_PULSE_HTTPS` | `false` | Set true when served over HTTPS |
+| `XCP_PULSE_ADMIN_USER` | `admin` | Username for the first admin account, created on first start |
+| `XCP_PULSE_ADMIN_PASSWORD_HASH` | *(none)* | Argon2id hash for that first account; required |
+| `XCP_PULSE_ENABLE_HTTPS` | `false` | Serve HTTPS with a built-in nginx, no reverse proxy needed |
+| `XCP_PULSE_HTTPS` | `false` | Set true when served over HTTPS by your *own* reverse proxy |
 | `XCP_PULSE_SESSION_HOURS` | `12` | Session lifetime |
 
 ## Security
 
 XCP Pulse holds credentials that can read every log on your pool, and stores
 files containing session tokens and internal network topology. Run it on a
-trusted management network behind a reverse proxy — not exposed to the internet.
-See [SECURITY.md](SECURITY.md).
+trusted management network over HTTPS — either its own built-in nginx
+(`XCP_PULSE_ENABLE_HTTPS=true`) or your own reverse proxy — not exposed to
+the internet. See [SECURITY.md](SECURITY.md).
 
 ## License
 

@@ -16,8 +16,16 @@ from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, Response
 
 from app import retention
+from app.activity import log_activity
 from app.artifacts import get_artifact, human_bytes, list_for_job
-from app.dependencies import login_required, redirect, serve_artifact, templates, wake_worker
+from app.dependencies import (
+    login_required,
+    operator_required,
+    redirect,
+    serve_artifact,
+    templates,
+    wake_worker,
+)
 from app.job_collect import KIND as COLLECT_KIND
 from app.job_extract import KIND as EXTRACT_KIND
 from app.job_extract import REPORT_ARTIFACT as EXTRACT_REPORT_ARTIFACT
@@ -27,6 +35,7 @@ from app.job_redact import REPORT_ARTIFACT, existing_redaction, report_from_job,
 from app.jobs import enqueue, get_job, has_active, list_jobs
 from app.log_categories import CATEGORIES, category_keys
 from app.redact import enabled_rules
+from app.security import client_ip
 from app.xo_connection import get_connection
 
 router = APIRouter()
@@ -120,7 +129,7 @@ def collect_page(
 @router.post("/collect")
 def start_collection(
     request: Request,
-    username: str = Depends(login_required),
+    username: str = Depends(operator_required),
     host_id: str = Form(...),
     include_audit: str = Form(default=""),
     redact: str = Form(default=""),
@@ -189,6 +198,7 @@ def start_collection(
     )
     wake_worker(request)
     log.info("queued %s job %s for host %s by %s", COLLECT_KIND, job.id, host.name, username)
+    log_activity(db, username, "collect.start", detail=host.name, ip=client_ip(request))
 
     keys = _valid_category_keys(categories)
     has_date_range = bool(date_preset or date_start or date_end)
@@ -223,7 +233,7 @@ def start_collection(
 def start_extraction(
     job_id: str,
     request: Request,
-    username: str = Depends(login_required),
+    username: str = Depends(operator_required),
     categories: list[str] = _CATEGORIES_FIELD,
     include_rotated: str = Form(default=""),
     date_preset: str = Form(default=""),
@@ -280,6 +290,7 @@ def start_extraction(
         username,
         job_id,
     )
+    log_activity(db, username, "extract.start", detail=job_id, ip=client_ip(request))
     return redirect("/collect?notice=Extracting+the+selected+categories.")
 
 
@@ -290,9 +301,11 @@ def download_artifact(
     username: str = Depends(login_required),
 ) -> Response:
     """Serve one stored artifact as a download."""
-    artifact = get_artifact(request.app.state.db, artifact_id)
+    db = request.app.state.db
+    artifact = get_artifact(db, artifact_id)
     if artifact is not None:
         log.info("%s downloaded %s (%s)", username, artifact.name, artifact.size_human)
+        log_activity(db, username, "artifact.download", detail=artifact.name, ip=client_ip(request))
     return serve_artifact(request, artifact_id, on_error="/collect")
 
 
@@ -300,7 +313,7 @@ def download_artifact(
 def delete_collection(
     job_id: str,
     request: Request,
-    username: str = Depends(login_required),
+    username: str = Depends(operator_required),
 ) -> Response:
     """Delete one collection and everything it produced."""
     db = request.app.state.db
@@ -308,6 +321,7 @@ def delete_collection(
 
     if retention.delete_collection(db, data_dir, job_id):
         log.info("%s deleted collection %s", username, job_id)
+        log_activity(db, username, "collect.delete", detail=job_id, ip=client_ip(request))
         return redirect("/collect?notice=Collection+deleted.")
     return redirect("/collect?error=There+is+no+such+collection+to+delete.")
 
@@ -316,7 +330,7 @@ def delete_collection(
 def delete_extraction(
     job_id: str,
     request: Request,
-    username: str = Depends(login_required),
+    username: str = Depends(operator_required),
 ) -> Response:
     """Delete one extraction and the file it produced.
 
@@ -330,6 +344,7 @@ def delete_extraction(
 
     if retention.delete_job(db, data_dir, job_id, kind=EXTRACT_KIND):
         log.info("%s deleted extraction %s", username, job_id)
+        log_activity(db, username, "extract.delete", detail=job_id, ip=client_ip(request))
         return redirect("/collect?notice=Extraction+deleted.")
     return redirect("/collect?error=There+is+no+such+extraction+to+delete.")
 
@@ -337,7 +352,7 @@ def delete_extraction(
 @router.post("/collect/cleanup")
 def run_cleanup(
     request: Request,
-    username: str = Depends(login_required),
+    username: str = Depends(operator_required),
     keep_days: int = Form(retention.DEFAULT_KEEP_DAYS),
     keep_count: int = Form(retention.DEFAULT_KEEP_COUNT),
 ) -> Response:
@@ -359,6 +374,13 @@ def run_cleanup(
         username,
         len(applied.delete),
         human_bytes(applied.freed_bytes),
+    )
+    log_activity(
+        db,
+        username,
+        "collect.cleanup",
+        detail=f"{len(applied.delete)} deleted, {human_bytes(applied.freed_bytes)} freed",
+        ip=client_ip(request),
     )
     freed = human_bytes(applied.freed_bytes).replace(" ", "+")
     count = len(applied.delete)

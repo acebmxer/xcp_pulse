@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Activity — XCP Pulse{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Activity</h1>
+<p class="note">The most recent {{ entries | length }} actions, newest first.</p>
+
+<div class="card">
+  <table class="report">
+    <caption class="visually-hidden">Who did what, and when</caption>
+    <thead>
+      <tr>
+        <th scope="col">When</th>
+        <th scope="col">User</th>
+        <th scope="col">Action</th>
+        <th scope="col">Detail</th>
+        <th scope="col">Address</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for entry in entries %}
+      <tr>
+        <td>{{ entry.created_at | age }}</td>
+        <th scope="row">{{ entry.username }}</th>
+        <td><code>{{ entry.action }}</code></td>
+        <td>{{ entry.detail }}</td>
+        <td>{{ entry.ip or "" }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="note">Nothing has been logged yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

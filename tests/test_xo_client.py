@@ -38,10 +38,6 @@ def _client(handler: object, **kwargs: object) -> XoClient:
     return client
 
 
-def _privileges(actions: list[str]) -> list[dict[str, str]]:
-    return [{"action": action, "resource": "host"} for action in actions]
-
-
 def test_admin_connection_reports_what_it_can_see() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/pools"):
@@ -101,8 +97,6 @@ def test_restricted_account_gets_200_and_an_empty_list() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.endswith("/dashboard"):
             return httpx.Response(403, json={"error": "unauthorized"})
-        if request.url.path.endswith("/acl-privileges"):
-            return httpx.Response(200, json=_privileges(["read", "allow-vm", "*"]))
         return httpx.Response(200, json=[])
 
     result = _client(handler).test_connection()
@@ -113,37 +107,50 @@ def test_restricted_account_gets_200_and_an_empty_list() -> None:
     assert any("no pools" in warning for warning in result.warnings)
 
 
-def test_log_export_unavailable_when_the_catalogue_cannot_grant_it() -> None:
-    """The measured case: host actions are read/allow-vm/* and nothing else."""
+def test_log_export_probes_a_real_host_rather_than_reading_a_catalogue() -> None:
+    """Regression: /acl-privileges lists privileges already granted to roles on
+    the instance, not what can be granted — verified wrong against a live
+    instance, where a restricted account with none of those actions was still
+    accepted after a custom role was created and assigned. The only reliable
+    answer comes from trying the real route.
+    """
 
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path.endswith("/dashboard"):
+        if request.url.path.endswith("/audit.txt"):
+            return httpx.Response(200, content=b"")
+        return httpx.Response(200, json=[])
+
+    support = _client(handler).check_log_export(is_admin=False, host_ids=["some-host-id"])
+    assert support.available is True
+
+
+def test_log_export_unavailable_when_the_probe_is_refused() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/audit.txt"):
             return httpx.Response(403, json={"error": "unauthorized"})
-        if request.url.path.endswith("/acl-privileges"):
-            return httpx.Response(200, json=_privileges(["read", "allow-vm", "*"]))
         return httpx.Response(200, json=[])
 
-    support = _client(handler).check_log_export(is_admin=False)
+    support = _client(handler).check_log_export(is_admin=False, host_ids=["some-host-id"])
     assert support.available is False
-    assert support.grantable is False
-    assert "administrator" in support.reason
+    assert "export:logs" in support.reason
+    assert "custom role" in support.reason
 
 
-def test_log_export_grantable_when_the_catalogue_offers_it() -> None:
-    """An instance whose catalogue includes export:logs is a different answer."""
+def test_log_export_unknown_with_no_host_to_probe() -> None:
+    """No host visible yet is 'not known', not 'unavailable' — those read very
+    differently to an operator deciding whether to change the account."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path.endswith("/acl-privileges"):
-            return httpx.Response(200, json=_privileges(["read", "export:logs", "*"]))
-        return httpx.Response(200, json=[])
-
-    support = _client(handler).check_log_export(is_admin=False)
+    support = _client(lambda r: httpx.Response(200, json=[])).check_log_export(
+        is_admin=False, host_ids=[]
+    )
     assert support.available is False
-    assert support.grantable is True
+    assert "Refresh inventory" in support.reason
 
 
 def test_admin_always_has_log_export() -> None:
-    support = _client(lambda r: httpx.Response(200, json=[])).check_log_export(is_admin=True)
+    support = _client(lambda r: httpx.Response(200, json=[])).check_log_export(
+        is_admin=True, host_ids=[]
+    )
     assert support.available is True
 
 
