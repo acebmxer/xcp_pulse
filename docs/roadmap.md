@@ -272,6 +272,24 @@ large saving on what you keep and send.
 > There is nothing to filter until a bundle exists, which is why this follows
 > collection rather than standing on its own.
 
+### Documentation in the web UI — built, not yet released
+
+Learn to use XCP Pulse without leaving it: a **User manual** section at
+`/help`. A new `docs/user-guide/` — one page per feature area (first login,
+Dashboard, Collect, Redaction, Jobs, Findings, Support package, Date ranges,
+Settings), collapsible as a group in the sidebar — covers setup after the
+container is running and what each page does, alongside Installation,
+Configuration and Architecture as top-level entries: the three GitHub docs
+still useful to a user rather than a contributor. `README.md` and
+`docs/functions.md` are deliberately not rendered here, and neither is
+`docs/roadmap.md`. Search across pages, and `[!NOTE]`/`[!WARNING]` callouts
+styled instead of shown as plain blockquotes. Docs ship inside the image, so
+what renders matches the version you are running rather than whatever is
+newest on GitHub.
+
+This is not marked shipped or given a version number yet, since that is a
+release decision — the dashboard's roadmap panel says the same.
+
 ---
 
 ## Planned — free to pick up in any order
@@ -331,21 +349,6 @@ Two things to settle before building it:
   against this project's own threat model. The intended answer is that
   self-update is **opt-in**, with update *checking* (outbound HTTPS only)
   separable from update *applying*.
-
-### Documentation in the web UI
-
-Read the documentation without leaving XCP Pulse.
-
-- A **Docs** section in the navigation, rendering the pages under `docs/`
-- Docs ship inside the image, so they match the version you are running
-- Search across pages, and deep links from the UI to the relevant section
-- Markdown reformatted where it renders badly outside GitHub: `[!NOTE]` and
-  `[!WARNING]` callouts become styled blocks, the `[← back to the README]`
-  header lines give way to real navigation, and links between pages are
-  rewritten to UI routes
-
-The source files stay canonical and stay readable on GitHub; the UI is a second
-view of them, not a fork.
 
 ### Built-in HTTPS
 

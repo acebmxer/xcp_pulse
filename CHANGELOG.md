@@ -30,6 +30,39 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ### Added
 
+- **A User manual (`/help`) renders how to use XCP Pulse inside the app**, so
+  it can be read without leaving XCP Pulse or checking out the repo: a new
+  `docs/user-guide/` — one page per feature area (first login and connecting
+  to Xen Orchestra, Dashboard, Collect, Redaction, Jobs, Findings, Support
+  package, Date ranges, Settings), collapsible as a "User guide" group in the
+  sidebar — plus Installation, Configuration and Architecture as top-level
+  entries, the three GitHub docs still useful to a user rather than a
+  contributor. `README.md` and `docs/functions.md` are deliberately not
+  rendered here — a contributor reference and the project's public face,
+  not part of using the app — and `docs/roadmap.md` never was, since it
+  documents the roadmap process itself. Every page under `docs/user-guide/`
+  exists only to be rendered in-app: none of it is linked from README's own
+  docs table or part of the GitHub-facing doc set. A new `app/docs_render.py`
+  reads and renders these once per process (they ship inside the image now —
+  the Dockerfile previously copied neither `docs/` nor `README.md` into the
+  runtime stage, only the build stage, so this is also the fix that makes
+  "docs match the version you are running" actually true), using the new
+  `markdown` dependency plus a small pass of its own: GitHub's
+  `[!NOTE]`/`[!WARNING]` callout syntax becomes a styled block (plain
+  Markdown treats it as an ordinary blockquote), the
+  `[← back to the README]` line each mirrored page opens with is dropped in
+  favour of the sidebar that replaces it, and `.md` links are rewritten — to
+  another rendered page's `/help/<slug>` route if this module renders it, or
+  to an absolute GitHub URL (opened in a new tab) if it does not, since a
+  relative link such as `docs/functions.md` or `docs/roadmap.md` would 404
+  served from a UI route instead of from its real location on GitHub. A
+  search box does a case-insensitive substring scan across all pages with a
+  snippet per match. Served under `/help` rather than the more obvious
+  `/docs`, because FastAPI reserves `/docs` for its own auto-generated API
+  documentation, which this app deliberately disables since it sits in front
+  of credentials; a route at that path would have silently un-disabled it in
+  effect. The nav link reads "User manual".
+
 - **CI now scans the built Docker image for known vulnerabilities with
   [Trivy](https://github.com/aquasecurity/trivy) on every push and pull
   request**, failing the build on any HIGH or CRITICAL finding with a fix

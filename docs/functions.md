@@ -608,6 +608,34 @@ Only the switched-off rules are stored (table `redaction_disabled`), so a rule
 added to `RULES` in a later version is on from the moment it exists, including
 on databases written before it did.
 
+## `app/docs_render.py` — rendering docs into the in-app User manual
+
+Reads the nine files under `docs/user-guide/` plus `docs/installation.md`,
+`docs/configuration.md` and `docs/architecture.md` once per process and
+caches the result — they ship inside the image, so they cannot change
+without a restart. `README.md` and `docs/functions.md` are deliberately not
+among them (a contributor reference and the project's public face, not part
+of using the app), and neither is `docs/roadmap.md` (the roadmap process
+itself). Everything under `docs/user-guide/` is written only for this
+section — none of it has a GitHub page of its own.
+
+| Function | Signature | Does | Used by | Since |
+| --- | --- | --- | --- | --- |
+| `all_pages` | `() -> list[DocPage]` | Every doc page, in sidebar display order | `routes.docs`, `sidebar_groups` | unreleased |
+| `get_page` | `(slug: str) -> DocPage \| None` | One doc page by slug | `routes.docs` | unreleased |
+| `search` | `(query: str, *, max_results: int = 20) -> list[tuple[DocPage, str]]` | Pages containing `query`, each with a short snippet | `routes.docs` | unreleased |
+| `sidebar_groups` | `() -> list[tuple[str \| None, list[DocPage]]]` | Pages grouped for the sidebar — a run of pages sharing a group becomes one collapsible entry, `None` a flat link | `routes.docs` | unreleased |
+
+`DocPage` is a frozen dataclass (`slug`, `title`, `html`, `text`, `group`).
+`group` is `"User guide"` for a page under `docs/user-guide/`, or `None` for
+a top-level page — what `sidebar_groups` groups by. Rendering turns GFM
+`[!NOTE]`/`[!WARNING]` callouts into styled `<div class="callout">` blocks
+(plain Markdown has no such syntax), and rewrites `.md` links: a link to
+another rendered page becomes `/help/<slug>`, and a link to a file this
+module does not render (`docs/functions.md`, `docs/roadmap.md`, …) becomes an
+absolute link to that file on GitHub, since a relative link from one of
+these files would 404 served from a UI route.
+
 ## `app/routes/` — HTTP endpoints
 
 | Function | Signature | Does | Used by | Since |
@@ -647,6 +675,9 @@ on databases written before it did.
 | `collect_and_package` | `(request, username, host_id, include_audit) -> Response` | `POST /support-package/collect` — queues a collection, then a package from it | router | v0.7.0 |
 | `download_package` | `(artifact_id, request, username) -> Response` | `GET /support-package/download/{id}` — streams a stored package | router | v0.7.0 |
 | `delete_package` | `(job_id, request, username) -> Response` | `POST /support-package/{id}/delete` — deletes one package and its file | router | v0.7.0 |
+| `docs_index` | `(request, username) -> Response` | `GET /help` — the User manual, opening on the user guide | router | unreleased |
+| `docs_page` | `(request, slug, username) -> Response` | `GET /help/{slug}` — one rendered manual page | router | unreleased |
+| `docs_search` | `(request, q, username) -> Response` | `GET /help/search` — manual pages matching a search term, with snippets | router | unreleased |
 
 ## `app/hashpw.py` — password hash helper
 

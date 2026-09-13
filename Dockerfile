@@ -61,6 +61,12 @@ COPY --from=build /opt/venv /opt/venv
 
 COPY app/ ./app/
 
+# The in-app Docs section reads these at runtime, so what renders there is
+# exactly what shipped with this build rather than whatever is newest on
+# GitHub. docs/roadmap.md is intentionally excluded — see app/docs_render.py.
+COPY README.md ./
+COPY docs/ ./docs/
+
 # Run as a non-root user. The data volume is chowned so the container can write
 # bundles and the SQLite database to it.
 RUN useradd --system --create-home --uid 10001 pulse \

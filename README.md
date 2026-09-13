@@ -134,6 +134,12 @@ rather than estimated:
   filtered by a best-effort timestamp parse. Available when extracting log
   categories, reading findings from the API or from collected logs, and
   building a support package.
+- **Learn to use it without leaving it** — a User manual at `/help` covers
+  setup after the container is running and what each page does, alongside
+  Installation, Configuration and Architecture, searchable, with GitHub's
+  `[!NOTE]`/`[!WARNING]` callouts styled instead of shown as plain
+  blockquotes. Docs ship inside the image, so what renders matches the
+  version you are running.
 
 ## Configuration
 

@@ -978,3 +978,192 @@ input[type="date"] {
 .card > .source-note + .report {
   min-width: 34rem;
 }
+
+/* ---- docs section ---- */
+
+/* Wider than .wrap's 900px: a sidebar plus readable prose needs the room a
+   single-column page doesn't. */
+.docs-wrap { max-width: 1200px; }
+
+.docs-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 2rem;
+}
+
+.docs-nav {
+  flex: 0 0 220px;
+  position: sticky;
+  top: 1.5rem;
+}
+
+.docs-search input {
+  width: 100%;
+  padding: 0.5rem 0.7rem;
+  margin-bottom: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+}
+
+.docs-page-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.docs-nav-link {
+  display: block;
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+  color: var(--text-dim);
+  text-decoration: none;
+  font-size: 0.92rem;
+}
+
+.docs-nav-link:hover { color: var(--text); background: var(--bg); }
+
+.docs-nav-link.active {
+  color: var(--accent-text);
+  background: var(--accent);
+  font-weight: 600;
+}
+
+/* .docs-group-title is the <summary> element itself. The default disclosure
+   triangle is replaced with one that rotates on [open]; ::marker is removed
+   so this arrow is the only one shown. */
+.docs-group-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-size: 0.92rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.docs-group-title::marker,
+.docs-group-title::-webkit-details-marker {
+  display: none;
+}
+
+.docs-group-title::before {
+  content: "▸";
+  display: inline-block;
+  font-size: 0.7em;
+  transition: transform 0.1s ease;
+}
+
+.docs-group > details[open] > .docs-group-title::before {
+  transform: rotate(90deg);
+}
+
+.docs-group-title:hover {
+  color: var(--text);
+  background: var(--bg);
+}
+
+.docs-sublist {
+  margin-top: 0.15rem;
+  padding-left: 0.9rem;
+  border-left: 1px solid var(--border);
+}
+
+.docs-content {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 1.75rem 2rem;
+}
+
+/* Prose defaults for rendered markdown — nothing in the app besides docs
+   pages contains arbitrary heading levels, paragraphs and lists, so these
+   rules are scoped to .docs-page rather than added to element selectors
+   globally. */
+.docs-page h1 { margin-top: 0; font-size: 1.6rem; }
+.docs-page h2 {
+  margin-top: 2rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border);
+  font-size: 1.25rem;
+}
+.docs-page h1:first-child + h2 { margin-top: 1.5rem; border-top: none; padding-top: 0; }
+.docs-page h3 { font-size: 1.05rem; }
+.docs-page p, .docs-page ul, .docs-page ol { line-height: 1.65; }
+.docs-page a { color: var(--accent); }
+.docs-page table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1rem 0;
+  font-size: 0.9rem;
+}
+.docs-page th, .docs-page td {
+  border: 1px solid var(--border);
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+  vertical-align: top;
+}
+.docs-page th { background: var(--bg); }
+.docs-page code {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85em;
+}
+.docs-page pre {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.9rem 1rem;
+  overflow-x: auto;
+}
+.docs-page pre code { background: none; border: none; padding: 0; }
+.docs-page blockquote {
+  margin: 1rem 0;
+  padding: 0.2rem 1rem;
+  border-left: 3px solid var(--border);
+  color: var(--text-dim);
+}
+
+/* GFM callouts — [!NOTE], [!WARNING], etc — reuse the alert palette so a
+   caution in the docs reads the same as one in the rest of the app. */
+.callout {
+  margin: 1rem 0;
+  padding: 0.75rem 1rem;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+.callout p:first-child { margin-top: 0; }
+.callout p:last-child { margin-bottom: 0; }
+.callout-warning, .callout-caution {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+}
+.callout-warning p, .callout-caution p { color: var(--danger-text); }
+
+.docs-results { list-style: none; margin: 0; padding: 0; }
+.docs-result {
+  padding: 0.9rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.docs-result:last-child { border-bottom: none; }
+.docs-result a { font-weight: 600; }
+.docs-snippet { margin: 0.3rem 0 0; color: var(--text-dim); font-size: 0.9rem; }
+
+@media (max-width: 720px) {
+  .docs-layout { flex-direction: column; }
+  .docs-nav { position: static; width: 100%; }
+}

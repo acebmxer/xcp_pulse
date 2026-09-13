@@ -26,7 +26,7 @@ from app.job_runner import JobWorker
 from app.job_support_package import KIND as _SUPPORT_PACKAGE_KIND  # noqa: F401
 from app.jobs import reset_orphans
 from app.logging_conf import configure_logging
-from app.routes import auth, collect, dashboard, health, redaction
+from app.routes import auth, collect, dashboard, docs, health, redaction
 from app.routes import findings as findings_routes
 from app.routes import jobs as job_routes
 from app.routes import settings as settings_routes
@@ -100,6 +100,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(collect.router)
     app.include_router(findings_routes.router)
     app.include_router(support_package_routes.router)
+    app.include_router(docs.router)
     return app
 
 

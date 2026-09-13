@@ -75,6 +75,7 @@ streaming download.
 | `app/retention.py` | What stored collections to delete, always previewed before it acts. |
 | `app/artifacts.py` | What a job produced: files on the volume, metadata in the database. |
 | `app/redact.py` | The masking rules. The **only** place a redaction pattern is written. |
+| `app/docs_render.py` | Renders the in-app User manual (`/help`): `docs/user-guide/` (one page per feature area, collapsible in the sidebar), plus Installation, Configuration and Architecture. |
 | `app/security.py` | Password hashing, sessions, login throttling. |
 | `app/dependencies.py` | Shared route plumbing: the template environment, `login_required`. |
 | `app/routes/` | HTTP endpoints, one module per area. |
