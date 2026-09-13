@@ -12,6 +12,19 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ### Fixed
 
+- **The TLS certificate section on Settings had two problems: its upload
+  fields were labelled "(PEM)" while their file pickers actually accepted
+  `.crt` and `.cer` for the certificate and `.key` for the private key too,
+  and its description text ("XCP Pulse is currently serving HTTPS with a
+  self-signed certificate") stayed on screen verbatim after uploading a real
+  one.** The labels now name the accepted extensions directly ("Certificate
+  (.pem, .crt or .cer)", "Private key (.pem or .key, unencrypted)"). The
+  description is replaced with a table read from the certificate actually
+  installed — subject, whether it's self-signed or uploaded, and its expiry
+  — via a new `app/tls.py:current_certificate_info`, so the page describes
+  whatever nginx is really serving at the moment it's viewed rather than a
+  claim that was only ever true before the first upload.
+
 - **`app.state.db`'s lock only covered `execute()`, not the fetch that came
   after it, so the concurrent-access race it was meant to close could still
   corrupt a row.** `_LockedConnection` serialises `execute()` calls on the
@@ -29,6 +42,37 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
   eight times back to back with no failures, plus the full suite.
 
 ### Added
+
+- **Built-in HTTPS, no reverse proxy required.** `XCP_PULSE_ENABLE_HTTPS`
+  (off by default) bundles a small `nginx-light` into the image to terminate
+  TLS in front of uvicorn, rather than uvicorn holding the port directly.
+  `docker/entrypoint.sh` decides which of the two actually runs; when it's
+  nginx, uvicorn moves to `127.0.0.1:8081` and nginx alone holds `8080`
+  (redirects every request to HTTPS, so an old bookmark still lands) and
+  `8443` (terminates TLS, proxies to uvicorn) — `docker/nginx.conf` is the
+  whole config. On first start with no certificate at `<data_dir>/tls/`, the
+  entrypoint generates a self-signed one with `openssl`; a new **TLS
+  certificate** section in Settings (visible only when built-in HTTPS is on)
+  lets an operator upload their own instead — `app/tls.py` checks the
+  uploaded cert and key are a valid, matching, unexpired PEM pair before
+  writing them and sending nginx's master process `SIGHUP` to reload, which
+  re-reads the certificate without dropping an in-flight request or needing
+  a restart. Both HTTPS ports are unprivileged, so nginx runs as the same
+  non-root `pulse` user as uvicorn throughout — no root-then-drop-privileges
+  start, and none of nginx's own state (logs, pid, temp directories) touches
+  its usual root-owned defaults, all of it redirected under `/tmp/nginx`
+  instead. `XCP_PULSE_ENABLE_HTTPS=true` also implies `XCP_PULSE_HTTPS`'s
+  Secure cookie flag automatically, since nginx terminating TLS right there
+  means XCP Pulse always knows the browser is on HTTPS without being told
+  separately — `XCP_PULSE_HTTPS` remains for the different case of an
+  external reverse proxy. The container healthcheck checks nginx itself
+  (over HTTPS, with certificate verification disabled — it runs inside the
+  same container as the certificate it would otherwise have to trust) when
+  built-in HTTPS is on, rather than only uvicorn behind it, so a wedged
+  nginx with a live uvicorn does not report healthy. `installation.md` gained
+  worked examples for the alternative — fronting XCP Pulse with
+  nginx-proxy-manager, Caddy or Traefik instead — since that gap existed even
+  though the underlying `XCP_PULSE_HTTPS` cookie mechanism already worked.
 
 - **A User manual (`/help`) renders how to use XCP Pulse inside the app**, so
   it can be read without leaving XCP Pulse or checking out the repo: a new

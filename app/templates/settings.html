@@ -120,4 +120,58 @@
     <button type="submit" class="btn btn-primary">Save connection</button>
   </form>
 </div>
+
+{% if tls_error %}
+<p class="alert alert-error" role="alert">{{ tls_error }}</p>
+{% endif %}
+
+{% if enable_https %}
+{% if request.query_params.get('tls_saved') %}
+<p class="alert" role="status">
+  Certificate saved. Your browser may warn about it once until it trusts the
+  new certificate.
+</p>
+{% endif %}
+
+<div class="card">
+  <h2>TLS certificate</h2>
+
+  {% if current_cert %}
+  <dl class="kv">
+    <dt>Subject</dt>
+    <dd class="mono">{{ current_cert.subject }}</dd>
+    <dt>Type</dt>
+    <dd>
+      {% if current_cert.is_self_signed %}
+      Self-signed, generated on first run — browsers warn about this by default
+      {% else %}
+      Uploaded
+      {% endif %}
+    </dd>
+    <dt>Expires</dt>
+    <dd>{{ current_cert.not_valid_after }}</dd>
+  </dl>
+  {% else %}
+  <p class="note">
+    No certificate found yet at the expected path — this should only happen
+    momentarily right after enabling built-in HTTPS, before nginx generates one.
+  </p>
+  {% endif %}
+
+  <p class="note">
+    Upload your own certificate and private key to replace the one above —
+    nginx starts using it immediately, with no restart needed.
+  </p>
+
+  <form method="post" action="/settings/tls" enctype="multipart/form-data" class="stack">
+    <label for="cert_file">Certificate (.pem, .crt or .cer)</label>
+    <input id="cert_file" name="cert_file" type="file" accept=".pem,.crt,.cer" required>
+
+    <label for="key_file">Private key (.pem or .key, unencrypted)</label>
+    <input id="key_file" name="key_file" type="file" accept=".pem,.key" required>
+
+    <button type="submit" class="btn btn-primary">Upload certificate</button>
+  </form>
+</div>
+{% endif %}
 {% endblock %}

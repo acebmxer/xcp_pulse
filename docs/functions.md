@@ -636,6 +636,28 @@ module does not render (`docs/functions.md`, `docs/roadmap.md`, …) becomes an
 absolute link to that file on GitHub, since a relative link from one of
 these files would 404 served from a UI route.
 
+## `app/tls.py` — the built-in HTTPS certificate
+
+Validates an uploaded certificate/key pair and installs it where nginx reads
+from (`docker/entrypoint.sh` generates the self-signed one nginx starts
+with). Only reachable when `XCP_PULSE_ENABLE_HTTPS` is on.
+
+| Function | Signature | Does | Used by | Since |
+| --- | --- | --- | --- | --- |
+| `validate_certificate_pair` | `(cert_pem: bytes, key_pem: bytes) -> CertificateInfo` | Checks the pair parses, matches, and isn't expired | `routes.settings.settings_tls_upload` | unreleased |
+| `current_certificate_info` | `(tls_dir: Path) -> CertificateInfo \| None` | What nginx is actually serving right now, read off disk | `routes.settings._render` | unreleased |
+| `install_certificate` | `(tls_dir: Path, cert_pem: bytes, key_pem: bytes) -> None` | Writes the pair atomically, then reloads nginx | `routes.settings.settings_tls_upload` | unreleased |
+| `reload_nginx` | `() -> bool` | Sends nginx's master process `SIGHUP` to reload its config and certificate | `install_certificate` | unreleased |
+
+`CertificateError` (a `ValueError`) carries a message safe to show the
+operator directly. `CertificateInfo` is a frozen dataclass (`subject`,
+`not_valid_after`, `is_self_signed`) — `is_self_signed` (issuer equals
+subject) is what lets Settings say whether the certificate in use is the one
+generated on first run or a replacement that was uploaded, rather than
+asserting a fact that stops being true the moment an upload succeeds.
+Comparing public-key numbers rather than key bytes is what proves a cert and
+key belong together without needing to sign anything.
+
 ## `app/routes/` — HTTP endpoints
 
 | Function | Signature | Does | Used by | Since |
@@ -655,6 +677,7 @@ these files would 404 served from a UI route.
 | `settings_page` | `(request, username) -> Response` | `GET /settings` — the XO connection page | router | v0.2.0 |
 | `settings_save` | `(request, username, url, token, account_type, verify_tls) -> Response` | `POST /settings` — stores the connection | router | v0.2.0 |
 | `settings_test` | `(request, username) -> Response` | `POST /settings/test` — tests and reports reach | router | v0.2.0 |
+| `settings_tls_upload` | `(request, username, cert_file, key_file) -> Response` | `POST /settings/tls` — validates and installs an uploaded certificate (built-in HTTPS only) | router | unreleased |
 | `start_inventory_refresh` | `(request, username) -> Response` | `POST /jobs/refresh-inventory` — queues a refresh | router | v0.4.0 |
 | `start_redaction` | `(request, username, artifact_id) -> Response` | `POST /jobs/redact` — queues a redaction of one stored file | router | v0.5.2 |
 | `collect_page` | `(request, username, keep_days, keep_count) -> Response` | `GET /collect` — hosts, stored collections, retention preview | router | v0.6.0 |

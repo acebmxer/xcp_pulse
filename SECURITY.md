@@ -32,16 +32,25 @@ hostnames, usernames, XAPI session tokens and audit trails. A single real
 `xensource.log` measured during development contained 8,359 lines matching
 password, secret or session-id patterns.
 
-**Where it belongs.** On a trusted management network, behind a reverse proxy.
-It is not built to be exposed to the internet. The compose file publishes the
-port on all interfaces so it works on a remote server out of the box; where the
-proxy runs on the Docker host itself, bind the mapping to `127.0.0.1` so nothing
-else can reach it directly.
+**Where it belongs.** On a trusted management network, served over HTTPS —
+either its own built-in nginx (`XCP_PULSE_ENABLE_HTTPS=true`) or your own
+reverse proxy. It is not built to be exposed to the internet. The compose
+file publishes the port on all interfaces so it works on a remote server out
+of the box; where a reverse proxy runs on the Docker host itself, bind the
+mapping to `127.0.0.1` so nothing else can reach it directly.
 
 **What protects it.** A single admin account whose Argon2id password hash is
 supplied by configuration; the app refuses to start without one and has no
 default password. Sessions are stored server-side so logout invalidates
 immediately. Failed logins are throttled per address.
+
+**Built-in HTTPS runs as the same non-root user as everything else.** Both
+its ports are unprivileged, so nginx never needs root even briefly — no
+traditional root-then-drop-privileges start. A self-signed certificate
+generated on first run identifies the connection is encrypted, not that it
+is who it claims to be; a certificate uploaded to replace it is validated
+(a matching, unexpired, PEM-encoded pair) before nginx is told to use it,
+and only a logged-in admin can upload one.
 
 **What it does not do.** It never writes to your pool — no starting, stopping,
 patching or reconfiguring. It never uploads anything anywhere; bundles are

@@ -76,6 +76,7 @@ streaming download.
 | `app/artifacts.py` | What a job produced: files on the volume, metadata in the database. |
 | `app/redact.py` | The masking rules. The **only** place a redaction pattern is written. |
 | `app/docs_render.py` | Renders the in-app User manual (`/help`): `docs/user-guide/` (one page per feature area, collapsible in the sidebar), plus Installation, Configuration and Architecture. |
+| `app/tls.py` | Validates an uploaded TLS certificate/key pair and signals nginx to reload it (built-in HTTPS). |
 | `app/security.py` | Password hashing, sessions, login throttling. |
 | `app/dependencies.py` | Shared route plumbing: the template environment, `login_required`. |
 | `app/routes/` | HTTP endpoints, one module per area. |
@@ -180,6 +181,42 @@ expiry slides forward on use.
 
 Failed logins are recorded per address and counted inside a window. Being locked
 out cannot be bypassed by then supplying the correct password.
+
+## Built-in HTTPS
+
+Optional and off by default (`XCP_PULSE_ENABLE_HTTPS`). When on, a small
+nginx bundled into the image terminates TLS in front of uvicorn instead of
+uvicorn owning the port directly — `docker/entrypoint.sh` decides which of
+the two actually happens, and `docker/nginx.conf` is nginx's whole config.
+
+- **uvicorn moves to loopback.** With HTTPS on, uvicorn binds
+  `127.0.0.1:8081` rather than `0.0.0.0:8080`, and nginx alone holds `8080`
+  (redirects to HTTPS) and `8443` (terminates it, proxies to uvicorn) — the
+  app is never reachable except through nginx once this is on.
+- **Fully non-root, still.** Both HTTPS ports are unprivileged, so nginx
+  never needs the traditional root-then-drop-privileges start; the image
+  runs nginx as the same `pulse` user as uvicorn, with all of nginx's own
+  state (logs, pid, temp directories) redirected under `/tmp/nginx` instead
+  of the root-owned defaults a stock install expects.
+- **A self-signed certificate on first run.** The entrypoint generates one
+  with `openssl` at `<data_dir>/tls/` if none exists yet, so HTTPS works
+  immediately with no setup — at the cost of a browser warning until an
+  operator either accepts it or uploads a real certificate. Uploading one
+  (`app/tls.py`, from Settings) validates the pair, writes it to the same
+  path, and signals nginx's master process with `SIGHUP` to reload it —
+  nginx's own documented reload signal, which re-reads the certificate
+  without dropping an in-flight request. No app restart, no container
+  restart.
+- **One process failing takes the container down.** The entrypoint starts
+  both processes and `wait -n`s on either exiting, rather than a supervisor
+  restarting a crashed one — a container Docker's own restart policy
+  (`restart: unless-stopped`) brings back is simpler than managing partial
+  failure inside it.
+
+`XCP_PULSE_HTTPS` (the session cookie's `Secure` flag) is a separate,
+older setting for the case of an *external* reverse proxy terminating TLS —
+built-in HTTPS implies it automatically, since nginx being right there means
+XCP Pulse always knows the browser is on HTTPS without being told.
 
 ## Database
 

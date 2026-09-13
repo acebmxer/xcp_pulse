@@ -12,7 +12,7 @@ services:
     # new version. Pin one instead to stay put until you choose to move —
     # database migrations run at startup, so an upgrade is worth deciding on:
     #
-    #   image: ghcr.io/acebmxer/xcp_pulse:0.7.1
+    #   image: ghcr.io/acebmxer/xcp_pulse:0.8.0
     #
     image: ghcr.io/acebmxer/xcp_pulse:latest
     container_name: xcp-pulse
@@ -36,7 +36,8 @@ services:
     ports:
       # Reachable from other machines on your network. Change the left number
       # to move it off 8080; the right one is the port inside the container and
-      # never changes.
+      # never changes. With XCP_PULSE_ENABLE_HTTPS unset or false (the
+      # default), this answers the app directly over plain HTTP.
       #
       # To restrict it to the Docker host only — a reverse proxy on the same
       # box, say — put the loopback address in front:
@@ -44,6 +45,13 @@ services:
       #   - "127.0.0.1:8080:8080"
       #
       - "8080:8080"
+      # Only answers when XCP_PULSE_ENABLE_HTTPS=true, serving the app over
+      # HTTPS with a self-signed certificate generated on first run (replace
+      # it with your own from Settings once logged in). With that flag unset,
+      # nothing listens on 8443 and this mapping is inert — safe to leave in
+      # place either way, but comment it out if you'd rather not publish an
+      # unused port.
+      - "8443:8443"
     volumes:
       # Holds the SQLite database, the session signing key, and (from v0.4.0)
       # collected log bundles. Bundles contain real internal addresses.

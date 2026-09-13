@@ -140,6 +140,13 @@ rather than estimated:
   `[!NOTE]`/`[!WARNING]` callouts styled instead of shown as plain
   blockquotes. Docs ship inside the image, so what renders matches the
   version you are running.
+- **Serve HTTPS with no reverse proxy of your own** — `XCP_PULSE_ENABLE_HTTPS`
+  bundles a small nginx into the image that terminates TLS in front of the
+  app: a self-signed certificate on first run, a plain-HTTP listener that
+  redirects to it, and an upload form in Settings for your own certificate
+  that nginx starts using immediately, no restart needed. Off by default;
+  already running nginx-proxy-manager, Caddy or Traefik for other services
+  works exactly as before.
 
 ## Configuration
 
@@ -150,15 +157,17 @@ you are most likely to change:
 | --- | --- | --- |
 | `XCP_PULSE_ADMIN_USER` | `admin` | Login username |
 | `XCP_PULSE_ADMIN_PASSWORD_HASH` | *(none)* | Argon2id hash; required |
-| `XCP_PULSE_HTTPS` | `false` | Set true when served over HTTPS |
+| `XCP_PULSE_ENABLE_HTTPS` | `false` | Serve HTTPS with a built-in nginx, no reverse proxy needed |
+| `XCP_PULSE_HTTPS` | `false` | Set true when served over HTTPS by your *own* reverse proxy |
 | `XCP_PULSE_SESSION_HOURS` | `12` | Session lifetime |
 
 ## Security
 
 XCP Pulse holds credentials that can read every log on your pool, and stores
 files containing session tokens and internal network topology. Run it on a
-trusted management network behind a reverse proxy — not exposed to the internet.
-See [SECURITY.md](SECURITY.md).
+trusted management network over HTTPS — either its own built-in nginx
+(`XCP_PULSE_ENABLE_HTTPS=true`) or your own reverse proxy — not exposed to
+the internet. See [SECURITY.md](SECURITY.md).
 
 ## License
 

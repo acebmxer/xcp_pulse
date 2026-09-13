@@ -74,6 +74,7 @@ def test_rate_limit_blocks_after_repeated_failures(settings: Settings) -> None:
         admin_password_hash=settings.admin_password_hash,
         secret_key=settings.secret_key,
         https_only=False,
+        enable_https=False,
         session_hours=12,
         login_max_attempts=3,
         login_lockout_minutes=15,

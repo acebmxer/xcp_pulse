@@ -132,12 +132,82 @@ loopback address in front of the mapping:
       - "127.0.0.1:8080:8080"
 ```
 
-If you put TLS in front of it, set `XCP_PULSE_HTTPS=true` in `xcp-pulse.env` so
-the session cookie carries the `Secure` flag.
+Serving it over HTTPS needs one of the following. Either way, once it's
+working, the session cookie needs to know: see
+[HTTPS and the session cookie](#https-and-the-session-cookie) below.
 
-Setting it to `false` while serving over HTTPS is safe but weaker; setting it to
-`true` while serving plain HTTP makes login appear to fail silently, because the
-browser discards the cookie.
+### Built-in HTTPS (no reverse proxy)
+
+Set `XCP_PULSE_ENABLE_HTTPS=true` in `xcp-pulse.env` and XCP Pulse serves
+HTTPS itself, with a small nginx bundled into the image — nothing else to
+install or run. On first start with the flag on, it generates a self-signed
+certificate and:
+
+- Listens on **8443** for HTTPS
+- Listens on **8080** and redirects every request to the HTTPS port, so an
+  old `http://` bookmark still lands
+- Sets the session cookie's `Secure` flag for you — `XCP_PULSE_HTTPS` does
+  not also need setting in this case
+
+A self-signed certificate means your browser will warn about it once, until
+you tell it to trust the exception. If you have your own certificate — from
+an internal CA, or one already issued for this hostname — upload it from
+**Settings** once logged in; nginx starts using it immediately, no restart
+required. The compose sample publishes `8443` alongside `8080`; if you leave
+`XCP_PULSE_ENABLE_HTTPS` off, nothing listens on it and the mapping is inert.
+
+This is meant for a deployment with nothing in front of it already. If you
+run nginx-proxy-manager, Caddy or Traefik for other services, front XCP
+Pulse with that instead — see the next section.
+
+### Behind your own reverse proxy
+
+If you already run a reverse proxy for other services, point it at XCP
+Pulse's `8080` (bind that port to the Docker host only, per
+[the mapping above](#where-to-expose-it)) rather than turning on built-in
+HTTPS as well — running two TLS terminators in front of the same app is
+redundant, and only one of them can hold port 443.
+
+**Nginx Proxy Manager** — add a Proxy Host pointing at the Docker host on
+port `8080`, request a Let's Encrypt certificate (or upload your own) under
+the SSL tab, and force SSL.
+
+**Caddy** — a `Caddyfile` entry is enough for Caddy to obtain and renew a
+certificate automatically:
+
+```
+xcp-pulse.example.com {
+    reverse_proxy 127.0.0.1:8080
+}
+```
+
+**Traefik** — as a compose label alongside the `xcp-pulse` service (adjust
+the entrypoint and certresolver names to match your own Traefik setup):
+
+```yaml
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.xcp-pulse.rule=Host(`xcp-pulse.example.com`)"
+      - "traefik.http.routers.xcp-pulse.entrypoints=websecure"
+      - "traefik.http.routers.xcp-pulse.tls.certresolver=letsencrypt"
+      - "traefik.http.services.xcp-pulse.loadbalancer.server.port=8080"
+```
+
+None of these need XCP Pulse's own built-in HTTPS — leave
+`XCP_PULSE_ENABLE_HTTPS` unset. They do need the session cookie told it's
+being served over HTTPS: see the next section.
+
+### HTTPS and the session cookie
+
+Set `XCP_PULSE_HTTPS=true` in `xcp-pulse.env` when something other than XCP
+Pulse's own built-in nginx is terminating TLS in front of it — an external
+reverse proxy — so the session cookie carries the `Secure` flag. Built-in
+HTTPS (`XCP_PULSE_ENABLE_HTTPS=true`) sets this for you automatically and
+does not need it set separately.
+
+Setting it to `false` while actually served over HTTPS is safe but weaker;
+setting it to `true` while served plain HTTP makes login appear to fail
+silently, because the browser discards the cookie.
 
 ## Xen Orchestra behind a reverse proxy (known bug, unsolved)
 
@@ -219,7 +289,16 @@ tested against them.
 should. Run `python -m app.hashpw` as above and put the result in `xcp-pulse.env`.
 
 **Login succeeds but bounces back to the login page** — almost always
-`XCP_PULSE_HTTPS=true` while serving over plain HTTP. Set it to `false`.
+`XCP_PULSE_HTTPS=true` while actually serving over plain HTTP (this can't
+happen with `XCP_PULSE_ENABLE_HTTPS=true`, which sets the cookie flag to
+match on its own). Set `XCP_PULSE_HTTPS` to `false`, or fix what's actually
+serving TLS.
+
+**Browser warns the certificate is not trusted** — expected with built-in
+HTTPS's self-signed certificate; accept the warning once, or upload your own
+certificate from Settings to remove it. Unexpected with a certificate from a
+real CA (Let's Encrypt via your own reverse proxy, say) — check that proxy's
+own certificate, not XCP Pulse.
 
 **A collection reports "the bundle ends early"** — see
 [Xen Orchestra behind a reverse proxy](#xen-orchestra-behind-a-reverse-proxy-known-bug-unsolved)

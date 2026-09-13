@@ -36,13 +36,25 @@ restart without the secret ever being baked into the image.
 Changing it logs everyone out. It will also derive the key that encrypts the
 stored Xen Orchestra token, so changing it will then also invalidate that.
 
+### `XCP_PULSE_ENABLE_HTTPS`
+
+Default `false`. Set `true` to serve HTTPS with XCP Pulse's own bundled
+nginx — no reverse proxy required. Generates a self-signed certificate on
+first run (replace it with your own from **Settings**), listens on `8443`
+for HTTPS and on `8080` for a redirect to it, and implies `XCP_PULSE_HTTPS`
+below so the session cookie is correct without setting that separately. See
+[Where to expose it](installation.md#where-to-expose-it) for the full
+picture, including running behind your own reverse proxy instead.
+
 ### `XCP_PULSE_HTTPS`
 
-Default `false`. Set `true` when XCP Pulse is served over HTTPS behind a reverse
-proxy; the session cookie then carries the `Secure` flag.
+Default `false`. Set `true` when XCP Pulse is served over HTTPS by something
+*other than* its own built-in nginx above — an external reverse proxy you run
+yourself; the session cookie then carries the `Secure` flag.
+`XCP_PULSE_ENABLE_HTTPS=true` sets this for you and does not need it set too.
 
-Set it `true` while serving plain HTTP and login will appear to fail — the
-browser accepts the redirect but discards the cookie.
+Set it `true` while actually serving plain HTTP and login will appear to
+fail — the browser accepts the redirect but discards the cookie.
 
 ### `XCP_PULSE_SESSION_HOURS`
 

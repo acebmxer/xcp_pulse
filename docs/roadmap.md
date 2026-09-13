@@ -290,6 +290,31 @@ newest on GitHub.
 This is not marked shipped or given a version number yet, since that is a
 release decision — the dashboard's roadmap panel says the same.
 
+### Built-in HTTPS — built, not yet released
+
+Serve XCP Pulse over HTTPS without putting a reverse proxy of your own in
+front of it: `XCP_PULSE_ENABLE_HTTPS`, off by default, bundles a small
+nginx into the image to terminate TLS in front of uvicorn. A self-signed
+certificate is generated on first run; upload your own from **Settings** to
+replace it, no restart needed. A plain-HTTP listener on 8080 redirects to
+HTTPS on 8443, so an old bookmark still lands. `XCP_PULSE_HTTPS`'s Secure
+cookie flag is set for you automatically once this is on — it remains a
+separate setting for the case of an *external* reverse proxy, which this
+does not replace: a deployment already running nginx-proxy-manager, Caddy or
+Traefik carries on unchanged, with no second TLS terminator competing for
+the port.
+
+This deliberately does not include automatic certificate acquisition
+(ACME/Let's Encrypt) — that needs a public DNS name and a reachable port,
+which is the opposite of the trusted-management-network deployment this
+project targets. A mounted or uploaded certificate covers the case of
+someone with their own CA or already-issued certificate; automatic
+acquisition would only matter for a deployment exposed further than this
+project recommends running it.
+
+This is not marked shipped or given a version number yet, since that is a
+release decision — the dashboard's roadmap panel says the same.
+
 ---
 
 ## Planned — free to pick up in any order
@@ -349,25 +374,6 @@ Two things to settle before building it:
   against this project's own threat model. The intended answer is that
   self-update is **opt-in**, with update *checking* (outbound HTTPS only)
   separable from update *applying*.
-
-### Built-in HTTPS
-
-Serve XCP Pulse over HTTPS without putting your own reverse proxy in front.
-
-- Optional and off by default: a deployment that already has a proxy in front
-  of it carries on unchanged, with no second TLS terminator competing for the
-  port
-- Either a certificate and key you mount in, or one obtained automatically —
-  which means a public DNS name, a reachable port and somewhere on the data
-  volume to persist it across restarts
-- `XCP_PULSE_HTTPS` stops being something you set by hand: when XCP Pulse is
-  terminating TLS itself it knows the browser is on HTTPS and can set the
-  cookie's `Secure` flag without being told
-- A plain-HTTP listener that redirects, so an old bookmark still lands
-
-Most self-hosted deployments already run a proxy — nginx-proxy-manager, Caddy,
-Traefik — and for those this is redundant. It is for the deployment that has
-none, where standing one up is more work than the app it would front.
 
 ### Multiple users
 

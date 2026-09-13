@@ -47,6 +47,7 @@ class Settings:
     admin_password_hash: str
     secret_key: str
     https_only: bool
+    enable_https: bool
     session_hours: int
     login_max_attempts: int
     login_lockout_minutes: int
@@ -112,12 +113,21 @@ def load_settings() -> Settings:
             "plaintext password. Generate one with: python -m app.hashpw"
         )
 
+    # Built-in HTTPS (docker/entrypoint.sh's nginx) means XCP Pulse always
+    # knows the browser is on HTTPS — nginx is terminating it right there —
+    # so enabling it implies the Secure cookie flag without being asked
+    # separately. XCP_PULSE_HTTPS remains for the other case: an external
+    # reverse proxy the operator runs themselves, which this setting cannot
+    # detect on its own.
+    enable_https = _env_bool("XCP_PULSE_ENABLE_HTTPS", False)
+
     return Settings(
         data_dir=data_dir,
         admin_user=_env_str("XCP_PULSE_ADMIN_USER", "admin"),
         admin_password_hash=password_hash,
         secret_key=_load_or_create_secret_key(data_dir),
-        https_only=_env_bool("XCP_PULSE_HTTPS", False),
+        https_only=_env_bool("XCP_PULSE_HTTPS", enable_https),
+        enable_https=enable_https,
         session_hours=_env_int("XCP_PULSE_SESSION_HOURS", 12),
         login_max_attempts=_env_int("XCP_PULSE_LOGIN_MAX_ATTEMPTS", 5),
         login_lockout_minutes=_env_int("XCP_PULSE_LOGIN_LOCKOUT_MINUTES", 15),

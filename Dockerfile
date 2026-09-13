@@ -41,7 +41,15 @@ FROM python:3.14-slim
 
 # Same Debian security point-release upgrade as the build stage — this is the
 # stage that actually ships, so this is the copy that matters for scans.
-RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/*
+#
+# nginx-light and openssl are for built-in HTTPS (XCP_PULSE_ENABLE_HTTPS,
+# opt-in and off by default — see docker/entrypoint.sh): nginx terminates
+# TLS in front of uvicorn, openssl generates a self-signed certificate on
+# first run if none is supplied. Both are skipped entirely, at no image-size
+# cost beyond their own package weight, when the feature is off.
+RUN apt-get update && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends nginx-light openssl \
+    && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -67,17 +75,39 @@ COPY app/ ./app/
 COPY README.md ./
 COPY docs/ ./docs/
 
-# Run as a non-root user. The data volume is chowned so the container can write
-# bundles and the SQLite database to it.
+# The built-in HTTPS config and entrypoint — see docker/entrypoint.sh for what
+# decides which of uvicorn-alone or nginx-in-front actually runs.
+COPY docker/nginx.conf /etc/xcp-pulse/nginx.conf
+COPY docker/entrypoint.sh /usr/local/bin/xcp-pulse-entrypoint.sh
+
+# Run as a non-root user throughout, including nginx: both HTTPS ports (8080,
+# 8443) are unprivileged, so nginx never needs the traditional root-then-
+# drop-privileges start it conventionally uses. The data volume is chowned so
+# the container can write bundles, the SQLite database and (when HTTPS is on)
+# the TLS certificate to it.
 RUN useradd --system --create-home --uid 10001 pulse \
     && mkdir -p /data \
+    && chmod +x /usr/local/bin/xcp-pulse-entrypoint.sh \
     && chown -R pulse:pulse /data /srv/xcp-pulse
 USER pulse
 
 VOLUME ["/data"]
-EXPOSE 8080
+# 8080 is always the app's port — plain HTTP directly, or nginx's
+# redirect-to-HTTPS listener once XCP_PULSE_ENABLE_HTTPS is set. 8443 only
+# answers when that flag is on.
+EXPOSE 8080 8443
 
+# Checks nginx itself when built-in HTTPS is on, not just uvicorn behind it —
+# a wedged nginx with a live uvicorn would otherwise still report healthy.
+# ssl._create_unverified_context(): the healthcheck runs inside the same
+# container as the (possibly self-signed) certificate it would otherwise have
+# to trust, which proves nothing about whether a browser should trust it too.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=4).status == 200 else 1)"
+    CMD python -c "\
+import os, ssl, sys, urllib.request; \
+https = os.environ.get('XCP_PULSE_ENABLE_HTTPS', '').strip().lower() == 'true'; \
+url = 'https://127.0.0.1:8443/healthz' if https else 'http://127.0.0.1:8080/healthz'; \
+ctx = ssl._create_unverified_context() if https else None; \
+sys.exit(0 if urllib.request.urlopen(url, timeout=4, context=ctx).status == 200 else 1)"
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+ENTRYPOINT ["/usr/local/bin/xcp-pulse-entrypoint.sh"]
