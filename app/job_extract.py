@@ -67,9 +67,9 @@ def run(context: JobContext) -> None:
     a relative preset ("last 24 hours") could be minutes stale by the time
     the job actually runs. When given, it narrows *within* whatever
     ``include_rotated`` already selected: rotated files outside the window
-    are skipped by modification time (the roadmap's "skip the 28 older
-    files rather than downloading and discarding them" — nothing here can
-    avoid the download, only what gets kept), and any kept text file has its
+    are skipped by modification time — a date range only shrinks what gets
+    kept after the download, not the download itself, since Xen Orchestra's
+    log routes accept no date parameter — and any kept text file has its
     individual lines filtered by parsed timestamp, best-effort, for a file
     that straddles the window edge (the current, unrotated log).
     """

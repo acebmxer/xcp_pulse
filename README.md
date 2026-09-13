@@ -19,14 +19,6 @@ Collects XCP-ng and Xen Orchestra logs, bundles them for download, analyses
 them, and reports findings — for your own troubleshooting or to attach to a
 Vates support ticket.
 
-> [!NOTE]
-> XCP Pulse is being built in stages. **Log collection shipped in v0.6.0: it
-> downloads a host's full log bundle, keeps the raw copy, and produces a
-> redacted copy to send — with a report of what was masked. Findings from the
-> API and from collected logs, individual log-category extraction and the
-> Vates support package shipped in v0.7.0.**
-> See [the roadmap](docs/roadmap.md) for what is planned and what is done.
-
 ## Read next
 
 | Page | What it covers |
@@ -34,7 +26,6 @@ Vates support ticket.
 | [Installation](docs/installation.md) | Getting the container running |
 | [Configuration](docs/configuration.md) | Every setting, its default and what it does |
 | [Architecture](docs/architecture.md) | How the pieces fit together |
-| [Roadmap](docs/roadmap.md) | Current and upcoming features, with status |
 | [Function index](docs/functions.md) | Every function in the codebase, in one place |
 | [Contributing](CONTRIBUTING.md) | Development setup and conventions |
 | [Security](SECURITY.md) | Threat model and reporting a vulnerability |

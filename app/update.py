@@ -1,8 +1,7 @@
 """Self-update: check GHCR for a newer image, and apply it in place.
 
 Modelled on the mechanism in the sibling project beacon_pxe, whose hard-won
-details are worth copying rather than rediscovering — see docs/roadmap.md for
-the reasoning this file follows:
+details are worth copying rather than rediscovering:
 
 - Compare image digests, not version strings — what is deployed is read from
   the running container through the Docker socket, not remembered in the

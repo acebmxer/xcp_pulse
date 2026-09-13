@@ -47,12 +47,6 @@ def test_readme_and_function_index_are_not_pages() -> None:
     assert get_page("functions") is None
 
 
-def test_roadmap_is_not_a_page() -> None:
-    # roadmap.md documents the roadmap process itself, not how to run or
-    # configure the app — deliberately excluded, see the module docstring.
-    assert get_page("roadmap") is None
-
-
 def test_unknown_slug_returns_none() -> None:
     assert get_page("nonexistent") is None
 
@@ -96,14 +90,13 @@ def test_link_between_a_user_guide_page_and_a_top_level_page_would_use_slug() ->
 
 
 def test_link_with_anchor_to_an_unrendered_page_becomes_an_absolute_github_link() -> None:
-    # configuration.md links to roadmap.md#which-xen-orchestra-account-to-use.
-    # roadmap.md is not rendered, so this must resolve to an absolute GitHub
-    # URL — including the docs/ prefix, since both files live there.
-    configuration = get_page("configuration")
-    assert (
-        f'href="{GITHUB_BLOB_ROOT}docs/roadmap.md#which-xen-orchestra-account-to-use"'
-        in configuration.html
-    )
+    # No current page links to an unrendered file with an anchor, so exercise
+    # the mechanism directly rather than relying on one appearing by
+    # coincidence in prose that could change — including the docs/ prefix,
+    # since the link and its target both live in docs/.
+    html = '<a href="functions.md#some-heading">Function index</a>'
+    rewritten = _rewrite_links(html, Path(__file__).parent.parent / "docs")
+    assert f'href="{GITHUB_BLOB_ROOT}docs/functions.md#some-heading"' in rewritten
 
 
 def test_link_to_functions_becomes_an_absolute_github_link() -> None:

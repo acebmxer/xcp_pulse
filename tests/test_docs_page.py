@@ -20,7 +20,6 @@ def test_help_index_renders_the_first_user_guide_page(logged_in: TestClient) -> 
     assert "Function index" not in body
     assert 'href="/help/readme"' not in body
     assert 'href="/help/functions"' not in body
-    assert 'href="/help/roadmap"' not in body
 
 
 def test_help_page_renders_one_doc(logged_in: TestClient) -> None:

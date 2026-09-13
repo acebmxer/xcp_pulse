@@ -14,18 +14,17 @@ release rather than being backported.
 
 Read this before deciding where to run XCP Pulse.
 
-**What it holds.** Once connected, a Xen Orchestra API token that can read every
-log on your pool. **On many instances that token has to be an admin one**, and
-so holds full control of the pool rather than merely read access: the log
-download requires a privilege those instances cannot grant to a restricted
-account, leaving full host administration as the only way. Assume the token is
-equivalent to pool admin credentials when deciding where to run XCP Pulse,
-unless you have confirmed otherwise for your instance.
-
-A restricted account is enough for inventory and API-based findings, and is
-worth using where log collection is not needed. XOA below the Essential+ tier
-has no role-based access control at all. Details are in
-[the roadmap](docs/roadmap.md#which-xen-orchestra-account-to-use).
+**What it holds.** Once connected, a Xen Orchestra API token. A restricted
+account is enough for inventory, API-based findings, and — once a custom RBAC
+role granting the `export:logs` privilege is created and assigned to it — log
+collection too; no built-in Xen Orchestra role grants that privilege, so it
+does not come from ticking "restricted" alone. Without that role, log
+collection needs an admin token, which holds full control of the pool rather
+than merely read access. XOA below the Essential+ tier has no role-based
+access control at all and always needs an admin token. Details are in
+[Configuration](docs/configuration.md#which-xen-orchestra-account-to-use).
+Assume the token is equivalent to pool admin credentials unless you have
+confirmed the restricted role for your instance.
 
 It also holds collected log bundles containing internal IP addresses,
 hostnames, usernames, XAPI session tokens and audit trails. A single real

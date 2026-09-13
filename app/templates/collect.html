@@ -115,10 +115,10 @@
   {% if connection and not connection.is_admin %}
   <div class="alert alert-error">
     This connection uses a restricted account. Downloading logs needs the host
-    <code>export:logs</code> privilege, which most Xen Orchestra instances can
-    only grant as full host administration — so a collection will very likely
-    be refused. Check <a href="/settings">Settings</a> for what this instance
-    reported.
+    <code>export:logs</code> privilege, which no built-in Xen Orchestra role
+    grants — a collection will be refused unless a custom role granting it has
+    been created and assigned to this account. Check
+    <a href="/settings">Settings</a> for what this instance reported.
   </div>
   {% endif %}
 </div>

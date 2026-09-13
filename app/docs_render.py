@@ -7,9 +7,9 @@ written only for this section; none of it is linked from README's own docs
 table, and none of it carries a "back to the README" line, because none of
 it has a GitHub page to return to) — plus Installation, Configuration and
 Architecture as top-level pages, the three GitHub docs still useful to a
-user rather than a contributor. ``README.md``, ``docs/functions.md`` (a
-contributor reference) and ``docs/roadmap.md`` (the roadmap process itself)
-are deliberately not rendered here — GitHub remains the place to read those.
+user rather than a contributor. ``README.md`` and ``docs/functions.md`` (a
+contributor reference) are deliberately not rendered here — GitHub remains
+the place to read those.
 
 Docs are read and rendered once per process, at first request, and cached in
 memory: they ship inside the image, so they cannot change without a restart.
@@ -29,8 +29,8 @@ _USER_GUIDE_DIR = REPO_ROOT / "docs" / "user-guide"
 # (slug, title, path, group). ``group`` is the sidebar group a page nests
 # under — "User guide" pages render as a collapsible sub-list; ``None`` is a
 # flat top-level entry. Order here is both file-list and display order.
-# README.md, docs/functions.md and docs/roadmap.md are intentionally not
-# listed — see the module docstring.
+# README.md and docs/functions.md are intentionally not listed — see the
+# module docstring.
 PAGES: list[tuple[str, str, Path, str | None]] = [
     ("first-login", "First login", _USER_GUIDE_DIR / "first-login.md", "User guide"),
     ("dashboard", "Dashboard", _USER_GUIDE_DIR / "dashboard.md", "User guide"),
@@ -111,15 +111,15 @@ def _rewrite_links(html: str, source_dir: Path) -> str:
     """Point links between docs at UI routes instead of relative .md paths.
 
     ``source_dir`` is the directory the source file lives in (``docs/`` or
-    the repo root), which a relative link like ``roadmap.md`` or
+    the repo root), which a relative link like ``functions.md`` or
     ``../README.md`` is relative to — resolving against the wrong directory
-    is how a same-directory link like configuration.md's to roadmap.md
+    is how a same-directory link like architecture.md's to functions.md
     previously came out missing its ``docs/`` prefix.
 
     A link to a file this module renders (``installation.md``,
     ``../README.md``, with or without a ``#anchor``) becomes ``/help/<slug>``.
     A link to a repo file it does not render — CHANGELOG.md, CONTRIBUTING.md,
-    SECURITY.md, docs/roadmap.md — is repo-relative on GitHub itself and
+    SECURITY.md, docs/functions.md — is repo-relative on GitHub itself and
     would 404 served from a UI route, so it is rewritten to an absolute
     GitHub URL instead. An already-absolute link (``https://…``) is left
     untouched.

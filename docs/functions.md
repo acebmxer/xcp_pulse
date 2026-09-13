@@ -673,10 +673,9 @@ Reads the nine files under `docs/user-guide/` plus `docs/installation.md`,
 `docs/configuration.md` and `docs/architecture.md` once per process and
 caches the result — they ship inside the image, so they cannot change
 without a restart. `README.md` and `docs/functions.md` are deliberately not
-among them (a contributor reference and the project's public face, not part
-of using the app), and neither is `docs/roadmap.md` (the roadmap process
-itself). Everything under `docs/user-guide/` is written only for this
-section — none of it has a GitHub page of its own.
+among them (the project's public face and a contributor reference, not part
+of using the app). Everything under `docs/user-guide/` is written only for
+this section — none of it has a GitHub page of its own.
 
 | Function | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
@@ -691,7 +690,7 @@ a top-level page — what `sidebar_groups` groups by. Rendering turns GFM
 `[!NOTE]`/`[!WARNING]` callouts into styled `<div class="callout">` blocks
 (plain Markdown has no such syntax), and rewrites `.md` links: a link to
 another rendered page becomes `/help/<slug>`, and a link to a file this
-module does not render (`docs/functions.md`, `docs/roadmap.md`, …) becomes an
+module does not render (`docs/functions.md`, `CHANGELOG.md`, …) becomes an
 absolute link to that file on GitHub, since a relative link from one of
 these files would 404 served from a UI route.
 

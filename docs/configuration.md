@@ -146,20 +146,93 @@ deployments use) that your original `docker compose up -d` did.
 Xen Orchestra connection settings are entered in the web UI and stored encrypted
 in the database, not set here — a token in an environment variable ends up in
 `docker inspect` output and shell history. The URL, the API token and the
-account type (admin or restricted) are given together, and which XO account to
-use is covered in [the roadmap](roadmap.md#which-xen-orchestra-account-to-use).
-
-> [!IMPORTANT]
-> **Log collection may need an admin XO account.** Downloading a host's logs
-> requires the `export:logs` privilege. Xen Orchestra defines it, but some
-> instances carry a privilege catalogue seeded before it was added and cannot
-> grant it to a restricted account — on such an instance, log collection needs
-> an admin account. XCP Pulse checks the connected instance and tells you which
-> case you are in. A restricted account always works for inventory and
-> API-based findings.
->
-> Separately, **XOA below the Essential+ tier has no role-based access control
-> at all**, so those users must use an admin account regardless. Installations
-> from the sources are not restricted.
+account type (admin or restricted) are given together; which XO account to use
+is covered next.
 
 Retention settings for collected bundles arrive with log collection.
+
+## Which Xen Orchestra account to use
+
+**A restricted account works, once it holds the right privilege.** Measured
+against XO CE with `@xen-orchestra/rest-api` **0.39.0**: downloading a host's
+logs requires `export:logs` on host — a **separate privilege from read**. Its
+own API specification documents this:
+
+```
+/hosts/{id}/logs.tgz   Required privilege: resource: host, action: export:logs
+/hosts/{id}/audit.txt  Required privilege: resource: host, action: export:logs
+```
+
+None of Xen Orchestra's eight **built-in** role templates grant it — **Read
+only** stops at `host:read`/`pool:read`, and only **Administrator**'s `host:*`
+happens to cover it, which is why `/rest/v0/acl-privileges` (the list of
+privileges the built-in roles currently hold) can look like `export:logs`
+isn't grantable at all. It's listing what exists, not what's possible: that
+endpoint returns privilege rows already created on the instance, not a fixed
+catalogue of what can be created.
+
+**The fix is a custom role**, which any RBAC-capable instance accepts through
+the REST API:
+
+```
+POST /rest/v0/acl-roles                {"name": "Log exporter"}
+POST /rest/v0/acl-privileges           {"resource": "host", "action": "export:logs",
+                                         "effect": "allow", "roleId": "<the role id>"}
+PUT  /rest/v0/acl-roles/<id>/users/<userId>
+```
+
+Verified end to end against a live instance: a restricted account with no
+prior host access, after being assigned only that custom role, was accepted
+by `/hosts/{id}/audit.txt` (`200`) — the same privilege check `logs.tgz` uses.
+
+| What XCP Pulse does | Privilege | Restricted account |
+| --- | --- | --- |
+| List pools and hosts | `read` on pool and host | Yes — the **Read only** role |
+| Read alarms, messages, tasks, patches | `read` on those resources | Yes |
+| Download logs and audit trail | `export:logs` on host | Yes — needs a **custom role**; no built-in template grants it |
+
+So a restricted account can do everything XCP Pulse needs, including log
+collection — it just needs that one custom role created once, rather than
+being handed full host administration. XCP Pulse still asks which account
+type it has been given and reports what the connected instance can actually
+grant, since a restricted account with no such role will be refused with a
+plain `403` until one is added.
+
+> [!NOTE]
+> **An existing XO 5 ACL does not grant this**, however the account is set up.
+> ACLs (Settings → ACLs) and RBAC are two separate systems: ACLs only offer
+> Viewer/Operator/Admin roles on an object, with no `export:logs` action to
+> grant in the first place, and Xen Orchestra's own docs say plainly that
+> ACLs apply to the JSON-RPC API behind the XO 5 interface, not to the REST
+> API XCP Pulse uses. Only an RBAC role, created and assigned as above,
+> reaches it.
+>
+> There is currently no UI for creating that role on either XO version: XO
+> 5's ACLs page only knows the older ACL model, and XO 6's own Roles/Groups
+> pages redirect back to that same XO 5 page rather than exposing RBAC v2.
+> The three calls above, against the REST API directly, are the only way to
+> create and assign a role today. That does not make this fragile: XCP Pulse
+> reads the outcome of the role assignment, not the presence of any UI for
+> making it, so nothing here needs to change once a Roles UI ships — it would
+> just be a different way of making the same REST calls.
+>
+> **Account type (Administrator/Restricted) is a separate setting from all of
+> this.** It reflects Xen Orchestra's account-level permission
+> (Settings → Users → Admin/User in XO 6, "Permission" in XO 5), which groups,
+> ACLs and RBAC roles do not change. Log export is checked independently of
+> it: an admin account always has it; a restricted account has it only once
+> the custom role above is assigned.
+
+> [!IMPORTANT]
+> **On XOA, restricted accounts additionally need Essential+, Pro or
+> Enterprise.** Role-based access control is not available on the lower XOA
+> tiers. Installations from the sources are not restricted.
+
+## What XCP Pulse will not do
+
+- **Agents on hosts.** Everything goes through the Xen Orchestra API. No
+  software is installed on XCP-ng hosts.
+- **Writing to your pool.** XCP Pulse reads. It does not start, stop, patch or
+  reconfigure anything.
+- **Sending data anywhere.** Bundles are downloaded by you and sent by you.
+  XCP Pulse does not upload to Vates or anyone else.

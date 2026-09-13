@@ -10,6 +10,67 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+### Fixed
+
+- **"Test connection" decided whether a restricted account could download logs
+  by reading `/acl-privileges`, which does not answer that question — it lists
+  privileges already attached to existing roles on the instance, not what can
+  be granted.** None of Xen Orchestra's built-in role templates carry
+  `export:logs`, so every restricted account read back the same three actions
+  (`read`, `allow-vm`, `*`) and was told log collection needed full host
+  administration, in the UI and in the docs, regardless of what a custom role
+  could actually be given. Verified wrong against a live instance: a
+  restricted account holding only a custom role — created through
+  `POST /rest/v0/acl-roles` and `POST /rest/v0/acl-privileges` with
+  `export:logs` on host — was accepted immediately.
+
+  `check_log_export` (`app/xo_client.py`) no longer reads that catalogue at
+  all. It now asks the real question: a lightweight probe
+  (`probe_log_export`) opens `/hosts/{id}/audit.txt` — the smaller of the two
+  log routes, gated by the same privilege as `logs.tgz` — and reads only the
+  status code, closing the connection before any body arrives. With no host
+  visible yet to probe, it says so plainly ("not yet known", pointing at
+  Refresh inventory) rather than reporting collection as unavailable. The now
+  meaningless `grantable_host_actions()` and the `LogExportSupport.grantable`
+  field it fed are removed.
+
+  Corrected the docs and on-screen notes that reported this as a hard limit
+  — [roadmap.md](docs/roadmap.md), [configuration.md](docs/configuration.md),
+  [first-login.md](docs/user-guide/first-login.md), and the notes in
+  [collect.html](app/templates/collect.html) and
+  [settings.html](app/templates/settings.html) — to describe the actual fix
+  (create a custom role, grant it `export:logs`, assign it) instead. Also
+  clarified two things easy to conflate with this: an existing XO 5 ACL grants
+  nothing here, since it's a separate system with no `export:logs` action to
+  give in the first place; and XCP Pulse's admin/restricted detection reads
+  only the XO account's own Administrator/User permission, unaffected by
+  groups, ACLs or RBAC roles either way. No UI exists yet on either XO version
+  to create the role — XO 5's ACLs page predates RBAC v2, and XO 6's own
+  Roles/Groups pages currently redirect back to that same XO 5 page — so the
+  fix is three REST API calls, now documented in
+  [configuration.md](docs/configuration.md); nothing here needs to change
+  once a Roles UI ships, since it would just be a different way of making
+  the same calls.
+
+### Removed
+
+- **`docs/roadmap.md`.** It was a staged-development log for the pre-1.0
+  build, tracking what had shipped and what was next by version number —
+  useful while the feature set and configuration surface were still moving,
+  redundant now that both have settled ahead of v1.0.0: this CHANGELOG already
+  records what shipped when. Its one piece of durable reference content — the
+  "Which Xen Orchestra account to use" section on `export:logs` and RBAC —
+  moved into [configuration.md](docs/configuration.md), the permanent doc it
+  was already being linked from, rather than being lost. Its "Not planned"
+  list moved there too, as "What XCP Pulse will not do". Every reference to
+  it — the README table, the dashboard's own "What is coming" panel (also
+  removed, per Nick — it was explicitly kept until he said otherwise), on-screen
+  error text, and docstrings in `app/docs_render.py`, `app/xo_client.py`,
+  `app/job_runner.py`, `app/jobs.py`, `app/job_extract.py`, `app/update.py`,
+  `SECURITY.md` and `docs/functions.md` — now points at
+  [configuration.md](docs/configuration.md) or has been reworded to carry its
+  own reasoning inline.
+
 ### Changed
 
 - **Moved Dashboard, Collect, Findings, Jobs, Redaction and User manual off the

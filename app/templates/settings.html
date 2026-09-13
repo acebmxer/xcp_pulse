@@ -105,9 +105,10 @@
       {% endfor %}
     </select>
     <p class="note">
-      Downloading host logs needs the <code>export:logs</code> privilege, which many
-      Xen Orchestra instances cannot grant to a restricted account. Testing the
-      connection reports whether this one can.
+      Downloading host logs needs the <code>export:logs</code> privilege, which no
+      built-in Xen Orchestra role grants — a restricted account needs a custom role
+      created and assigned first. Testing the connection reports whether this one
+      has it.
     </p>
 
     <label class="check">

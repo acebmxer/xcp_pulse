@@ -369,8 +369,6 @@ button:focus-visible {
   }
 }
 
-/* ---- roadmap ---- */
-
 /* --- Dashboard status panels ------------------------------------------- */
 
 /* A responsive grid rather than fixed columns: the panels each hold a few
@@ -445,68 +443,6 @@ button:focus-visible {
   font-size: 0.78rem;
   color: var(--text-dim);
 }
-
-.roadmap { margin-top: 2rem; }
-.roadmap h2 { font-size: 1rem; color: var(--text-dim); margin: 0 0 0.75rem; }
-
-.stages { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.35rem; }
-
-/* A stage row is three slots: tag, name, state. Planned rows carry no version
-   tag (see docs/roadmap.md — numbers are assigned when work starts), so the
-   first column collapses for them rather than leaving a gap. */
-.stage {
-  display: grid;
-  grid-template-columns: 4.5rem 1fr auto;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.6rem 0.85rem;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  font-size: 0.9rem;
-}
-
-.stage:not(:has(.stage-tag)) {
-  grid-template-columns: 1fr auto;
-}
-
-.stages-group {
-  margin: 1.5rem 0 0.5rem;
-  font-size: 0.78rem;
-  font-weight: 650;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--text-dim);
-}
-
-.stage-note {
-  font-size: 0.75rem;
-  color: var(--text-dim);
-  font-style: italic;
-  white-space: nowrap;
-}
-
-.stage-next { border-color: var(--accent); }
-.stage-next .stage-tag,
-.stage-next .stage-state { color: var(--accent); }
-
-.stage-tag {
-  font-variant-numeric: tabular-nums;
-  font-weight: 650;
-  color: var(--text-dim);
-  font-size: 0.82rem;
-}
-
-.stage-state {
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text-dim);
-}
-
-.stage-done { border-color: var(--ok); }
-.stage-done .stage-tag,
-.stage-done .stage-state { color: var(--ok); }
 
 .note { color: var(--text-dim); font-size: 0.85rem; margin-top: 1rem; }
 
@@ -801,12 +737,6 @@ textarea {
 @media (max-width: 560px) {
   .kv { grid-template-columns: 1fr; gap: 0.15rem; }
   .kv dd { margin-bottom: 0.5rem; }
-  .stage { grid-template-columns: 4.5rem 1fr; }
-  .stage:not(:has(.stage-tag)) { grid-template-columns: 1fr; }
-  .stage-state { grid-column: 2; font-size: 0.7rem; }
-  .stage:not(:has(.stage-tag)) .stage-state,
-  .stage:not(:has(.stage-tag)) .stage-note { grid-column: 1; }
-  .stage-note { white-space: normal; }
   .job-actions { align-items: flex-start; }
   .job-duration { margin-left: 0; }
 }
