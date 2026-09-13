@@ -10,6 +10,17 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+### Fixed
+
+- **The ☰ Menu had no link to Update, Support package, or Activity**, left out
+  when the top nav was collapsed into that dropdown (`a09cf3e`). That was an
+  unrequested navigation decision, not something asked for, and it made all
+  three invisible to anyone who didn't already know the URL — including
+  self-update sitting available on a deployment that had it enabled. Added
+  Update and Support package alongside Redaction, and Activity next to Jobs —
+  all visible to every signed-in user, matching those routes' own access
+  rules.
+
 ## [0.9.1] - 2026-09-13
 
 ### Fixed
