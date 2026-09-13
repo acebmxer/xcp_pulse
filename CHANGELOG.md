@@ -10,6 +10,29 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+### Changed
+
+- **Moved Dashboard, Collect, Findings, Jobs, Redaction and User manual off the
+  top bar and into a single "☰ Menu" dropdown**, alongside Settings
+  (admin-only, same guard as before) and Change password / 2FA. Dashboard was
+  previously only reachable by clicking the "XCP Pulse" brand link; it's now
+  also the first item in the menu. Support package, Activity and Update are
+  dropped entirely from navigation — their routes and pages are unchanged,
+  `/activity` and `/update` still work, just not linked anywhere. The top bar
+  itself now holds only the brand, the Menu dropdown, the username and Log
+  out. It's a plain `<details>`/`<summary>` element (`.account-menu` in
+  [base.html](app/templates/base.html)) — this project has no client-side
+  JavaScript and none was needed here.
+
+  Change password and two-factor authentication, previously two separate
+  pages (`/account/password` and `/account/totp`), are now one combined page
+  at `GET /account` — a password-change form and the 2FA on/off panel stacked
+  on the same screen. The old GET routes and their templates
+  (`account_password.html`, `account_totp.html`) are removed; the `POST`
+  endpoints they submitted to are unchanged. The multi-step TOTP setup and
+  backup-codes pages still get their own screens, since that flow is
+  inherently a QR code, a confirm step, and a one-time codes reveal.
+
 ### Fixed
 
 - **The "Run update anyway" button on a dev build ran the real pull-and-recreate

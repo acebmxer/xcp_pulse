@@ -16,23 +16,23 @@
     </a>
     {% set role = current_role(request) %}
     <nav class="topnav">
-      <a class="navlink" href="/collect">Collect</a>
-      <a class="navlink" href="/findings">Findings</a>
-      <a class="navlink" href="/jobs">Jobs</a>
-      <a class="navlink" href="/redaction">Redaction</a>
-      <a class="navlink" href="/support-package">Support package</a>
-      {% if role in ("admin", "operator") %}
-      <a class="navlink" href="/activity">Activity</a>
-      <a class="navlink" href="/update">Update</a>
-      {% endif %}
-      <a class="navlink" href="/help">User manual</a>
-      {% if role == "admin" %}
-      <a class="navlink" href="/settings">Settings</a>
-      {% endif %}
-      <span class="who">
-        <a class="navlink" href="/account/password">{{ username }}</a>
-        <a class="navlink" href="/account/totp">2FA</a>
-      </span>
+      <details class="account-menu">
+        <summary class="navlink">☰ Menu ▾</summary>
+        <div class="account-menu-panel">
+          <a class="navlink" href="/">Dashboard</a>
+          <a class="navlink" href="/collect">Collect</a>
+          <a class="navlink" href="/findings">Findings</a>
+          <a class="navlink" href="/jobs">Jobs</a>
+          <a class="navlink" href="/redaction">Redaction</a>
+          <a class="navlink" href="/help">User manual</a>
+          <hr class="account-menu-divider">
+          {% if role == "admin" %}
+          <a class="navlink" href="/settings">Settings</a>
+          {% endif %}
+          <a class="navlink" href="/account">Change password / 2FA</a>
+        </div>
+      </details>
+      <span class="who">{{ username }}</span>
       <form method="post" action="/logout" class="inline">
         <button type="submit" class="btn btn-quiet">Log out</button>
       </form>

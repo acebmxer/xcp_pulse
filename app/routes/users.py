@@ -194,14 +194,24 @@ def users_reset_password(
     return redirect("/settings/users?reset=1")
 
 
-# --- Self-service: any signed-in user changes their own password ---------------
+# --- Self-service: change password and manage 2FA, one combined page ----------
 
 
-@router.get("/account/password", response_class=HTMLResponse)
-def account_password_page(request: Request, username: str = Depends(login_required)) -> Response:
+def _render_account(
+    request: Request, username: str, error: str | None, status_code: int = 200
+) -> Response:
+    user = get_user(request.app.state.db, username)
     return templates.TemplateResponse(
-        request, "account_password.html", {"username": username, "error": None}
+        request,
+        "account.html",
+        {"username": username, "user": user, "error": error},
+        status_code=status_code,
     )
+
+
+@router.get("/account", response_class=HTMLResponse)
+def account_page(request: Request, username: str = Depends(login_required)) -> Response:
+    return _render_account(request, username, error=None)
 
 
 @router.post("/account/password", response_class=HTMLResponse)
@@ -215,44 +225,25 @@ def account_password_change(
     conn = request.app.state.db
     user: User | None = get_user(conn, username)
     if user is None or not verify_password(current_password, user.password_hash):
-        return templates.TemplateResponse(
-            request,
-            "account_password.html",
-            {"username": username, "error": "Current password is incorrect."},
-            status_code=401,
-        )
+        return _render_account(request, username, "Current password is incorrect.", 401)
     if new_password != confirm_password:
-        return templates.TemplateResponse(
-            request,
-            "account_password.html",
-            {"username": username, "error": "New password and confirmation do not match."},
-            status_code=400,
+        return _render_account(
+            request, username, "New password and confirmation do not match.", 400
         )
     if len(new_password) < MIN_PASSWORD_LENGTH:
-        return templates.TemplateResponse(
+        return _render_account(
             request,
-            "account_password.html",
-            {
-                "username": username,
-                "error": f"New password must be at least {MIN_PASSWORD_LENGTH} characters.",
-            },
-            status_code=400,
+            username,
+            f"New password must be at least {MIN_PASSWORD_LENGTH} characters.",
+            400,
         )
 
     set_password(conn, user.id, new_password)
     log_activity(conn, username, "self.password_change", ip=client_ip(request))
-    return redirect("/account/password?changed=1")
+    return redirect("/account?changed=1")
 
 
 # --- Self-service: optional TOTP two-factor ------------------------------------
-
-
-@router.get("/account/totp", response_class=HTMLResponse)
-def account_totp_page(request: Request, username: str = Depends(login_required)) -> Response:
-    user = get_user(request.app.state.db, username)
-    return templates.TemplateResponse(
-        request, "account_totp.html", {"username": username, "user": user, "error": None}
-    )
 
 
 @router.get("/account/totp/setup", response_class=HTMLResponse)
@@ -267,7 +258,7 @@ def account_totp_setup(request: Request, username: str = Depends(login_required)
     settings = request.app.state.settings
     user = get_user(conn, username)
     if user is None:
-        return redirect("/account/totp")
+        return redirect("/account")
     secret = begin_totp_enrollment(conn, user.id, settings.secret_key)
     uri = provisioning_uri(secret, username=username)
     return templates.TemplateResponse(
@@ -287,7 +278,7 @@ def account_totp_confirm(
     settings = request.app.state.settings
     user = get_user(conn, username)
     if user is None:
-        return redirect("/account/totp")
+        return redirect("/account")
 
     backup_codes = confirm_totp_enrollment(conn, user.id, code, settings.secret_key)
     if backup_codes is None:
@@ -331,15 +322,10 @@ def account_totp_disable(
     conn = request.app.state.db
     user = get_user(conn, username)
     if user is None or not verify_password(current_password, user.password_hash):
-        return templates.TemplateResponse(
-            request,
-            "account_totp.html",
-            {"username": username, "user": user, "error": "Current password is incorrect."},
-            status_code=401,
-        )
+        return _render_account(request, username, "Current password is incorrect.", 401)
     disable_totp(conn, user.id)
     log_activity(conn, username, "self.totp_disable", ip=client_ip(request))
-    return redirect("/account/totp?disabled=1")
+    return redirect("/account?disabled=1")
 
 
 # --- Activity log: admin and operator -------------------------------------------

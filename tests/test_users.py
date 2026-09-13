@@ -348,9 +348,28 @@ def test_mismatched_confirmation_is_rejected_on_admin_reset(logged_in: TestClien
     )
 
 
-def test_totp_page_shows_off_by_default(logged_in: TestClient) -> None:
-    body = logged_in.get("/account/totp").text
+def test_account_page_shows_totp_off_by_default(logged_in: TestClient) -> None:
+    body = logged_in.get("/account").text
     assert "off" in body.lower()
+    assert "turn off two-factor authentication" not in body.lower()
+
+
+def test_account_page_shows_totp_on_once_enabled(logged_in: TestClient) -> None:
+    from app.crypto import decrypt
+    from app.users import get_user
+
+    logged_in.get("/account/totp/setup")
+    conn = logged_in.app.state.db
+    secret_key = logged_in.app.state.settings.secret_key
+    user = get_user(conn, TEST_USER)
+    assert user is not None and user.totp_secret_encrypted
+    secret = decrypt(user.totp_secret_encrypted, secret_key)
+    logged_in.post("/account/totp/setup", data={"code": current_code(secret)})
+
+    body = logged_in.get("/account").text
+    assert "two-factor authentication is on" in body.lower()
+    assert "turn off two-factor authentication" in body.lower()
+    assert "backup code" in body.lower()
 
 
 def test_totp_setup_page_shows_a_qr_code_and_a_manual_secret(logged_in: TestClient) -> None:

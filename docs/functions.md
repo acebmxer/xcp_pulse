@@ -792,9 +792,8 @@ for why this does not use `app/jobs.py`.
 | `users_enable` | `(request, user_id, username) -> Response` | `POST /settings/users/{id}/enable` — re-enables an account (admin-only) | router | unreleased |
 | `users_reset_password` | `(request, user_id, username, new_password) -> Response` | `POST /settings/users/{id}/reset-password` — an admin sets someone else's password, no current-password check | router | unreleased |
 | `users_disable_totp` | `(request, user_id, username) -> Response` | `POST /settings/users/{id}/disable-totp` — an admin turns off someone else's 2FA, the recovery path for a lost device and lost backup codes | router | unreleased |
-| `account_password_page` | `(request, username) -> Response` | `GET /account/password` — change-your-own-password form | router | unreleased |
+| `account_page` | `(request, username) -> Response` | `GET /account` — combined Change password / 2FA screen: password form plus on/off status and backup codes remaining | router | unreleased |
 | `account_password_change` | `(request, username, current_password, new_password) -> Response` | `POST /account/password` — self-service password change, requires the current password | router | unreleased |
-| `account_totp_page` | `(request, username) -> Response` | `GET /account/totp` — on/off status, backup codes remaining | router | unreleased |
 | `account_totp_setup` | `(request, username) -> Response` | `GET /account/totp/setup` — generates a fresh secret and shows its QR code | router | unreleased |
 | `account_totp_confirm` | `(request, username, code) -> Response` | `POST /account/totp/setup` — verifies the code, turns 2FA on, shows the backup codes once | router | unreleased |
 | `account_totp_disable` | `(request, username, current_password) -> Response` | `POST /account/totp/disable` — turns 2FA off, requires the current password | router | unreleased |

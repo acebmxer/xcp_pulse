@@ -81,6 +81,47 @@ body {
 .who { color: var(--text-dim); font-size: 0.9rem; }
 .inline { display: inline; margin: 0; }
 
+/* The main nav dropdown — a native <details>/<summary> pair so it needs no
+   JS. summary already inherits .navlink; this just removes the default
+   disclosure triangle and positions the panel under it. */
+.account-menu { position: relative; }
+
+.account-menu summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.account-menu summary::-webkit-details-marker { display: none; }
+
+.account-menu-panel {
+  position: absolute;
+  left: 0;
+  top: calc(100% + 0.4rem);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 11rem;
+  padding: 0.4rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  z-index: 10;
+}
+
+.account-menu-panel .navlink {
+  padding: 0.4rem 0.5rem;
+  border-radius: 6px;
+}
+
+.account-menu-panel .navlink:hover { background: var(--border); }
+
+.account-menu-divider {
+  margin: 0.3rem 0.1rem;
+  border: none;
+  border-top: 1px solid var(--border);
+}
+
 /* ---- layout ---- */
 
 .wrap {
