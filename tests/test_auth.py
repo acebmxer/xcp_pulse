@@ -6,7 +6,9 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.main import create_app
-from app.security import SESSION_COOKIE
+from app.security import PENDING_2FA_COOKIE, SESSION_COOKIE
+from app.totp import current_code
+from app.users import confirm_totp_enrollment, get_user
 from tests.conftest import TEST_PASSWORD, TEST_USER
 
 
@@ -111,3 +113,99 @@ def test_open_redirect_is_refused(client: TestClient) -> None:
         )
         assert response.status_code == 303
         assert response.headers["location"] == "/"
+
+
+# --- Two-factor login -------------------------------------------------------
+
+
+def _enable_totp(client: TestClient, user_id: str) -> str:
+    """Enroll TOTP for a user directly through the model layer and return the
+    secret — the enrollment HTTP flow itself is covered in test_users.py.
+    """
+    from app.users import begin_totp_enrollment
+
+    conn = client.app.state.db
+    secret_key = client.app.state.settings.secret_key
+    secret = begin_totp_enrollment(conn, user_id, secret_key)
+    code = current_code(secret)
+    backup_codes = confirm_totp_enrollment(conn, user_id, code, secret_key)
+    assert backup_codes is not None, "fixture could not enroll TOTP"
+    return secret
+
+
+def test_correct_password_with_totp_on_does_not_create_a_session(client: TestClient) -> None:
+    user = get_user(client.app.state.db, TEST_USER)
+    assert user is not None
+    _enable_totp(client, user.id)
+
+    response = client.post(
+        "/login", data={"username": TEST_USER, "password": TEST_PASSWORD, "next": "/"}
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/login/2fa?next=/"
+    assert not client.cookies.get(SESSION_COOKIE)
+    assert client.cookies.get(PENDING_2FA_COOKIE)
+
+
+def test_correct_totp_code_completes_login(client: TestClient) -> None:
+    user = get_user(client.app.state.db, TEST_USER)
+    assert user is not None
+    secret = _enable_totp(client, user.id)
+
+    client.post("/login", data={"username": TEST_USER, "password": TEST_PASSWORD, "next": "/"})
+    response = client.post("/login/2fa", data={"code": current_code(secret), "next": "/"})
+    assert response.status_code == 303
+    assert response.headers["location"] == "/"
+    assert client.cookies.get(SESSION_COOKIE)
+
+
+def test_wrong_totp_code_is_rejected(client: TestClient) -> None:
+    user = get_user(client.app.state.db, TEST_USER)
+    assert user is not None
+    _enable_totp(client, user.id)
+
+    client.post("/login", data={"username": TEST_USER, "password": TEST_PASSWORD, "next": "/"})
+    response = client.post("/login/2fa", data={"code": "000000", "next": "/"})
+    assert response.status_code == 401
+    assert not client.cookies.get(SESSION_COOKIE)
+
+
+def test_backup_code_completes_login_and_is_consumed(client: TestClient) -> None:
+    user = get_user(client.app.state.db, TEST_USER)
+    assert user is not None
+    secret_key = client.app.state.settings.secret_key
+    from app.users import begin_totp_enrollment
+
+    conn = client.app.state.db
+    secret = begin_totp_enrollment(conn, user.id, secret_key)
+    backup_codes = confirm_totp_enrollment(conn, user.id, current_code(secret), secret_key)
+    assert backup_codes is not None
+    one_time_code = backup_codes[0]
+
+    client.post("/login", data={"username": TEST_USER, "password": TEST_PASSWORD, "next": "/"})
+    response = client.post("/login/2fa", data={"code": one_time_code, "next": "/"})
+    assert response.status_code == 303
+    assert client.cookies.get(SESSION_COOKIE)
+
+    # The same backup code must not work a second time.
+    client.cookies.delete(SESSION_COOKIE)
+    client.post("/login", data={"username": TEST_USER, "password": TEST_PASSWORD, "next": "/"})
+    replay = client.post("/login/2fa", data={"code": one_time_code, "next": "/"})
+    assert replay.status_code == 401
+
+
+def test_2fa_step_is_unreachable_without_a_completed_password_step(client: TestClient) -> None:
+    response = client.get("/login/2fa")
+    assert response.status_code == 303
+    assert response.headers["location"] == "/login"
+
+
+def test_account_without_totp_skips_straight_to_a_session(client: TestClient) -> None:
+    # No enrollment in this test — the existing plain-login behaviour, kept as
+    # a regression guard now that login_submit branches on totp_enabled.
+    response = client.post(
+        "/login", data={"username": TEST_USER, "password": TEST_PASSWORD, "next": "/"}
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/"
+    assert client.cookies.get(SESSION_COOKIE)

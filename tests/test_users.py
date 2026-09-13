@@ -10,8 +10,9 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
+from app.totp import current_code
 from app.users import MIN_PASSWORD_LENGTH, ROLES, UserError, create_user, get_user
-from tests.conftest import TEST_USER
+from tests.conftest import TEST_PASSWORD, TEST_USER
 
 
 def _login_as(client: TestClient, username: str, password: str) -> TestClient:
@@ -345,6 +346,119 @@ def test_mismatched_confirmation_is_rejected_on_admin_reset(logged_in: TestClien
         ).status_code
         == 303
     )
+
+
+def test_totp_page_shows_off_by_default(logged_in: TestClient) -> None:
+    body = logged_in.get("/account/totp").text
+    assert "off" in body.lower()
+
+
+def test_totp_setup_page_shows_a_qr_code_and_a_manual_secret(logged_in: TestClient) -> None:
+    response = logged_in.get("/account/totp/setup")
+    assert response.status_code == 200
+    assert "<svg" in response.text
+    assert "otpauth" not in response.text.lower()  # the raw URI is in the QR, not on the page
+
+
+def test_totp_setup_with_correct_code_enables_it_and_shows_backup_codes(
+    logged_in: TestClient,
+) -> None:
+    logged_in.get("/account/totp/setup")  # generates and stores the pending secret
+
+    from app.totp import provisioning_uri
+    from app.users import get_user
+
+    conn = logged_in.app.state.db
+    secret_key = logged_in.app.state.settings.secret_key
+    user = get_user(conn, TEST_USER)
+    assert user is not None and user.totp_secret_encrypted
+
+    from app.crypto import decrypt
+
+    secret = decrypt(user.totp_secret_encrypted, secret_key)
+    # Sanity: the setup page's QR encodes this same secret.
+    assert provisioning_uri(secret, username=TEST_USER)
+
+    response = logged_in.post("/account/totp/setup", data={"code": current_code(secret)})
+    assert response.status_code == 200
+    assert "backup code" in response.text.lower()
+
+    user_after = get_user(conn, TEST_USER)
+    assert user_after is not None
+    assert user_after.totp_enabled
+    assert len(user_after.totp_backup_codes) == 10
+
+
+def test_totp_setup_with_wrong_code_does_not_enable_it(logged_in: TestClient) -> None:
+    logged_in.get("/account/totp/setup")
+    response = logged_in.post("/account/totp/setup", data={"code": "000000"})
+    assert response.status_code == 400
+    assert "incorrect" in response.text.lower()
+
+    from app.users import get_user
+
+    user = get_user(logged_in.app.state.db, TEST_USER)
+    assert user is not None
+    assert not user.totp_enabled
+
+
+def test_totp_disable_requires_the_current_password(logged_in: TestClient) -> None:
+    from app.crypto import decrypt
+    from app.users import get_user
+
+    logged_in.get("/account/totp/setup")
+    conn = logged_in.app.state.db
+    secret_key = logged_in.app.state.settings.secret_key
+    user = get_user(conn, TEST_USER)
+    assert user is not None and user.totp_secret_encrypted
+    secret = decrypt(user.totp_secret_encrypted, secret_key)
+    logged_in.post("/account/totp/setup", data={"code": current_code(secret)})
+
+    wrong = logged_in.post("/account/totp/disable", data={"current_password": "wrong-password"})
+    assert wrong.status_code == 401
+    assert get_user(conn, TEST_USER).totp_enabled  # type: ignore[union-attr]
+
+    right = logged_in.post("/account/totp/disable", data={"current_password": TEST_PASSWORD})
+    assert right.status_code == 303
+    assert not get_user(conn, TEST_USER).totp_enabled  # type: ignore[union-attr]
+
+
+def test_admin_can_disable_someone_elses_totp_with_no_password_check(
+    logged_in: TestClient,
+) -> None:
+    from app.users import begin_totp_enrollment, confirm_totp_enrollment, get_user
+
+    conn = logged_in.app.state.db
+    secret_key = logged_in.app.state.settings.secret_key
+    create_user(conn, "totp-locked-out", "some-password-123", "viewer")
+    target = get_user(conn, "totp-locked-out")
+    assert target is not None
+    secret = begin_totp_enrollment(conn, target.id, secret_key)
+    confirm_totp_enrollment(conn, target.id, current_code(secret), secret_key)
+    assert get_user(conn, "totp-locked-out").totp_enabled  # type: ignore[union-attr]
+
+    response = logged_in.post(f"/settings/users/{target.id}/disable-totp")
+    assert response.status_code == 303
+    assert not get_user(conn, "totp-locked-out").totp_enabled  # type: ignore[union-attr]
+
+
+def test_viewer_cannot_disable_someone_elses_totp(client: TestClient) -> None:
+    from app.users import begin_totp_enrollment, confirm_totp_enrollment, get_user
+
+    conn = client.app.state.db
+    secret_key = client.app.state.settings.secret_key
+    create_user(conn, "totp-target", "some-password-123", "viewer")
+    target = get_user(conn, "totp-target")
+    assert target is not None
+    secret = begin_totp_enrollment(conn, target.id, secret_key)
+    confirm_totp_enrollment(conn, target.id, current_code(secret), secret_key)
+
+    _add_user(client, "onlookviewer", "viewer-password", "viewer")
+    _login_as(client, "onlookviewer", "viewer-password")
+
+    response = client.post(f"/settings/users/{target.id}/disable-totp")
+    assert response.status_code == 403
+    assert get_user(conn, "totp-target").totp_enabled  # type: ignore[union-attr]
 
 
 def test_mismatched_confirmation_is_rejected_on_self_service_change(client: TestClient) -> None:

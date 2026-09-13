@@ -103,6 +103,47 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ### Added
 
+- **Optional TOTP two-factor authentication, per user, with a QR code for
+  setup.** Off by default, and each account turns it on for itself — a
+  `/account/totp` page — rather than an instance-wide switch, since a login
+  credential is each user's own to opt into, the same as their password.
+  Setup (`/account/totp/setup`) generates a secret, shows a QR code for
+  scanning into an authenticator app (Google Authenticator, Authy,
+  1Password, etc.) alongside the secret as plain text for entering by hand,
+  and only turns 2FA on once the user proves they can generate a matching
+  code — at which point ten one-time backup codes are shown, once, for
+  recovering access if the device is lost. The QR code is rendered entirely
+  server-side as inline SVG (`app/totp.py`, using `segno`, a pure-Python,
+  zero-dependency QR encoder newly added to `pyproject.toml`) — no image
+  library, no client-side JavaScript (this app has none), and the
+  `otpauth://` URI carrying the secret is never sent to any external
+  service, only encoded directly into the SVG this process renders. The
+  secret is stored encrypted at rest using the same AES-GCM-over-the-app-
+  secret-key scheme as the Xen Orchestra token (`app/crypto.py`); backup
+  codes are stored as salted hashes, never plaintext, and a used one is
+  removed from the stored list so it cannot be replayed. Turning 2FA off
+  requires the current password, the same bar as changing it. Admins get a
+  separate recovery path on the Users page — turning off another user's 2FA
+  with no code or password check — for someone who has lost both their
+  device and all ten backup codes, the same role a password reset already
+  plays for a lost password.
+
+  The login flow (`app/routes/auth.py`) now branches on whether the account
+  has 2FA on: a correct password alone no longer creates a session for such
+  an account. Instead it sets a short-lived, narrowly-scoped signed cookie
+  (5 minutes, path-restricted to `/login/2fa`) proving only that the
+  password step just succeeded, and redirects to a new code-entry page that
+  accepts either a live TOTP code or a backup code before a real session is
+  created. Login throttling (`is_rate_limited`) applies to the code step the
+  same as it does to the password step. Accounts without 2FA enrolled are
+  unaffected — password alone still creates a session directly, exactly as
+  before.
+
+  Verified against a real QR decoder during development: the exact SVG this
+  module renders was rasterized and scanned back with `zbar`, confirming the
+  `otpauth://` payload round-trips correctly and the code is genuinely
+  scannable, not just visually plausible.
+
 - **Self-update: check for and apply new releases from a new Update page,
   opt-in and off by default.** `XCP_PULSE_ENABLE_SELF_UPDATE=false` is the
   default; turning it on alone changes nothing until the Docker socket is

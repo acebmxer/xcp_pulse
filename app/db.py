@@ -182,6 +182,34 @@ _MIGRATIONS: list[str] = [
         last_result_at      REAL
     );
     """,
+    # 6 -> 7: optional TOTP two-factor, per user.
+    #
+    # Off by default and per-account (unlike self-update's single env-driven
+    # switch) because a login credential is each user's own to opt into, the
+    # same way their password is theirs to change. totp_secret_encrypted uses
+    # the same AES-GCM-over-the-app-secret-key scheme as xo_connection's
+    # token (app/crypto.py) — a TOTP secret is as sensitive as the XO token
+    # it sits beside in this database: whoever holds it can generate valid
+    # login codes forever.
+    #
+    # The secret is written the moment a user starts enrolling (GET
+    # /account/totp/setup generates and stores it) but totp_enabled stays 0
+    # until they prove they can generate a matching code — see
+    # app/users.py's totp_confirm. This means an abandoned enrollment leaves
+    # a secret in the table but never turns on the second factor, which is
+    # what makes it safe to regenerate the secret on every visit to the setup
+    # page rather than needing a separate "pending" state.
+    #
+    # Backup codes are stored as a JSON array of salted-hash strings
+    # (app/totp.py's hash_backup_code) — never the plaintext, which is shown
+    # to the user exactly once, at generation time. A used code is removed
+    # from the array rather than flagged, so the array's length is always
+    # "codes remaining" with no extra bookkeeping.
+    """
+    ALTER TABLE users ADD COLUMN totp_secret_encrypted TEXT;
+    ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE users ADD COLUMN totp_backup_codes TEXT NOT NULL DEFAULT '[]';
+    """,
 ]
 
 

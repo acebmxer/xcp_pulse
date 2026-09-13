@@ -44,7 +44,10 @@ roles (admin, operator, viewer) restricting what each can change or run; the
 first admin account's password is supplied by configuration and the app
 refuses to start without one, with no default password. Sessions are stored
 server-side so logout invalidates immediately, and disabling an account ends
-its live sessions too. Failed logins are throttled per address.
+its live sessions too. Failed logins are throttled per address. Optional TOTP
+two-factor is available per account (`/account/totp`) — a secret stored
+encrypted at rest, plus one-time backup codes stored as salted hashes — and,
+once turned on, a correct password alone no longer creates a session.
 
 **Built-in HTTPS runs as the same non-root user as everything else.** Both
 its ports are unprivileged, so nginx never needs root even briefly — no

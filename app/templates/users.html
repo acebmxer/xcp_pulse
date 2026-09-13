@@ -61,6 +61,13 @@
                autocomplete="new-password" required minlength="8">
         <button type="submit" class="btn btn-quiet">Reset password</button>
       </form>
+
+      {% if user.totp_enabled %}
+      <form method="post" action="/settings/users/{{ user.id }}/disable-totp" class="inline">
+        <span class="user-status user-status-active">2FA on</span>
+        <button type="submit" class="btn btn-quiet">Disable their 2FA</button>
+      </form>
+      {% endif %}
     </li>
     {% endfor %}
   </ul>

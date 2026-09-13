@@ -17,12 +17,16 @@ from fastapi.responses import HTMLResponse, Response
 from app.activity import list_activity, log_activity
 from app.dependencies import admin_required, login_required, operator_required, redirect, templates
 from app.security import client_ip, verify_password
+from app.totp import provisioning_uri, qr_svg
 from app.users import (
     MIN_PASSWORD_LENGTH,
     ROLES,
     User,
     UserError,
+    begin_totp_enrollment,
+    confirm_totp_enrollment,
     create_user,
+    disable_totp,
     get_user,
     get_user_by_id,
     list_users,
@@ -139,6 +143,26 @@ def users_enable(
     return redirect("/settings/users?updated=1")
 
 
+@router.post("/settings/users/{user_id}/disable-totp")
+def users_disable_totp(
+    request: Request, user_id: str, username: str = Depends(admin_required)
+) -> Response:
+    """An admin turns off someone else's two-factor authentication, no code
+    or password check — the recovery path for a user who has lost both their
+    authenticator device and all ten backup codes. Distinct from
+    /account/totp/disable, which is self-service and does require the
+    current password.
+    """
+    conn = request.app.state.db
+    target = get_user_by_id(conn, user_id)
+    if target is None:
+        return _render_users(request, username, error="That user no longer exists.")
+
+    disable_totp(conn, target.id)
+    log_activity(conn, username, "user.totp_disable", detail=target.username, ip=client_ip(request))
+    return redirect("/settings/users?updated=1")
+
+
 @router.post("/settings/users/{user_id}/reset-password", response_class=HTMLResponse)
 def users_reset_password(
     request: Request,
@@ -218,6 +242,104 @@ def account_password_change(
     set_password(conn, user.id, new_password)
     log_activity(conn, username, "self.password_change", ip=client_ip(request))
     return redirect("/account/password?changed=1")
+
+
+# --- Self-service: optional TOTP two-factor ------------------------------------
+
+
+@router.get("/account/totp", response_class=HTMLResponse)
+def account_totp_page(request: Request, username: str = Depends(login_required)) -> Response:
+    user = get_user(request.app.state.db, username)
+    return templates.TemplateResponse(
+        request, "account_totp.html", {"username": username, "user": user, "error": None}
+    )
+
+
+@router.get("/account/totp/setup", response_class=HTMLResponse)
+def account_totp_setup(request: Request, username: str = Depends(login_required)) -> Response:
+    """Generate (or regenerate) a pending secret and show its QR code.
+
+    Safe to reach repeatedly — see begin_totp_enrollment's docstring — so a
+    user who navigates away mid-setup and comes back just gets a fresh code
+    and a fresh QR image rather than an error.
+    """
+    conn = request.app.state.db
+    settings = request.app.state.settings
+    user = get_user(conn, username)
+    if user is None:
+        return redirect("/account/totp")
+    secret = begin_totp_enrollment(conn, user.id, settings.secret_key)
+    uri = provisioning_uri(secret, username=username)
+    return templates.TemplateResponse(
+        request,
+        "account_totp_setup.html",
+        {"username": username, "secret": secret, "qr_svg": qr_svg(uri), "error": None},
+    )
+
+
+@router.post("/account/totp/setup", response_class=HTMLResponse)
+def account_totp_confirm(
+    request: Request,
+    username: str = Depends(login_required),
+    code: str = Form(...),
+) -> Response:
+    conn = request.app.state.db
+    settings = request.app.state.settings
+    user = get_user(conn, username)
+    if user is None:
+        return redirect("/account/totp")
+
+    backup_codes = confirm_totp_enrollment(conn, user.id, code, settings.secret_key)
+    if backup_codes is None:
+        # Wrong code — start setup over with a fresh secret and QR code
+        # rather than showing a blank form: the secret the user just typed a
+        # code for might have been mistyped or the QR misread, and there is
+        # no way to tell which from here, so the safest recovery is a clean
+        # new attempt.
+        secret = begin_totp_enrollment(conn, user.id, settings.secret_key)
+        uri = provisioning_uri(secret, username=username)
+        return templates.TemplateResponse(
+            request,
+            "account_totp_setup.html",
+            {
+                "username": username,
+                "secret": secret,
+                "qr_svg": qr_svg(uri),
+                "error": "Incorrect code. Scan the new QR code below and try again.",
+            },
+            status_code=400,
+        )
+
+    log_activity(conn, username, "self.totp_enable", ip=client_ip(request))
+    return templates.TemplateResponse(
+        request,
+        "account_totp_backup_codes.html",
+        {"username": username, "backup_codes": backup_codes},
+    )
+
+
+@router.post("/account/totp/disable", response_class=HTMLResponse)
+def account_totp_disable(
+    request: Request,
+    username: str = Depends(login_required),
+    current_password: str = Form(...),
+) -> Response:
+    """Turning 2FA off requires the current password — the same bar as
+    changing it — since disabling it is a step down in how well an account
+    is protected and should not be a single unauthenticated-adjacent click.
+    """
+    conn = request.app.state.db
+    user = get_user(conn, username)
+    if user is None or not verify_password(current_password, user.password_hash):
+        return templates.TemplateResponse(
+            request,
+            "account_totp.html",
+            {"username": username, "user": user, "error": "Current password is incorrect."},
+            status_code=401,
+        )
+    disable_totp(conn, user.id)
+    log_activity(conn, username, "self.totp_disable", ip=client_ip(request))
+    return redirect("/account/totp?disabled=1")
 
 
 # --- Activity log: admin and operator -------------------------------------------

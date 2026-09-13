@@ -401,7 +401,23 @@ changes, and every job started, downloaded or deleted, with who and when.
 Migration was automatic: the existing environment-configured admin became
 the first row and kept working with no manual step.
 
-**Still open: optional TOTP two-factor.** Not started.
+### Optional TOTP two-factor — built, not yet released
+
+~~A user can turn on TOTP two-factor for their own account, on top of their
+password.~~ **Shipped, unreleased.** Each account can turn on TOTP
+independently — this is a per-user opt-in stored on their own row, not an
+instance-wide switch like self-update's. Setup shows a QR code (rendered
+server-side as inline SVG with `segno`, a pure-Python encoder — no image
+library, no client-side JavaScript, no secret ever sent to an external
+service) for scanning into an authenticator app, plus the secret as plain
+text for typing in by hand. Confirming with a live code is what actually
+turns it on, and also issues ten one-time backup codes, shown once, for
+losing the device. The secret is stored encrypted with the same scheme as
+the Xen Orchestra token (`app/crypto.py`); backup codes are stored hashed,
+never plaintext. Turning it off requires the current password, the same bar
+as changing it. A correct password with 2FA on does not create a session —
+it hands the browser a short-lived signed cookie good for 5 minutes, which
+only unlocks `/login/2fa`, not the app itself.
 
 ---
 

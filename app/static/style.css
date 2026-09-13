@@ -1257,3 +1257,32 @@ input[type="date"] {
   .docs-layout { flex-direction: column; }
   .docs-nav { position: static; width: 100%; }
 }
+
+/* Two-factor setup: the QR code sits on its own white plate regardless of
+   theme, since the SVG's modules are drawn in fixed black on the assumption
+   of a light background — the same reason a phone camera needs contrast, an
+   authenticator app's scanner does too. */
+.qr-code {
+  display: inline-block;
+  padding: 1rem;
+  background: #fff;
+  border-radius: 6px;
+  margin: 0.5rem 0;
+}
+.qr-code svg { display: block; }
+
+.totp-secret code {
+  font-size: 1rem;
+  letter-spacing: 0.05em;
+  word-break: break-all;
+}
+
+.backup-codes {
+  list-style: none;
+  margin: 0.75rem 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.4rem 1rem;
+}
+.backup-codes code { font-size: 1rem; }

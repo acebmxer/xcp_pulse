@@ -24,12 +24,15 @@ app/routes/users.py.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import time
 import uuid
 from dataclasses import dataclass
 
+from app.crypto import decrypt, encrypt
 from app.security import hash_password, verify_password
+from app.totp import generate_backup_codes, generate_secret, hash_backup_code, verify_code
 
 ROLES = ("admin", "operator", "viewer")
 
@@ -56,6 +59,9 @@ class User:
     role: str
     disabled: bool
     created_at: float
+    totp_secret_encrypted: str | None
+    totp_enabled: bool
+    totp_backup_codes: list[str]  # hashed, never plaintext — see db.py migration 7
 
 
 def _row_to_user(row: sqlite3.Row) -> User:
@@ -66,6 +72,9 @@ def _row_to_user(row: sqlite3.Row) -> User:
         role=row["role"],
         disabled=bool(row["disabled"]),
         created_at=row["created_at"],
+        totp_secret_encrypted=row["totp_secret_encrypted"],
+        totp_enabled=bool(row["totp_enabled"]),
+        totp_backup_codes=json.loads(row["totp_backup_codes"]),
     )
 
 
@@ -123,6 +132,9 @@ def create_user(conn: sqlite3.Connection, username: str, password: str, role: st
         role=role,
         disabled=False,
         created_at=time.time(),
+        totp_secret_encrypted=None,
+        totp_enabled=False,
+        totp_backup_codes=[],
     )
     conn.execute(
         "INSERT INTO users (id, username, password_hash, role, disabled, created_at) "
@@ -191,6 +203,94 @@ def authenticate(conn: sqlite3.Connection, username: str, password: str) -> User
     if user.disabled:
         raise AccountDisabled()
     return user
+
+
+def begin_totp_enrollment(conn: sqlite3.Connection, user_id: str, secret_key: str) -> str:
+    """Generate a fresh TOTP secret, store it encrypted, and return the plain
+    secret for the setup page to build a QR code and provisioning URI from.
+
+    Does not turn totp_enabled on — see confirm_totp_enrollment. Safe to call
+    again for the same user (the setup page does, every time it's loaded):
+    each call overwrites whatever secret was there, so an abandoned
+    enrollment simply gets discarded rather than leaving a stale secret that
+    could confuse a later attempt.
+    """
+    secret = generate_secret()
+    conn.execute(
+        "UPDATE users SET totp_secret_encrypted = ? WHERE id = ?",
+        (encrypt(secret, secret_key), user_id),
+    )
+    conn.commit()
+    return secret
+
+
+def confirm_totp_enrollment(
+    conn: sqlite3.Connection, user_id: str, code: str, secret_key: str
+) -> list[str] | None:
+    """Turn TOTP on for a user, once they prove they can generate a matching
+    code from what the QR code gave them. Returns the plaintext backup
+    codes (shown to the user exactly once) on success, None on a bad code.
+    """
+    user = get_user_by_id(conn, user_id)
+    if user is None or not user.totp_secret_encrypted:
+        return None
+    secret = decrypt(user.totp_secret_encrypted, secret_key)
+    if not verify_code(secret, code):
+        return None
+
+    plain_codes = generate_backup_codes()
+    hashed_codes = [hash_backup_code(c) for c in plain_codes]
+    conn.execute(
+        "UPDATE users SET totp_enabled = 1, totp_backup_codes = ? WHERE id = ?",
+        (json.dumps(hashed_codes), user_id),
+    )
+    conn.commit()
+    return plain_codes
+
+
+def disable_totp(conn: sqlite3.Connection, user_id: str) -> None:
+    """Turn TOTP off and forget the secret and any remaining backup codes.
+
+    Clearing the secret (rather than just flipping totp_enabled to 0) means
+    re-enrolling always starts from a fresh secret and a fresh QR code —
+    there is never a reason to resurrect an old one.
+    """
+    conn.execute(
+        "UPDATE users SET totp_enabled = 0, totp_secret_encrypted = NULL, "
+        "totp_backup_codes = '[]' WHERE id = ?",
+        (user_id,),
+    )
+    conn.commit()
+
+
+def verify_totp_or_backup_code(
+    conn: sqlite3.Connection, user: User, code: str, secret_key: str
+) -> bool:
+    """Check a login's second-factor code: a live 6-digit TOTP code, or one
+    of the user's remaining backup codes.
+
+    A backup code is consumed on use — removed from the stored list so it
+    cannot be replayed — which is why this takes and needs to write back to
+    the same connection a login is already using, rather than being a pure
+    read.
+    """
+    if not user.totp_secret_encrypted:
+        return False
+    secret = decrypt(user.totp_secret_encrypted, secret_key)
+    if verify_code(secret, code):
+        return True
+
+    hashed = hash_backup_code(code)
+    if hashed in user.totp_backup_codes:
+        remaining = [c for c in user.totp_backup_codes if c != hashed]
+        conn.execute(
+            "UPDATE users SET totp_backup_codes = ? WHERE id = ?",
+            (json.dumps(remaining), user.id),
+        )
+        conn.commit()
+        return True
+
+    return False
 
 
 def _guard_not_last_admin(

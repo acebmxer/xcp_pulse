@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Set up two-factor authentication — XCP Pulse{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Set up two-factor authentication</h1>
+
+{% if error %}
+<p class="alert alert-error" role="alert">{{ error }}</p>
+{% endif %}
+
+<div class="card">
+  <p>1. Scan this QR code with an authenticator app (Google Authenticator, Authy,
+  1Password, etc).</p>
+
+  <div class="qr-code">{{ qr_svg|safe }}</div>
+
+  <p>Can't scan it? Enter this code manually instead:</p>
+  <p class="totp-secret"><code>{{ secret }}</code></p>
+
+  <p>2. Enter the 6-digit code the app is now showing, to confirm it's set up
+  correctly.</p>
+
+  <form method="post" action="/account/totp/setup" class="stack">
+    <label for="code">Code</label>
+    <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code"
+           required autofocus spellcheck="false" maxlength="10">
+    <button type="submit" class="btn btn-primary">Confirm and turn on</button>
+  </form>
+</div>
+{% endblock %}

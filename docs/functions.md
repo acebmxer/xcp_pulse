@@ -99,10 +99,12 @@ instead — one dedicated thread, no contention — and does not need it.
 | `purge_expired_sessions` | `(conn) -> int` | Deletes expired sessions | `main.lifespan` | v0.1.0 |
 | `purge_old_login_attempts` | `(conn, window_minutes: int) -> int` | Drops attempts older than the window | `main.lifespan` | v0.1.0 |
 | `record_login_failure` | `(conn, ip: str) -> None` | Records a failed login | `routes/auth.login_submit` | v0.1.0 |
+| `sign_pending_2fa` | `(username: str, secret_key: str) -> str` | Wraps a username and issue time in a signed value, for the gap between the password step and the TOTP code step | `routes/auth.login_submit` | unreleased |
 | `sign_session_id` | `(session_id: str, secret_key: str) -> str` | Wraps a session id in a signed value | `routes/auth` | v0.1.0 |
 | `touch_session` | `(conn, session_id: str, session_hours: int) -> None` | Slides the expiry forward on use | `security.current_user` | v0.1.0 |
 | `unsign_session_id` | `(cookie_value: str, secret_key: str) -> str \| None` | Recovers an id, None if forged | `security.current_user`, `routes/auth.logout` | v0.1.0 |
 | `verify_password` | `(plain: str, stored_hash: str) -> bool` | Checks a password against its hash | `routes/auth.login_submit` | v0.1.0 |
+| `verify_pending_2fa` | `(cookie_value: str, secret_key: str) -> str \| None` | Recovers the username, None if forged or the 5-minute window passed | `routes/auth.login_2fa_form`/`login_2fa_submit` | unreleased |
 
 `SESSION_COOKIE` is the cookie name. Sessions are stored server-side so logout
 genuinely invalidates rather than merely asking the browser to forget.
@@ -112,14 +114,18 @@ genuinely invalidates rather than merely asking the browser to forget.
 | Function | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
 | `authenticate` | `(conn, username: str, password: str) -> User \| None` | Verifies a password against a constant-time-ish lookup; None if wrong, missing, or disabled | `routes/auth.login_submit` | unreleased |
+| `begin_totp_enrollment` | `(conn, user_id: str, secret_key: str) -> str` | Generates and stores an encrypted TOTP secret, returns it plain for the QR code; does not enable 2FA yet | `routes/users.account_totp_setup`/`account_totp_confirm` | unreleased |
 | `bootstrap_admin` | `(conn, admin_user: str, admin_password_hash: str) -> None` | Creates the first admin from the environment, only if `users` is empty | `main.lifespan` | unreleased |
+| `confirm_totp_enrollment` | `(conn, user_id: str, code: str, secret_key: str) -> list[str] \| None` | Verifies the setup code, turns 2FA on, returns fresh plaintext backup codes | `routes/users.account_totp_confirm` | unreleased |
 | `create_user` | `(conn, username: str, password: str, role: str) -> User` | Adds an account | `routes/users.users_create` | unreleased |
+| `disable_totp` | `(conn, user_id: str) -> None` | Turns 2FA off and forgets the secret and backup codes | `routes/users.account_totp_disable` | unreleased |
 | `get_user` | `(conn, username: str) -> User \| None` | Reads one account by username | `routes/auth`, `dependencies.operator_required`/`admin_required`/`current_role`, `routes/users` | unreleased |
 | `get_user_by_id` | `(conn, user_id: str) -> User \| None` | Reads one account by id | `routes/users` | unreleased |
 | `list_users` | `(conn) -> list[User]` | Every account, oldest first | `routes/users.users_page` | unreleased |
 | `set_disabled` | `(conn, user_id: str, disabled: bool) -> None` | Disables or re-enables an account; refuses to disable the last active admin | `routes/users` | unreleased |
 | `set_password` | `(conn, user_id: str, new_password: str) -> None` | Sets a password directly — used for both self-service change and an admin's reset | `routes/users` | unreleased |
 | `set_role` | `(conn, user_id: str, role: str) -> None` | Changes an account's role; refuses to demote the last active admin | `routes/users.users_set_role` | unreleased |
+| `verify_totp_or_backup_code` | `(conn, user: User, code: str, secret_key: str) -> bool` | Checks a login's second factor: a live TOTP code, or a backup code (consumed on use) | `routes/auth.login_2fa_submit` | unreleased |
 
 `ROLES` is `("admin", "operator", "viewer")`, enforced both by a CHECK
 constraint in the `users` table and by the `*_required` dependencies in
@@ -179,12 +185,28 @@ This is XCP Pulse's own diagnostics, not the XCP-ng logs it collects.
 
 | Function | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
-| `decrypt` | `(stored: str, secret_key: str) -> str` | Recovers a stored secret; raises on a wrong key | `xo_connection.build_client` | v0.2.0 |
-| `encrypt` | `(plaintext: str, secret_key: str) -> str` | Encrypts a secret for storage, base64 out | `xo_connection.save_connection` | v0.2.0 |
+| `decrypt` | `(stored: str, secret_key: str) -> str` | Recovers a stored secret; raises on a wrong key | `xo_connection.build_client`, `users.confirm_totp_enrollment`/`verify_totp_or_backup_code` | v0.2.0 |
+| `encrypt` | `(plaintext: str, secret_key: str) -> str` | Encrypts a secret for storage, base64 out | `xo_connection.save_connection`, `users.begin_totp_enrollment` | v0.2.0 |
 
 The key is derived from the application secret key, so a copy of the database
 alone does not decrypt. `DecryptionError` means the key changed or the value was
 altered — both need the token entering again.
+
+## `app/totp.py` — optional TOTP two-factor
+
+| Function | Signature | Does | Used by | Since |
+| --- | --- | --- | --- | --- |
+| `current_code` | `(secret_b32: str, *, at: float \| None = None) -> str` | The 6-digit code valid right now | tests only | unreleased |
+| `generate_backup_codes` | `() -> list[str]` | Ten one-time recovery codes, plaintext | `users.confirm_totp_enrollment` | unreleased |
+| `generate_secret` | `() -> str` | A new base32 TOTP secret | `users.begin_totp_enrollment` | unreleased |
+| `hash_backup_code` | `(code: str) -> str` | Salted-by-construction hash of a backup code, for storage and comparison | `users` | unreleased |
+| `provisioning_uri` | `(secret_b32: str, *, username: str, issuer: str = "XCP Pulse") -> str` | The `otpauth://` URI an authenticator app reads | `routes/users.account_totp_setup`/`account_totp_confirm` | unreleased |
+| `qr_svg` | `(text: str) -> str` | Renders a QR code as standalone `<svg>` markup, via `segno` | `routes/users.account_totp_setup`/`account_totp_confirm` | unreleased |
+| `verify_code` | `(secret_b32: str, code: str, *, at: float \| None = None) -> bool` | Checks a typed code, allowing one 30-second step of clock drift either way | `users.confirm_totp_enrollment`/`verify_totp_or_backup_code` | unreleased |
+
+`BACKUP_CODE_COUNT` is 10. The secret is stored encrypted (`app/crypto.py`,
+same scheme as the Xen Orchestra token) on the `users` row; backup codes are
+stored hashed, never plaintext — see `db.py` migration 7.
 
 ## `app/xo_client.py` — Xen Orchestra REST API
 
@@ -726,7 +748,9 @@ for why this does not use `app/jobs.py`.
 | `dashboard` | `(request, username) -> Response` | `GET /` — the inventory the last refresh stored, plus findings, redaction, storage and recent-job panels | router | v0.1.0 |
 | `healthz` | `() -> dict[str, str]` | `GET /healthz` — unauthenticated liveness | router, compose healthcheck | v0.1.0 |
 | `login_form` | `(request, next: str = "/") -> Response` | `GET /login` | router | v0.1.0 |
-| `login_submit` | `(request, username, password, next) -> Response` | `POST /login` | router | v0.1.0 |
+| `login_submit` | `(request, username, password, next) -> Response` | `POST /login` — if the account has TOTP on, redirects to `/login/2fa` instead of creating a session | router | v0.1.0 |
+| `login_2fa_form` | `(request, next: str = "/") -> Response` | `GET /login/2fa` — the verification-code form, reached only after a correct password | router | unreleased |
+| `login_2fa_submit` | `(request, code, next) -> Response` | `POST /login/2fa` — checks the TOTP or backup code and creates the session | router | unreleased |
 | `job_status` | `(job_id, request, username) -> Response` | `GET /jobs/{id}/status` — one job's state as JSON | router | v0.4.0 |
 | `jobs_page` | `(request, username) -> Response` | `GET /jobs` — history, progress and starting a refresh | router | v0.4.0 |
 | `logout` | `(request) -> Response` | `POST /logout` | router | v0.1.0 |
@@ -767,8 +791,13 @@ for why this does not use `app/jobs.py`.
 | `users_disable` | `(request, user_id, username) -> Response` | `POST /settings/users/{id}/disable` — disables an account (admin-only) | router | unreleased |
 | `users_enable` | `(request, user_id, username) -> Response` | `POST /settings/users/{id}/enable` — re-enables an account (admin-only) | router | unreleased |
 | `users_reset_password` | `(request, user_id, username, new_password) -> Response` | `POST /settings/users/{id}/reset-password` — an admin sets someone else's password, no current-password check | router | unreleased |
+| `users_disable_totp` | `(request, user_id, username) -> Response` | `POST /settings/users/{id}/disable-totp` — an admin turns off someone else's 2FA, the recovery path for a lost device and lost backup codes | router | unreleased |
 | `account_password_page` | `(request, username) -> Response` | `GET /account/password` — change-your-own-password form | router | unreleased |
 | `account_password_change` | `(request, username, current_password, new_password) -> Response` | `POST /account/password` — self-service password change, requires the current password | router | unreleased |
+| `account_totp_page` | `(request, username) -> Response` | `GET /account/totp` — on/off status, backup codes remaining | router | unreleased |
+| `account_totp_setup` | `(request, username) -> Response` | `GET /account/totp/setup` — generates a fresh secret and shows its QR code | router | unreleased |
+| `account_totp_confirm` | `(request, username, code) -> Response` | `POST /account/totp/setup` — verifies the code, turns 2FA on, shows the backup codes once | router | unreleased |
+| `account_totp_disable` | `(request, username, current_password) -> Response` | `POST /account/totp/disable` — turns 2FA off, requires the current password | router | unreleased |
 | `activity_page` | `(request, username) -> Response` | `GET /activity` — the activity log (admin and operator) | router | unreleased |
 | `update_page` | `(request, username) -> Response` | `GET /update` — version, last check, and available/applied state (admin and operator) | router | unreleased |
 | `check_now` | `(request, username) -> Response` | `POST /update/check` — forces an immediate GHCR check | router | unreleased |

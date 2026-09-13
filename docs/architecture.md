@@ -78,6 +78,7 @@ streaming download.
 | `app/docs_render.py` | Renders the in-app User manual (`/help`): `docs/user-guide/` (one page per feature area, collapsible in the sidebar), plus Installation, Configuration and Architecture. |
 | `app/tls.py` | Validates an uploaded TLS certificate/key pair and signals nginx to reload it (built-in HTTPS). |
 | `app/security.py` | Password hashing, sessions, login throttling. |
+| `app/totp.py` | Optional TOTP two-factor: code generation/verification, backup codes, and the QR code rendered for enrollment. |
 | `app/dependencies.py` | Shared route plumbing: the template environment, `login_required`. |
 | `app/routes/` | HTTP endpoints, one module per area. |
 | `app/main.py` | Builds the app and wires it together. |
@@ -214,6 +215,24 @@ expire on their own.
 
 Failed logins are recorded per address and counted inside a window. Being locked
 out cannot be bypassed by then supplying the correct password.
+
+Each account can turn on TOTP two-factor for itself, from `/account/totp` —
+an instance-wide switch would be wrong here, since it's the user's own
+credential to opt into, not an operational setting. The secret is generated
+and shown as a QR code (rendered server-side, `app/totp.py`) and only takes
+effect once the user proves they can generate a matching code, at which
+point ten one-time backup codes are issued. When a user has 2FA on, a correct
+password no longer creates a session by itself: `login_submit` instead sets a
+short-lived signed cookie, scoped to `/login/2fa` and valid for 5 minutes,
+that proves only "the password step just succeeded" — the real session is
+created only after `/login/2fa` accepts a live TOTP code or a backup code.
+The secret is encrypted at rest the same way as the Xen Orchestra token
+(`app/crypto.py`, AES-GCM derived from the application secret key); backup
+codes are stored as salted hashes and a used one is removed from the stored
+list so it cannot be replayed. An admin can turn off another user's 2FA with
+no code or password check — the recovery path when someone loses both their
+device and their backup codes, the same role a password reset already plays
+for a lost password.
 
 Every state-changing request is recorded in an `activity_log` table —
 logins, settings changes, jobs started or deleted, user management — readable

@@ -38,6 +38,27 @@ Any signed-in user, of any role, can change their own password from the
 **account menu** (press your username in the top bar), which does require the
 current password.
 
+## Two-factor authentication
+
+Any signed-in user can turn on TOTP two-factor for their own account from
+**2FA** in the top bar. Once it's on, signing in needs a code from an
+authenticator app (Google Authenticator, Authy, 1Password, etc.) as well as
+your password — this is per-account, not something an admin turns on for
+everyone.
+
+1. Open **2FA**, then **Set up two-factor authentication**.
+2. Scan the QR code with your authenticator app, or type the code shown
+   beneath it in by hand if you can't scan.
+3. Enter the 6-digit code the app is now showing, to confirm it's working.
+4. Save the ten backup codes shown next, somewhere safe — each works once, in
+   place of an authenticator code, if you lose the device. They are shown
+   only this once.
+
+To turn it off, open **2FA** and enter your current password. If someone
+loses both their device and their backup codes, an admin can turn off their
+two-factor authentication for them from the Users page — no code or password
+needed, the same recovery role a password reset plays.
+
 ## The activity log
 
 Admin and operator accounts can open **Activity** from the top bar to see who
