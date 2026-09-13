@@ -17,6 +17,7 @@ from fastapi.templating import Jinja2Templates
 from app import __version__
 from app.artifacts import artifact_path, get_artifact
 from app.security import current_user
+from app.users import get_user
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 STATIC_DIR = Path(__file__).parent / "static"
@@ -145,6 +146,65 @@ def login_required(request: Request) -> str:
     if username is None:
         raise RedirectToLogin(request.url.path)
     return username
+
+
+class Forbidden(Exception):
+    """Raised by operator_required / admin_required when the signed-in user's
+    role isn't high enough. Turned into a 403 by the exception handler in
+    main.py — a redirect (as login_required uses) would be wrong here, since
+    the caller is authenticated, just not permitted.
+    """
+
+    def __init__(self, required_role: str) -> None:
+        self.required_role = required_role
+        super().__init__(f"requires {required_role} role")
+
+
+def operator_required(request: Request) -> str:
+    """Return the username if it belongs to an operator or admin.
+
+    Everything an operator can do, an admin can also do — see the role
+    ordering in app/users.py's module docstring — so this checks "at least
+    operator", not "exactly operator".
+    """
+    username = login_required(request)
+    user = get_user(request.app.state.db, username)
+    if user is None or user.role not in ("admin", "operator"):
+        raise Forbidden("operator")
+    return username
+
+
+def admin_required(request: Request) -> str:
+    """Return the username if it belongs to an admin."""
+    username = login_required(request)
+    user = get_user(request.app.state.db, username)
+    if user is None or user.role != "admin":
+        raise Forbidden("admin")
+    return username
+
+
+def current_role(request: Request) -> str | None:
+    """The signed-in user's role, or None if not signed in.
+
+    For templates deciding whether to render an action button at all — a
+    button that 403s when clicked is worse than no button, per the plan this
+    followed. Returns None rather than raising, unlike the *_required
+    dependencies, because an anonymous page (like /login itself) still needs
+    to ask "is anyone signed in" without being redirected for asking.
+    """
+    username = current_user(request)
+    if username is None:
+        return None
+    user = get_user(request.app.state.db, username)
+    return user.role if user is not None else None
+
+
+# Lets base.html decide which nav links to show without every route handler
+# having to add "role" to its own template context — Jinja2Templates already
+# puts `request` in context for us, so a global function taking it is enough.
+# Registered here, after the def, rather than beside the other globals near
+# the top of this module, because current_role is defined below them.
+templates.env.globals["current_role"] = current_role
 
 
 def wake_worker(request: Request) -> None:

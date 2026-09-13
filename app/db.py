@@ -121,6 +121,48 @@ _MIGRATIONS: list[str] = [
         disabled_at REAL NOT NULL
     );
     """,
+    # 4 -> 5: multiple users, roles, and the activity log.
+    #
+    # Before this, "who is logged in" was a single username/password-hash pair
+    # read from the environment (XCP_PULSE_ADMIN_USER /
+    # XCP_PULSE_ADMIN_PASSWORD_HASH) and sessions.username was never checked
+    # against anything but that pair. Those two variables still work, but only
+    # as the seed for the first admin row (see app/users.py) — the environment
+    # is no longer where accounts live.
+    #
+    # role is checked in code (app/dependencies.py), not just here, but the
+    # CHECK constraint stops a bad value ever reaching the table regardless of
+    # which code path wrote it.
+    #
+    # sessions.username has no foreign key to this table (same reasoning as the
+    # existing table: it is a bare string already). A disabled or deleted
+    # user's old sessions are rejected by checking users at lookup time
+    # (get_session_user), not by a constraint here.
+    """
+    CREATE TABLE users (
+        id              TEXT PRIMARY KEY,
+        username        TEXT NOT NULL UNIQUE,
+        password_hash   TEXT NOT NULL,
+        role            TEXT NOT NULL CHECK (role IN ('admin', 'operator', 'viewer')),
+        disabled        INTEGER NOT NULL DEFAULT 0,
+        created_at      REAL NOT NULL
+    );
+
+    -- One row per action worth being able to answer "who did this, and when"
+    -- about later: login/logout, settings changed, a job run, an artifact
+    -- deleted, a user added or disabled. username is a bare string for the
+    -- same reason sessions.username is: the record must survive the account
+    -- being deleted later.
+    CREATE TABLE activity_log (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        username    TEXT NOT NULL,
+        action      TEXT NOT NULL,
+        detail      TEXT NOT NULL DEFAULT '',
+        ip          TEXT,
+        created_at  REAL NOT NULL
+    );
+    CREATE INDEX idx_activity_log_created ON activity_log (created_at DESC);
+    """,
 ]
 
 

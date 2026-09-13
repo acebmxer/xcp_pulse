@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Not permitted — XCP Pulse{% endblock %}
+{% block main_class %}wrap wrap-centred{% endblock %}
+
+{% block content %}
+<div class="card card-login">
+  <h1>Not permitted</h1>
+  <p class="sub">This page needs the {{ required_role }} role. Ask an admin if you need access.</p>
+</div>
+{% endblock %}

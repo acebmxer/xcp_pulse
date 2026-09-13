@@ -155,8 +155,8 @@ you are most likely to change:
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `XCP_PULSE_ADMIN_USER` | `admin` | Login username |
-| `XCP_PULSE_ADMIN_PASSWORD_HASH` | *(none)* | Argon2id hash; required |
+| `XCP_PULSE_ADMIN_USER` | `admin` | Username for the first admin account, created on first start |
+| `XCP_PULSE_ADMIN_PASSWORD_HASH` | *(none)* | Argon2id hash for that first account; required |
 | `XCP_PULSE_ENABLE_HTTPS` | `false` | Serve HTTPS with a built-in nginx, no reverse proxy needed |
 | `XCP_PULSE_HTTPS` | `false` | Set true when served over HTTPS by your *own* reverse proxy |
 | `XCP_PULSE_SESSION_HOURS` | `12` | Session lifetime |

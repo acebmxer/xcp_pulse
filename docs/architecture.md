@@ -170,17 +170,33 @@ The IPv6 pattern is written as whole-address alternatives rather than "a run of
 hex and colons", because the looser form matched the `12:30:45` timestamp that
 prefixes nearly every syslog line.
 
-## Authentication
+## Authentication and authorization
 
-A single admin user, whose Argon2id password hash comes from the environment.
+Accounts are rows in a `users` table, each with an Argon2id password hash and
+one of three roles: **admin**, **operator**, or **viewer**. The only role
+distinction enforced in code is the `*_required` FastAPI dependency a route
+declares (`login_required`, `operator_required`, `admin_required`) — there is
+no separate permissions table, since three fixed, strictly nested tiers don't
+need one. The first admin account is seeded from
+`XCP_PULSE_ADMIN_USER`/`XCP_PULSE_ADMIN_PASSWORD_HASH` on first start, once,
+when the `users` table is still empty; every account after that is created
+from the Users page. Disabling or demoting the last active admin is refused
+in `app/users.py`, so the app can never end up with no way to manage it.
 
 Sessions are **rows in SQLite** referenced by a signed cookie. The signature
 stops a client forging a session id; the row is what makes logout genuinely
 invalidate a session rather than merely asking the browser to forget it. The
-expiry slides forward on use.
+expiry slides forward on use. A session is also checked against the `users`
+table on every request, not only at login, so disabling an account
+invalidates its live sessions immediately rather than waiting for them to
+expire on their own.
 
 Failed logins are recorded per address and counted inside a window. Being locked
 out cannot be bypassed by then supplying the correct password.
+
+Every state-changing request is recorded in an `activity_log` table —
+logins, settings changes, jobs started or deleted, user management — readable
+from the in-app Activity page by admin and operator accounts.
 
 ## Built-in HTTPS
 

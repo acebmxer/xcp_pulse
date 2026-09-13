@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, Response
 
+from app.activity import log_activity
 from app.dependencies import redirect, templates
 from app.security import (
     SESSION_COOKIE,
@@ -17,8 +18,8 @@ from app.security import (
     record_login_failure,
     sign_session_id,
     unsign_session_id,
-    verify_password,
 )
+from app.users import AccountDisabled, authenticate
 
 router = APIRouter()
 
@@ -69,10 +70,23 @@ def login_submit(
             status_code=429,
         )
 
-    # Verify the password even when the username is wrong, so a bad username
-    # and a bad password take the same time and cannot be told apart.
-    password_ok = verify_password(password, settings.admin_password_hash)
-    if username != settings.admin_user or not password_ok:
+    # authenticate() verifies the password even when the username doesn't
+    # exist, so a bad username and a bad password take the same time and
+    # cannot be told apart. A disabled account with the *correct* password
+    # raises AccountDisabled instead — that case alone gets a specific
+    # message, since only someone who already knows the password learns
+    # anything from it.
+    try:
+        user = authenticate(conn, username, password)
+    except AccountDisabled:
+        record_login_failure(conn, ip)
+        return templates.TemplateResponse(
+            request,
+            "login.html",
+            {"error": "This account has been disabled.", "next_url": next},
+            status_code=401,
+        )
+    if user is None:
         record_login_failure(conn, ip)
         return templates.TemplateResponse(
             request,
@@ -82,7 +96,8 @@ def login_submit(
         )
 
     clear_login_failures(conn, ip)
-    session_id = create_session(conn, username, settings.session_hours)
+    session_id = create_session(conn, user.username, settings.session_hours)
+    log_activity(conn, user.username, "login", ip=ip)
 
     # Only ever redirect within this site: an attacker-supplied ?next=https://…
     # would otherwise turn the login page into an open redirect.
@@ -98,7 +113,11 @@ def logout(request: Request) -> Response:
     if cookie:
         session_id = unsign_session_id(cookie, request.app.state.settings.secret_key)
         if session_id:
-            destroy_session(request.app.state.db, session_id)
+            conn = request.app.state.db
+            username = current_user(request)
+            destroy_session(conn, session_id)
+            if username is not None:
+                log_activity(conn, username, "logout", ip=client_ip(request))
 
     response = redirect("/login")
     response.delete_cookie(SESSION_COOKIE, path="/")

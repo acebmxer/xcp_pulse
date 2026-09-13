@@ -5,13 +5,13 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import __version__
 from app.config import Settings, load_settings
 from app.db import init_db
-from app.dependencies import STATIC_DIR, RedirectToLogin
+from app.dependencies import STATIC_DIR, Forbidden, RedirectToLogin, templates
 
 # Importing a job module is what registers its kind with the runner, which
 # deliberately holds no list of its own. Anything defining a job kind has to be
@@ -31,7 +31,9 @@ from app.routes import findings as findings_routes
 from app.routes import jobs as job_routes
 from app.routes import settings as settings_routes
 from app.routes import support_package as support_package_routes
-from app.security import purge_expired_sessions, purge_old_login_attempts
+from app.routes import users as users_routes
+from app.security import current_user, purge_expired_sessions, purge_old_login_attempts
+from app.users import bootstrap_admin
 
 
 @asynccontextmanager
@@ -40,6 +42,10 @@ async def lifespan(app: FastAPI):
     log = configure_logging(settings.log_level)
 
     app.state.db = init_db(settings.db_path)
+
+    # Creates the first admin account from the environment, but only if the
+    # users table is still empty — see app/users.py:bootstrap_admin.
+    bootstrap_admin(app.state.db, settings.admin_user, settings.admin_password_hash)
 
     # Rows from a previous run are worthless: expired sessions cannot be used
     # and stale failures would keep an address locked out past its window.
@@ -90,6 +96,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def _redirect_to_login(request: Request, exc: RedirectToLogin) -> RedirectResponse:
         return RedirectResponse(url=f"/login?next={exc.next_url}", status_code=303)
 
+    @app.exception_handler(Forbidden)
+    async def _forbidden(request: Request, exc: Forbidden) -> HTMLResponse:
+        # Reached only once already authenticated (operator_required /
+        # admin_required both call login_required first), so current_user()
+        # here is just re-reading the session already proven valid — this is
+        # what lets the topbar still render on the 403 page, the same as any
+        # other page a signed-in user can land on.
+        return templates.TemplateResponse(
+            request,
+            "403.html",
+            {"required_role": exc.required_role, "username": current_user(request)},
+            status_code=403,
+        )
+
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     app.include_router(health.router)
     app.include_router(auth.router)
@@ -101,6 +121,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(findings_routes.router)
     app.include_router(support_package_routes.router)
     app.include_router(docs.router)
+    app.include_router(users_routes.router)
     return app
 
 

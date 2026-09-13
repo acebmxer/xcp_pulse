@@ -19,8 +19,16 @@ import logging
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, Response
 
+from app.activity import log_activity
 from app.artifacts import get_artifact, list_for_job
-from app.dependencies import login_required, redirect, serve_artifact, templates, wake_worker
+from app.dependencies import (
+    login_required,
+    operator_required,
+    redirect,
+    serve_artifact,
+    templates,
+    wake_worker,
+)
 from app.findings import DEFAULT_WINDOW_DAYS, SEVERITIES, correlate_reports
 from app.job_collect import KIND as COLLECT_KIND
 from app.job_findings import FINDINGS_ARTIFACT, FINDINGS_MARKDOWN, report_from_job
@@ -29,6 +37,7 @@ from app.job_log_findings import KIND as LOG_FINDINGS_KIND
 from app.job_log_findings import LOG_FINDINGS_ARTIFACT
 from app.job_log_findings import report_from_job as log_report_from_job
 from app.jobs import enqueue, has_active, latest_job, latest_successful, list_jobs
+from app.security import client_ip
 from app.xo_connection import get_connection
 
 router = APIRouter()
@@ -98,7 +107,7 @@ def findings_page(request: Request, username: str = Depends(login_required)) -> 
 def start_log_findings(
     request: Request,
     artifact_id: str = Form(...),
-    username: str = Depends(login_required),
+    username: str = Depends(operator_required),
     date_preset: str = Form(default=""),
     date_start: str = Form(default=""),
     date_end: str = Form(default=""),
@@ -122,13 +131,14 @@ def start_log_findings(
     )
     wake_worker(request)
     log.info("queued %s job %s for %s", LOG_FINDINGS_KIND, job.id, username)
+    log_activity(db, username, "findings.from_logs", detail=artifact_id, ip=client_ip(request))
     return redirect("/findings?notice=Reading+findings+from+the+stored+logs.")
 
 
 @router.post("/findings")
 def start_findings(
     request: Request,
-    username: str = Depends(login_required),
+    username: str = Depends(operator_required),
     date_preset: str = Form(default=""),
     date_start: str = Form(default=""),
     date_end: str = Form(default=""),
@@ -155,6 +165,7 @@ def start_findings(
     )
     wake_worker(request)
     log.info("queued %s job %s by %s", FINDINGS_KIND, job.id, username)
+    log_activity(db, username, "findings.start", ip=client_ip(request))
     return redirect("/findings?notice=Reading+findings+from+Xen+Orchestra.")
 
 
@@ -165,7 +176,9 @@ def download_findings(
     username: str = Depends(login_required),
 ) -> Response:
     """Serve the stored JSON or Markdown report as a download."""
-    artifact = get_artifact(request.app.state.db, artifact_id)
+    db = request.app.state.db
+    artifact = get_artifact(db, artifact_id)
     if artifact is not None:
         log.info("%s downloaded %s", username, artifact.name)
+        log_activity(db, username, "artifact.download", detail=artifact.name, ip=client_ip(request))
     return serve_artifact(request, artifact_id, on_error="/findings")

@@ -13,15 +13,23 @@
     <a class="brand" href="/">
       <span class="brand-mark">◈</span> XCP Pulse
     </a>
+    {% set role = current_role(request) %}
     <nav class="topnav">
       <a class="navlink" href="/collect">Collect</a>
       <a class="navlink" href="/findings">Findings</a>
       <a class="navlink" href="/jobs">Jobs</a>
       <a class="navlink" href="/redaction">Redaction</a>
       <a class="navlink" href="/support-package">Support package</a>
+      {% if role in ("admin", "operator") %}
+      <a class="navlink" href="/activity">Activity</a>
+      {% endif %}
       <a class="navlink" href="/help">User manual</a>
+      {% if role == "admin" %}
       <a class="navlink" href="/settings">Settings</a>
-      <span class="who">{{ username }}</span>
+      {% endif %}
+      <span class="who">
+        <a class="navlink" href="/account/password">{{ username }}</a>
+      </span>
       <form method="post" action="/logout" class="inline">
         <button type="submit" class="btn btn-quiet">Log out</button>
       </form>

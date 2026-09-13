@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block title %}Users — XCP Pulse{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Users</h1>
+
+{% if error %}
+<p class="alert alert-error" role="alert">{{ error }}</p>
+{% endif %}
+
+{% if notice %}
+<p class="alert" role="status">{{ notice }}</p>
+{% endif %}
+
+{% if request.query_params.get('created') %}
+<p class="alert" role="status">User created.</p>
+{% endif %}
+
+{% if request.query_params.get('updated') %}
+<p class="alert" role="status">User updated.</p>
+{% endif %}
+
+{% if request.query_params.get('reset') %}
+<p class="alert" role="status">Password reset.</p>
+{% endif %}
+
+<div class="card">
+  <ul class="userlist">
+    {% for user in users %}
+    <li class="user-row">
+      <div class="user-head">
+        <span class="user-name">{{ user.username }}</span>
+
+        <form method="post" action="/settings/users/{{ user.id }}/role" class="inline">
+          <select name="role" onchange="this.form.submit()">
+            {% for role in roles %}
+            <option value="{{ role }}" {{ "selected" if role == user.role }}>{{ role }}</option>
+            {% endfor %}
+          </select>
+        </form>
+
+        <span class="user-status {{ 'user-status-disabled' if user.disabled else 'user-status-active' }}">
+          {{ "disabled" if user.disabled else "active" }}
+        </span>
+
+        {% if user.disabled %}
+        <form method="post" action="/settings/users/{{ user.id }}/enable" class="inline">
+          <button type="submit" class="btn btn-quiet">Enable</button>
+        </form>
+        {% else %}
+        <form method="post" action="/settings/users/{{ user.id }}/disable" class="inline">
+          <button type="submit" class="btn btn-quiet">Disable</button>
+        </form>
+        {% endif %}
+      </div>
+
+      <form method="post" action="/settings/users/{{ user.id }}/reset-password" class="user-reset">
+        <input type="password" name="new_password" placeholder="New password"
+               autocomplete="new-password" required minlength="8">
+        <input type="password" name="confirm_password" placeholder="Confirm password"
+               autocomplete="new-password" required minlength="8">
+        <button type="submit" class="btn btn-quiet">Reset password</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+
+<div class="card">
+  <h2>Add a user</h2>
+  <form method="post" action="/settings/users" class="stack">
+    <label for="new_username">Username</label>
+    <input id="new_username" name="new_username" type="text" autocomplete="off" required>
+
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" autocomplete="new-password"
+           required minlength="8">
+
+    <label for="confirm_password">Confirm password</label>
+    <input id="confirm_password" name="confirm_password" type="password"
+           autocomplete="new-password" required minlength="8">
+
+    <label for="role">Role</label>
+    <select id="role" name="role">
+      {% for role in roles %}
+      <option value="{{ role }}">{{ role }}</option>
+      {% endfor %}
+    </select>
+
+    <button type="submit" class="btn btn-primary">Add user</button>
+  </form>
+</div>
+{% endblock %}

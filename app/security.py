@@ -68,7 +68,15 @@ def create_session(conn: sqlite3.Connection, username: str, session_hours: int) 
 
 
 def get_session_user(conn: sqlite3.Connection, session_id: str) -> str | None:
-    """Return the username for a live session, None if missing or expired."""
+    """Return the username for a live session, None if missing, expired, or
+    the account behind it no longer exists or has been disabled.
+
+    The account check is what makes disabling or deleting a user take effect
+    immediately rather than only on their next login: sessions.username has no
+    foreign key to users (same as before multiple accounts existed), so a
+    disabled user's existing cookie would otherwise keep working until it
+    expired on its own, up to XCP_PULSE_SESSION_HOURS later.
+    """
     row = conn.execute(
         "SELECT username, expires_at FROM sessions WHERE id = ?", (session_id,)
     ).fetchone()
@@ -77,6 +85,14 @@ def get_session_user(conn: sqlite3.Connection, session_id: str) -> str | None:
     if row["expires_at"] < time.time():
         destroy_session(conn, session_id)
         return None
+
+    user_row = conn.execute(
+        "SELECT disabled FROM users WHERE username = ?", (row["username"],)
+    ).fetchone()
+    if user_row is None or user_row["disabled"]:
+        destroy_session(conn, session_id)
+        return None
+
     return row["username"]
 
 

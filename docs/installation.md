@@ -66,6 +66,11 @@ docker compose up -d
 Open `http://<server>:8080` and sign in with `admin` and the password you
 chose. On the Docker host itself, <http://localhost:8080> works too.
 
+That account is an admin, and can add further accounts — operator or
+viewer, for people who don't need to touch settings — from Settings →
+Manage users. See
+[Users and roles](user-guide/users-and-roles.md) for what each role can do.
+
 ## Checking it is healthy
 
 ```bash

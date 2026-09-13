@@ -14,8 +14,10 @@ import logging
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, Response
 
-from app.dependencies import login_required, redirect, templates
+from app.activity import log_activity
+from app.dependencies import admin_required, login_required, redirect, templates
 from app.redact import RULES, enabled_rules, redact_text, set_enabled_rules
+from app.security import client_ip
 
 router = APIRouter()
 log = logging.getLogger("xcp_pulse.redaction")
@@ -76,18 +78,27 @@ def redaction_preview(
 @router.post("/redaction/rules")
 def redaction_rules_save(
     request: Request,
-    username: str = Depends(login_required),
+    username: str = Depends(admin_required),
     rule: list[str] = _RULE_FIELD,
 ) -> Response:
-    """Store which rules are on.
+    """Store which rules are on. Admin-only: this changes what every future
+    collection masks for every user, not a personal preference.
 
     An unticked checkbox posts nothing, so the form's whole meaning is in which
     names arrive — which is why this writes the entire set rather than toggling
     one rule.
     """
-    enabled = set_enabled_rules(request.app.state.db, rule)
+    conn = request.app.state.db
+    enabled = set_enabled_rules(conn, rule)
     off = [r.name for r in RULES if r.name not in enabled]
     log.info("Redaction rules saved; off: %s", ", ".join(off) or "none")
+    log_activity(
+        conn,
+        username,
+        "redaction.rules",
+        detail=f"off: {', '.join(off) or 'none'}",
+        ip=client_ip(request),
+    )
     return redirect("/redaction?saved=1")
 
 

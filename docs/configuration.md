@@ -11,9 +11,11 @@ Settings are read once at startup, so a change needs `docker compose up -d`.
 
 ### `XCP_PULSE_ADMIN_PASSWORD_HASH`
 
-An Argon2id hash of the admin password. No default — the app refuses to start
-without it, and refuses a value that is not an Argon2 hash, so a plaintext
-password pasted here is rejected rather than silently accepted.
+An Argon2id hash of the password for the **first** admin account, created the
+first time XCP Pulse starts with an empty database. No default — the app
+refuses to start without it, and refuses a value that is not an Argon2 hash,
+so a plaintext password pasted here is rejected rather than silently
+accepted.
 
 Generate one with:
 
@@ -21,11 +23,20 @@ Generate one with:
 docker compose run --rm xcp-pulse python -m app.hashpw
 ```
 
+Once that first account exists, this variable and `XCP_PULSE_ADMIN_USER`
+below are no longer read — accounts are managed from the **Users** page
+(Settings → Manage users, admin-only) instead. Changing this variable later
+has no effect on an existing installation; it only matters on a genuinely
+empty database, e.g. a fresh volume. See
+[Users and roles](user-guide/users-and-roles.md) for adding accounts, roles,
+and password resets.
+
 ## Optional
 
 ### `XCP_PULSE_ADMIN_USER`
 
-Default `admin`. The username at the login screen.
+Default `admin`. The username given to that first admin account. See the note
+under `XCP_PULSE_ADMIN_PASSWORD_HASH` above — it only applies on first start.
 
 ### `XCP_PULSE_SECRET_KEY`
 

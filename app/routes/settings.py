@@ -7,7 +7,9 @@ import logging
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, Response
 
-from app.dependencies import login_required, redirect, templates
+from app.activity import log_activity
+from app.dependencies import admin_required, redirect, templates
+from app.security import client_ip
 from app.tls import (
     CertificateError,
     current_certificate_info,
@@ -74,14 +76,14 @@ def _render(
 
 
 @router.get("/settings", response_class=HTMLResponse)
-def settings_page(request: Request, username: str = Depends(login_required)) -> Response:
+def settings_page(request: Request, username: str = Depends(admin_required)) -> Response:
     return _render(request, username)
 
 
 @router.post("/settings", response_class=HTMLResponse)
 def settings_save(
     request: Request,
-    username: str = Depends(login_required),
+    username: str = Depends(admin_required),
     url: str = Form(...),
     token: str = Form(...),
     account_type: str = Form("admin"),
@@ -102,8 +104,9 @@ def settings_save(
     if account_type not in ACCOUNT_TYPES:
         return _render(request, username, error="Unknown account type.", status_code=400)
 
+    conn = request.app.state.db
     save_connection(
-        request.app.state.db,
+        conn,
         url=url,
         token=token,
         account_type=account_type,
@@ -111,11 +114,12 @@ def settings_save(
         secret_key=request.app.state.settings.secret_key,
     )
     log.info("Xen Orchestra connection saved for %s", url)
+    log_activity(conn, username, "settings.connection", detail=url, ip=client_ip(request))
     return redirect("/settings?saved=1")
 
 
 @router.post("/settings/test", response_class=HTMLResponse)
-def settings_test(request: Request, username: str = Depends(login_required)) -> Response:
+def settings_test(request: Request, username: str = Depends(admin_required)) -> Response:
     """Test the stored connection and report what the account can reach."""
     conn = request.app.state.db
     try:
@@ -149,17 +153,19 @@ def settings_test(request: Request, username: str = Depends(login_required)) -> 
 
 
 @router.post("/settings/delete")
-def settings_delete(request: Request, username: str = Depends(login_required)) -> Response:
+def settings_delete(request: Request, username: str = Depends(admin_required)) -> Response:
     """Forget the connection, including the stored token."""
-    delete_connection(request.app.state.db)
+    conn = request.app.state.db
+    delete_connection(conn)
     log.info("Xen Orchestra connection deleted")
+    log_activity(conn, username, "settings.connection_deleted", ip=client_ip(request))
     return redirect("/settings?deleted=1")
 
 
 @router.post("/settings/tls", response_class=HTMLResponse)
 async def settings_tls_upload(
     request: Request,
-    username: str = Depends(login_required),
+    username: str = Depends(admin_required),
     cert_file: UploadFile = _CERT_FILE_FIELD,
     key_file: UploadFile = _KEY_FILE_FIELD,
 ) -> Response:
@@ -196,4 +202,5 @@ async def settings_tls_upload(
     tls_dir = request.app.state.settings.data_dir / "tls"
     install_certificate(tls_dir, cert_pem, key_pem)
     log.info("TLS certificate replaced by %s", username)
+    log_activity(request.app.state.db, username, "settings.tls_certificate", ip=client_ip(request))
     return redirect("/settings?tls_saved=1")

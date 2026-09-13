@@ -43,6 +43,45 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ### Added
 
+- **Multiple user accounts, three roles, and an activity log — XCP Pulse is no
+  longer a single shared login.** Before this, "who is logged in" was one
+  username/password-hash pair read from `XCP_PULSE_ADMIN_USER` /
+  `XCP_PULSE_ADMIN_PASSWORD_HASH`, checked against every login attempt with no
+  concept of a second account. A new `users` table (migration 5) holds any
+  number of accounts, each with a role — **admin** (everything, including
+  user management, the Xen Orchestra connection, and redaction rules),
+  **operator** (run collections, redactions, extractions and support
+  packages; delete artifacts; view the activity log — everything short of
+  changing settings), or **viewer** (read-only: dashboard, findings, jobs,
+  activity log — and, deliberately, still able to download anything already
+  stored, since reading a finished report or bundle isn't an action a
+  read-only account should be blocked from). The
+  two environment variables still work, but only as the seed for the very
+  first admin account (`app/users.py:bootstrap_admin`, run once at startup);
+  once any row exists in `users`, they are no longer read. A new **Users**
+  page under Settings (admin-only) adds, disables, re-enables and changes the
+  role of any account, and resets anyone's password without needing their
+  current one; every signed-in user, regardless of role, can change their own
+  password from a new `/account/password` page reachable from their name in
+  the top bar — that one does require the current password. Disabling or
+  deleting the last active admin is refused outright, so the app can never be
+  left with no way to manage it. A new `activity_log` table and
+  `app/activity.py:log_activity` record who did what and when — every login
+  and logout, every settings change, every job started, downloaded or
+  deleted, every user added, disabled or reset — shown on a new **Activity**
+  page (admin and operator). Disabling a user takes effect immediately, not
+  just on their next login: `get_session_user` now also checks the account
+  behind an existing session cookie still exists and isn't disabled, closing
+  what would otherwise be a live session outliving the account for up to
+  `XCP_PULSE_SESSION_HOURS`. Every new-password field — adding a user,
+  admin resetting someone's password, and self-service password change — now
+  asks for it twice and rejects a mismatch before writing anything, and
+  signing in to a disabled account with the correct password says so
+  ("This account has been disabled.") instead of the generic wrong-password
+  message; a wrong password against a disabled account still gets the
+  generic message, so only someone who already knows the real password
+  learns the account is disabled.
+
 - **Built-in HTTPS, no reverse proxy required.** `XCP_PULSE_ENABLE_HTTPS`
   (off by default) bundles a small `nginx-light` into the image to terminate
   TLS in front of uvicorn, rather than uvicorn holding the port directly.

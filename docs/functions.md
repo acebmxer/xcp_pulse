@@ -107,11 +107,48 @@ instead — one dedicated thread, no contention — and does not need it.
 `SESSION_COOKIE` is the cookie name. Sessions are stored server-side so logout
 genuinely invalidates rather than merely asking the browser to forget.
 
+## `app/users.py` — user accounts and roles
+
+| Function | Signature | Does | Used by | Since |
+| --- | --- | --- | --- | --- |
+| `authenticate` | `(conn, username: str, password: str) -> User \| None` | Verifies a password against a constant-time-ish lookup; None if wrong, missing, or disabled | `routes/auth.login_submit` | unreleased |
+| `bootstrap_admin` | `(conn, admin_user: str, admin_password_hash: str) -> None` | Creates the first admin from the environment, only if `users` is empty | `main.lifespan` | unreleased |
+| `create_user` | `(conn, username: str, password: str, role: str) -> User` | Adds an account | `routes/users.users_create` | unreleased |
+| `get_user` | `(conn, username: str) -> User \| None` | Reads one account by username | `routes/auth`, `dependencies.operator_required`/`admin_required`/`current_role`, `routes/users` | unreleased |
+| `get_user_by_id` | `(conn, user_id: str) -> User \| None` | Reads one account by id | `routes/users` | unreleased |
+| `list_users` | `(conn) -> list[User]` | Every account, oldest first | `routes/users.users_page` | unreleased |
+| `set_disabled` | `(conn, user_id: str, disabled: bool) -> None` | Disables or re-enables an account; refuses to disable the last active admin | `routes/users` | unreleased |
+| `set_password` | `(conn, user_id: str, new_password: str) -> None` | Sets a password directly — used for both self-service change and an admin's reset | `routes/users` | unreleased |
+| `set_role` | `(conn, user_id: str, role: str) -> None` | Changes an account's role; refuses to demote the last active admin | `routes/users.users_set_role` | unreleased |
+
+`ROLES` is `("admin", "operator", "viewer")`, enforced both by a CHECK
+constraint in the `users` table and by the `*_required` dependencies in
+`app/dependencies.py`. `MIN_PASSWORD_LENGTH` (8) is shared by every path that
+sets a password, so the three password forms agree. `UserError` carries a
+message the page renders directly.
+
+`XCP_PULSE_ADMIN_USER` / `XCP_PULSE_ADMIN_PASSWORD_HASH` seed only the first
+account, via `bootstrap_admin`; once any row exists in `users`, those
+environment variables are no longer read.
+
+## `app/activity.py` — the activity log
+
+| Function | Signature | Does | Used by | Since |
+| --- | --- | --- | --- | --- |
+| `log_activity` | `(conn, username: str, action: str, detail: str = "", ip: str \| None = None) -> None` | Records one row | every route that changes state | unreleased |
+| `list_activity` | `(conn, limit: int = 200) -> list[ActivityEntry]` | The most recent entries, newest first | `routes/users.activity_page` | unreleased |
+
+Nothing prunes this table yet — see the docstring in `app/activity.py` for why
+that's fine for now and where a cap would go if it's ever needed.
+
 ## `app/dependencies.py` — shared route plumbing
 
 | Function | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
 | `login_required` | `(request) -> str` | FastAPI dependency; 303s anonymous callers | every protected route | v0.1.0 |
+| `operator_required` | `(request) -> str` | FastAPI dependency; 403s a viewer, 303s anonymous | every route that runs, downloads or deletes something | unreleased |
+| `admin_required` | `(request) -> str` | FastAPI dependency; 403s anyone but an admin, 303s anonymous | `routes/settings`, `routes/users` (admin sections) | unreleased |
+| `current_role` | `(request) -> str \| None` | The signed-in user's role, or None if anonymous | `base.html`, as the `current_role` template global | unreleased |
 | `age` | `(timestamp: float \| None) -> str` | A timestamp as how long ago it was, for a stored result | `dashboard.html`, as the `age` filter | v0.4.0 |
 | `count` | `(value: int) -> str` | A hit count with thousands separators, for a report column whose range spans six orders of magnitude | `jobs.html`, `collect.html`, `redaction.html`, as the `count` filter | v0.7.0 |
 | `counts_in` | `(text: str \| None) -> str` | Thousands-separates the integers in a stored progress line, leaving byte sizes alone | `jobs.html`, `collect.html`, as the `counts_in` filter | v0.7.0 |
@@ -701,6 +738,15 @@ key belong together without needing to sign anything.
 | `docs_index` | `(request, username) -> Response` | `GET /help` — the User manual, opening on the user guide | router | unreleased |
 | `docs_page` | `(request, slug, username) -> Response` | `GET /help/{slug}` — one rendered manual page | router | unreleased |
 | `docs_search` | `(request, q, username) -> Response` | `GET /help/search` — manual pages matching a search term, with snippets | router | unreleased |
+| `users_page` | `(request, username) -> Response` | `GET /settings/users` — every account and its role (admin-only) | router | unreleased |
+| `users_create` | `(request, username, new_username, password, role) -> Response` | `POST /settings/users` — adds an account (admin-only) | router | unreleased |
+| `users_set_role` | `(request, user_id, username, role) -> Response` | `POST /settings/users/{id}/role` — changes an account's role (admin-only) | router | unreleased |
+| `users_disable` | `(request, user_id, username) -> Response` | `POST /settings/users/{id}/disable` — disables an account (admin-only) | router | unreleased |
+| `users_enable` | `(request, user_id, username) -> Response` | `POST /settings/users/{id}/enable` — re-enables an account (admin-only) | router | unreleased |
+| `users_reset_password` | `(request, user_id, username, new_password) -> Response` | `POST /settings/users/{id}/reset-password` — an admin sets someone else's password, no current-password check | router | unreleased |
+| `account_password_page` | `(request, username) -> Response` | `GET /account/password` — change-your-own-password form | router | unreleased |
+| `account_password_change` | `(request, username, current_password, new_password) -> Response` | `POST /account/password` — self-service password change, requires the current password | router | unreleased |
+| `activity_page` | `(request, username) -> Response` | `GET /activity` — the activity log (admin and operator) | router | unreleased |
 
 ## `app/hashpw.py` — password hash helper
 

@@ -104,6 +104,21 @@ body {
   letter-spacing: -0.02em;
 }
 
+/* A page title with one action beside it — e.g. Settings' link to Users.
+   .page-header's own .page-title loses its bottom margin since the flex gap
+   here provides the spacing instead. */
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.25rem;
+}
+
+.page-header .page-title { margin-bottom: 0; }
+.page-header .btn-primary { margin-top: 0; }
+
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -147,9 +162,11 @@ button:focus-visible {
 }
 
 .btn {
+  display: inline-block;
   padding: 0.6rem 0.9rem;
   font: inherit;
   font-weight: 600;
+  text-decoration: none;
   border-radius: 7px;
   border: 1px solid transparent;
   cursor: pointer;
@@ -544,6 +561,66 @@ select {
 
 .job {
   margin-bottom: 0.75rem;
+}
+
+/* One row per account on the Users page. A table cell squeezed three forms
+   (role select, disable/enable, a two-field password reset) into one column
+   and collapsed into an unreadable stack — this gives each its own row
+   inside the card instead, the same shape .job already uses for a list of
+   things each carrying several actions. */
+.userlist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.user-row {
+  padding: 0.9rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.user-row:last-child { border-bottom: none; padding-bottom: 0; }
+.user-row:first-child { padding-top: 0; }
+
+.user-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.user-name {
+  font-weight: 600;
+  min-width: 8ch;
+}
+
+.user-status {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+
+.user-status-active { border-color: var(--ok); color: var(--ok); }
+.user-status-disabled { border-color: var(--danger-border); color: var(--danger-text); }
+
+.user-head .btn-quiet { margin-left: auto; }
+.user-head select { width: auto; min-width: 8rem; }
+
+.user-reset {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+}
+
+.user-reset input[type="password"] {
+  flex: 1 1 160px;
+  min-width: 0;
 }
 
 .job-head {

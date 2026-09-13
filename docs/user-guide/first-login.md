@@ -1,8 +1,10 @@
 # First login and connecting to Xen Orchestra
 
-Log in with the admin account from your `xcp-pulse.env` file. Nothing else
-works until XCP Pulse has a Xen Orchestra connection, so **Settings** is
-where to go first.
+Log in with the admin account created from your `xcp-pulse.env` file — this
+only happens once, the first time XCP Pulse starts with an empty database;
+see [Users and roles](users-and-roles.md) for adding further accounts
+afterward. Nothing else works until XCP Pulse has a Xen Orchestra connection,
+so **Settings** is where to go first.
 
 1. Open **Settings**.
 2. Enter your Xen Orchestra address (e.g. `https://xo.example.com`).

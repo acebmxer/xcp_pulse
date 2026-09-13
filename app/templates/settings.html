@@ -2,7 +2,10 @@
 {% block title %}Settings — XCP Pulse{% endblock %}
 
 {% block content %}
-<h1 class="page-title">Xen Orchestra connection</h1>
+<div class="page-header">
+  <h1 class="page-title">Xen Orchestra connection</h1>
+  <a href="/settings/users" class="btn btn-primary">Manage users</a>
+</div>
 
 {% if error %}
 <p class="alert alert-error" role="alert">{{ error }}</p>

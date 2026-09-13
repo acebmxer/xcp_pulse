@@ -377,19 +377,25 @@ Two things to settle before building it:
 
 ### Multiple users
 
-More than one person can use XCP Pulse, with their own credentials.
+~~More than one person can use XCP Pulse, with their own credentials.~~
+**Shipped, unreleased.** A `users` table replaced the single admin account
+from the environment; `XCP_PULSE_ADMIN_USER`/`XCP_PULSE_ADMIN_PASSWORD_HASH`
+now only bootstrap the first account, once, on an empty database. Three
+roles rather than the two originally sketched here — **admin** (manage
+users, connections, settings, redaction rules), **operator** (run, download
+and delete collections/redactions/extractions/packages; view the activity
+log), **viewer** (read-only, but still able to download anything already
+stored) — because "collect and read" and "reconfigure" turned out to need a
+middle tier: someone who runs collections day to day but shouldn't touch the
+Xen Orchestra connection or redaction rules. Per-user sessions, self-service
+password changes, admin password resets, and disabling (not deleting) an
+account are all in. Disabling or demoting the last admin is refused, so the
+app can't end up unmanageable. An activity log records logins, settings
+changes, and every job started, downloaded or deleted, with who and when.
+Migration was automatic: the existing environment-configured admin became
+the first row and kept working with no manual step.
 
-- A user table replacing the single admin account from the environment; the
-  environment variables become the **bootstrap** for the first account only
-- Roles: **admin** (manage users, connections, settings) and **viewer**
-  (collect and read, but not reconfigure)
-- Per-user sessions, password changes, and deactivation without deletion
-- An activity log recording who collected, downloaded or deleted what — bundles
-  contain credential-adjacent data, so "who took a copy" is a real question
-- Optional TOTP two-factor
-
-Migration is automatic: the existing environment-configured admin becomes the
-first row in the user table and continues to work.
+**Still open: optional TOTP two-factor.** Not started.
 
 ---
 

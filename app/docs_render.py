@@ -41,6 +41,12 @@ PAGES: list[tuple[str, str, Path, str | None]] = [
     ("support-package", "Support package", _USER_GUIDE_DIR / "support-package.md", "User guide"),
     ("date-ranges", "Date ranges", _USER_GUIDE_DIR / "date-ranges.md", "User guide"),
     ("settings", "Settings", _USER_GUIDE_DIR / "settings.md", "User guide"),
+    (
+        "users-and-roles",
+        "Users and roles",
+        _USER_GUIDE_DIR / "users-and-roles.md",
+        "User guide",
+    ),
     ("installation", "Installation", REPO_ROOT / "docs" / "installation.md", None),
     ("configuration", "Configuration", REPO_ROOT / "docs" / "configuration.md", None),
     ("architecture", "Architecture", REPO_ROOT / "docs" / "architecture.md", None),

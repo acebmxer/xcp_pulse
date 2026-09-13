@@ -39,10 +39,12 @@ file publishes the port on all interfaces so it works on a remote server out
 of the box; where a reverse proxy runs on the Docker host itself, bind the
 mapping to `127.0.0.1` so nothing else can reach it directly.
 
-**What protects it.** A single admin account whose Argon2id password hash is
-supplied by configuration; the app refuses to start without one and has no
-default password. Sessions are stored server-side so logout invalidates
-immediately. Failed logins are throttled per address.
+**What protects it.** Accounts with Argon2id password hashes and one of three
+roles (admin, operator, viewer) restricting what each can change or run; the
+first admin account's password is supplied by configuration and the app
+refuses to start without one, with no default password. Sessions are stored
+server-side so logout invalidates immediately, and disabling an account ends
+its live sessions too. Failed logins are throttled per address.
 
 **Built-in HTTPS runs as the same non-root user as everything else.** Both
 its ports are unprivileged, so nginx never needs root even briefly — no

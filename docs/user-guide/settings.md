@@ -7,6 +7,9 @@ account type, whether the certificate is verified, the result of the last
 test) and where you delete a connection — which removes the stored,
 encrypted token too.
 
+This page is admin-only. **Manage users**, in the top right, opens the Users
+page — see [Users and roles](users-and-roles.md).
+
 ## TLS certificate
 
 If XCP Pulse is running with built-in HTTPS on (`XCP_PULSE_ENABLE_HTTPS`), a
