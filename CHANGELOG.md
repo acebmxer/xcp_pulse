@@ -10,6 +10,21 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+### Fixed
+
+- **No `.env.example` existed for the `DOCKER_GID` variable `docker-compose.yml`'s
+  `group_add` line needs**, even though `docker-compose.yml.example` and
+  `docs/configuration.md` both document that a separate, literally-named `.env`
+  file is required next to `docker-compose.yml` when self-update is enabled.
+  Upgrading `xcp-pulse.env` to a new release's template did nothing for this —
+  it's a different file with a different job — so a host that enabled
+  self-update without ever being told to create `.env` hit
+  `unable to find group : no matching entries in group file` on every
+  `docker compose up -d`, with no committed template to copy from. Added
+  `.env.example`, `docs/configuration.md` now points at it, and
+  `docs/installation.md`'s troubleshooting section now has an entry matching
+  the literal error text.
+
 ## [0.9.0] - 2026-09-13
 
 ### Fixed

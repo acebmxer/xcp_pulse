@@ -126,7 +126,8 @@ different on every host, so `docker-compose.yml.example` reads it from
 which reads a file literally named `.env` — **not** `xcp-pulse.env`, which is
 deliberately named otherwise so this exact substitution never touches the
 Argon2 hash inside it (see that file's own comment). So this one value goes
-in an actual `.env` file next to `docker-compose.yml`:
+in an actual `.env` file next to `docker-compose.yml` — copy `.env.example`
+to `.env` and fill it in, or just:
 
 ```bash
 echo "DOCKER_GID=$(getent group docker | cut -d: -f3)" > .env

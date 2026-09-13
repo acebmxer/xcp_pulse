@@ -315,6 +315,21 @@ own certificate, not XCP Pulse.
 [Xen Orchestra behind a reverse proxy](#xen-orchestra-behind-a-reverse-proxy-known-bug-unsolved)
 above. This is XO's side of the connection, not XCP Pulse's.
 
+**`Error response from daemon: unable to find group : no matching entries in
+group file`, or a `DOCKER_GID` warning, on `docker compose up -d`** — self-update
+is enabled (the `docker.sock` mount and `group_add` are uncommented in
+`docker-compose.yml`) but there's no `.env` file — a separate, literal `.env`
+next to `docker-compose.yml`, not `xcp-pulse.env` — providing `DOCKER_GID`.
+Copy `.env.example` to `.env` and fill it in, or:
+
+```bash
+echo "DOCKER_GID=$(getent group docker | cut -d: -f3)" > .env
+docker compose up -d
+```
+
+See [`XCP_PULSE_ENABLE_SELF_UPDATE`](configuration.md#xcp_pulse_enable_self_update)
+in the configuration reference for why this second file exists.
+
 **Port already in use** — change the left-hand side of the port mapping in
 `docker-compose.yml`, for example `"9090:8080"`. The right-hand side is the port
 inside the container and never changes.
