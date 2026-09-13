@@ -77,7 +77,7 @@ Manage users. See
 curl -sf http://localhost:8080/healthz
 ```
 
-Expected: `{"status":"ok","version":"0.8.0"}`. This endpoint needs no login — the
+Expected: `{"status":"ok","version":"0.9.0"}`. This endpoint needs no login — the
 container healthcheck uses it.
 
 ```bash
@@ -104,7 +104,7 @@ To stay on one version instead, pin the tag in `docker-compose.yml` — the
 sample carries a commented example:
 
 ```yaml
-image: ghcr.io/acebmxer/xcp_pulse:0.8.0
+image: ghcr.io/acebmxer/xcp_pulse:0.9.0
 ```
 
 A pinned deployment then upgrades by editing that tag and running the two
