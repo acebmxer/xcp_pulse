@@ -10,6 +10,8 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-09-13
+
 ### Fixed
 
 - **No `.env.example` existed for the `DOCKER_GID` variable `docker-compose.yml`'s
