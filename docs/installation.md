@@ -77,7 +77,7 @@ Manage users. See
 curl -sf http://localhost:8080/healthz
 ```
 
-Expected: `{"status":"ok","version":"0.9.0"}`. This endpoint needs no login — the
+Expected: `{"status":"ok","version":"0.9.1"}`. This endpoint needs no login — the
 container healthcheck uses it.
 
 ```bash
@@ -104,7 +104,7 @@ To stay on one version instead, pin the tag in `docker-compose.yml` — the
 sample carries a commented example:
 
 ```yaml
-image: ghcr.io/acebmxer/xcp_pulse:0.9.0
+image: ghcr.io/acebmxer/xcp_pulse:0.9.1
 ```
 
 A pinned deployment then upgrades by editing that tag and running the two
@@ -314,6 +314,21 @@ own certificate, not XCP Pulse.
 **A collection reports "the bundle ends early"** — see
 [Xen Orchestra behind a reverse proxy](#xen-orchestra-behind-a-reverse-proxy-known-bug-unsolved)
 above. This is XO's side of the connection, not XCP Pulse's.
+
+**`Error response from daemon: unable to find group : no matching entries in
+group file`, or a `DOCKER_GID` warning, on `docker compose up -d`** — self-update
+is enabled (the `docker.sock` mount and `group_add` are uncommented in
+`docker-compose.yml`) but there's no `.env` file — a separate, literal `.env`
+next to `docker-compose.yml`, not `xcp-pulse.env` — providing `DOCKER_GID`.
+Copy `.env.example` to `.env` and fill it in, or:
+
+```bash
+echo "DOCKER_GID=$(getent group docker | cut -d: -f3)" > .env
+docker compose up -d
+```
+
+See [`XCP_PULSE_ENABLE_SELF_UPDATE`](configuration.md#xcp_pulse_enable_self_update)
+in the configuration reference for why this second file exists.
 
 **Port already in use** — change the left-hand side of the port mapping in
 `docker-compose.yml`, for example `"9090:8080"`. The right-hand side is the port

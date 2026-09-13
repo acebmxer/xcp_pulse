@@ -62,8 +62,7 @@ no code or password needed, the same recovery role a password reset plays.
 
 ## The activity log
 
-Admin and operator accounts can open **Activity** (`/activity`) to see who did
-what and when — logins and logouts, settings changed, jobs started or deleted,
-users added or changed. It's a record, not a settings page: nothing on it can
-be undone from there. It's not linked from the top bar; go to `/activity`
-directly.
+Admin and operator accounts can open **Activity**, in the **☰ Menu** dropdown
+next to **Jobs**, to see who did what and when — logins and logouts, settings
+changed, jobs started or deleted, users added or changed. It's a record, not a
+settings page: nothing on it can be undone from there.

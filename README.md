@@ -33,7 +33,7 @@ Vates support ticket.
 ## Quick start
 
 No clone and no build — the image is published to GHCR, so the compose file and
-an env file are the whole deployment:
+a config file are the whole deployment:
 
 ```bash
 mkdir xcp-pulse && cd xcp-pulse
@@ -43,11 +43,18 @@ curl -o xcp-pulse.env https://raw.githubusercontent.com/acebmxer/xcp_pulse/main/
 # Generate a password hash and paste it into xcp-pulse.env
 docker compose run --rm xcp-pulse python -m app.hashpw
 
+# Only if you're turning on self-update (off by default) — also edit
+# docker-compose.yml per its own comments. See
+# docs/configuration.md#xcp_pulse_enable_self_update.
+curl -o .env https://raw.githubusercontent.com/acebmxer/xcp_pulse/main/.env.example
+echo "DOCKER_GID=$(getent group docker | cut -d: -f3)" > .env
+
 docker compose up -d
 ```
 
-Then open `http://<server>:8080` and sign in. To build from source instead, see
-[Installation](docs/installation.md).
+Then open `http://<server>:8080` and sign in. To build from source instead, or
+to upgrade an existing install, see [Installation](docs/installation.md) —
+including its [Troubleshooting](docs/installation.md#troubleshooting) section.
 
 > [!IMPORTANT]
 > XCP Pulse refuses to start until `XCP_PULSE_ADMIN_PASSWORD_HASH` is set. It
