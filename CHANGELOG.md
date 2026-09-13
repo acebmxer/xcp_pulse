@@ -10,6 +10,8 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-09-13
+
 ### Fixed
 
 - **The ☰ Menu had no link to Update, Support package, or Activity**, left out
@@ -20,10 +22,6 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
   Update and Support package alongside Redaction, and Activity next to Jobs —
   all visible to every signed-in user, matching those routes' own access
   rules.
-
-## [0.9.1] - 2026-09-13
-
-### Fixed
 
 - **No `.env.example` existed for the `DOCKER_GID` variable `docker-compose.yml`'s
   `group_add` line needs**, even though `docker-compose.yml.example` and
