@@ -332,8 +332,9 @@ it reports on have stopped moving.
   one as it was built
 - Decide which panels stay: a feature earns a panel only when it changes
   whether an operator needs to act, not because it has a page
-- Panels for later features where that test is met — log findings, update
-  availability, the support package
+- Panels for later features where that test is met — log findings, the
+  support package (update availability already has one: a dashboard banner,
+  shown only when self-update is enabled and something needs acting on)
 - Settle what **What is coming** becomes once the list is short — including
   whether it should read this file's Planned section directly instead of
   duplicating it by hand, which would make it structurally impossible for the
@@ -344,36 +345,41 @@ around features that are still being added means doing it twice.
 
 ### Self-update from the UI
 
-*Prerequisite met: releases publish to `ghcr.io/acebmxer/xcp_pulse`.*
+~~Tells you when a new version is out, and applies it from the UI.~~
+**Shipped, unreleased.** Modelled on the mechanism in the sibling project
+[beacon_pxe](https://github.com/acebmxer/beacon_pxe), whose hard-won details
+carried over directly: compare image digests read from the running container
+through the Docker socket rather than a remembered value (so a manual
+`docker compose pull && up -d` can't leave the app advertising an update
+that's already installed), hand the recreation to a throwaway container
+outside the compose project (a container cannot reliably replace itself),
+and confirm success from that *replacement* container's own startup rather
+than the process that triggered it, since that process does not survive to
+see the outcome — a stall is reaped after 3 minutes with an error naming the
+command to finish by hand.
 
-Tells you when a new version is out, and applies it from the UI.
+One thing differs from beacon_pxe: there is no separate update channel.
+beacon_pxe watches whichever tag (`latest` or `stable`) its release workflow
+deliberately publishes; this project's workflow doesn't spell out a `latest`
+tag in its own config, but `docker/metadata-action` applies one by default
+whenever a semver release is the newest on the default branch — verified
+against GHCR, `latest` already carries the same digest as the newest version
+tag — so `latest` is watched exactly as beacon_pxe watches its channel tag,
+with no setting needed for it.
 
-Modelled on the mechanism in the sibling project
-[beacon_pxe](https://github.com/acebmxer/beacon_pxe), whose hard-won details are
-worth copying rather than rediscovering:
+Both open questions below resolved as the roadmap anticipated:
 
-- **Compare image digests, not version strings.** What is deployed is read from
-  the running container through the Docker socket, not remembered in the
-  database — bookkeeping desyncs the moment someone updates by hand with
-  `docker compose pull && up -d`, and then advertises an update already installed.
-- **Hand the recreation to a throwaway container outside the compose project.**
-  A container cannot reliably replace itself; it gets killed partway and the
-  update appears to succeed while nothing was replaced.
-- **Confirm success from the replacement, not the initiator.** The process that
-  starts an update does not survive to see it finish, so the new container
-  records the outcome at startup. A stall is reaped on a timeout with an error
-  saying what to run by hand.
-- An update channel — `latest` following main, `stable` following releases —
-  where the tag the checker watches is the tag the compose file pulls.
-
-Two things to settle before building it:
-
-- ~~**It needs a published image.**~~ Settled: releases publish to
-  `ghcr.io/acebmxer/xcp_pulse`, which is what the compose file already pulls.
-- **It needs the Docker socket, which is effectively host root** — directly
-  against this project's own threat model. The intended answer is that
-  self-update is **opt-in**, with update *checking* (outbound HTTPS only)
-  separable from update *applying*.
+- ~~**It needs a published image.**~~ Settled before this was built: releases
+  publish to `ghcr.io/acebmxer/xcp_pulse`, which is what the compose file
+  already pulls.
+- ~~**It needs the Docker socket, which is effectively host root.**~~ Settled
+  as planned: self-update is **opt-in**
+  (`XCP_PULSE_ENABLE_SELF_UPDATE`, off by default), and checking (outbound
+  HTTPS only, no socket) is fully independent of applying (the socket, plus
+  joining the host's `docker` group — this container runs as non-root, unlike
+  beacon_pxe's, so the socket mount alone isn't enough). New page: **Update**
+  (`/update`, admin and operator, not folded into the admin-only Settings
+  page — keeping the app current is day-to-day running, not configuration).
 
 ### Multiple users
 

@@ -31,11 +31,16 @@ templates.env.globals["app_version"] = __version__
 def _asset_token() -> str:
     """A cache-busting token for the stylesheet, from its own mtime.
 
-    Starlette's StaticFiles sends an ETag and Last-Modified but no Cache-Control,
-    so a browser is free to reuse a cached stylesheet without revalidating it.
-    In practice it does: a CSS change would reach the container and still not
-    reach the page, which is invisible from the server side and looks exactly
-    like a fix that did not work.
+    Pairs with app/main.py's _CacheableStaticFiles, which tells the browser to
+    cache this file for a year without ever revalidating it — safe only
+    because this token changes the URL itself the moment the file's bytes
+    change, so the same URL never resolves to two different versions of the
+    file. Before _CacheableStaticFiles existed, Starlette's StaticFiles sent
+    an ETag and Last-Modified but no Cache-Control, leaving the browser to
+    fall back to its own heuristics for how long to trust a cached copy — in
+    practice a stale copy could survive even a hard reload, so a CSS fix could
+    reach the container and still not reach the page, which is invisible from
+    the server side and looks exactly like a fix that did not work.
 
     The version string alone is not enough, because it does not move between
     builds during development — which is precisely when the stylesheet changes

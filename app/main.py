@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.responses import Response
 
 from app import __version__
 from app.config import Settings, load_settings
@@ -31,8 +32,10 @@ from app.routes import findings as findings_routes
 from app.routes import jobs as job_routes
 from app.routes import settings as settings_routes
 from app.routes import support_package as support_package_routes
+from app.routes import update as update_routes
 from app.routes import users as users_routes
 from app.security import current_user, purge_expired_sessions, purge_old_login_attempts
+from app.update import finish_pending_update, start_background_checker
 from app.users import bootstrap_admin
 
 
@@ -59,6 +62,11 @@ async def lifespan(app: FastAPI):
     if orphans:
         log.warning("marked %d interrupted job(s) as failed", orphans)
 
+    # Reaching startup with an update in flight means this process is the
+    # container the update just created — see app/update.py:finish_pending_update.
+    finish_pending_update(app.state.db)
+    start_background_checker(settings, settings.db_path)
+
     app.state.job_worker = JobWorker(settings.db_path, settings.data_dir, settings)
     app.state.job_worker.start()
 
@@ -75,6 +83,26 @@ async def lifespan(app: FastAPI):
     app.state.job_worker.stop()
     app.state.db.close()
     log.info("XCP Pulse stopped")
+
+
+class _CacheableStaticFiles(StaticFiles):
+    """Static files served with an explicit long-lived, immutable cache.
+
+    Starlette's StaticFiles sends an ETag and Last-Modified but no
+    Cache-Control, which leaves the browser to fall back to its own
+    heuristics for how long to trust a cached copy — and heuristic caching is
+    exactly what let a fixed stylesheet sit stale in a browser after a hard
+    reload (see app/dependencies.py:_asset_token, which this pairs with):
+    every reference to this file already carries a `?v=<mtime>` query string
+    that changes the moment the file does, so the URL itself is the
+    invalidation — there is no case where the same URL should ever resolve to
+    different bytes, which is exactly what `immutable` promises the browser.
+    """
+
+    def file_response(self, *args: object, **kwargs: object) -> Response:
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -110,7 +138,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             status_code=403,
         )
 
-    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+    app.mount("/static", _CacheableStaticFiles(directory=str(STATIC_DIR)), name="static")
     app.include_router(health.router)
     app.include_router(auth.router)
     app.include_router(dashboard.router)
@@ -122,6 +150,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(support_package_routes.router)
     app.include_router(docs.router)
     app.include_router(users_routes.router)
+    app.include_router(update_routes.router)
     return app
 
 

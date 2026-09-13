@@ -12,6 +12,66 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ### Fixed
 
+- **The "Run update anyway" button on a dev build ran the real pull-and-recreate
+  cycle from a single, unconfirmed click, and the button's own docstring said
+  plainly that it does not preserve whatever dev-branch code is running —
+  exactly what happened on a live dev container.** The mechanism itself was
+  working as designed; what was missing was anything standing between an idle
+  click and losing a running dev build. `GET /update/apply-anyway` now serves a
+  confirmation page (`app/routes/update.py:apply_anyway_confirm`,
+  `app/templates/update_confirm.html`) explaining what the button does before
+  its own form can `POST` to the real route; the button on the Update page is
+  now a link to that page instead of a form that submits directly. This app has
+  no client-side JavaScript, so there was no existing confirm pattern to reuse
+  (every other destructive action here, like the Jobs page's Delete, is also
+  one click) — this introduces the pattern rather than following one.
+
+  That confirmation page also exposed a real layout bug: `.row-actions` (the
+  flex row every action-button pair sits in) had no `align-items`, so it
+  defaulted to `stretch`. Every existing `.row-actions` row only ever held
+  `<button>` elements of identical height, so stretch was invisible there —
+  this was the first row to mix a `<button>` with an `<a class="btn">`
+  ("Cancel", linking back to `/update`), and the anchor stretched to match its
+  sibling's full row height instead of sizing to its own content, rendering as
+  a visibly oversized, misaligned button next to "Yes, run it". Fixed with
+  `align-items: center` on `.row-actions`, which changes nothing for any
+  existing all-button row.
+
+  Diagnosing this also exposed a real gap: this project already knew that
+  Starlette's `StaticFiles` sends no `Cache-Control` header, and had worked
+  around it with a `?v=<mtime>` token on the stylesheet URL — but the token
+  alone only helps a browser that chooses to revalidate; with no
+  `Cache-Control` at all, a browser is free to serve a cached copy of
+  `style.css` from browser heuristics alone, indefinitely, surviving even a
+  hard reload. A CSS fix could sit correct on disk, correct in the running
+  container, and still never reach the screen it was meant to fix — which is
+  exactly what happened testing the button above. `/static` is now served by
+  `app/main.py:_CacheableStaticFiles`, which adds
+  `Cache-Control: public, max-age=31536000, immutable` — safe specifically
+  because the mtime token already makes the URL itself change the moment the
+  file's bytes do, so the same URL never needs to resolve to two different
+  versions of the file.
+
+  Once the stale-cache issue was ruled out, one real visual defect remained on
+  this confirmation page: "Cancel" used `.btn-quiet`, the small secondary-link
+  size used for things like Delete and Download throughout the app, sitting
+  next to "Yes, run it" at the larger `.btn-primary` size — correct by that
+  convention everywhere else, but wrong here, where the two are an equally
+  weighted either/or choice rather than a primary action with a minor link
+  beside it. Added `.btn-secondary` (full `.btn-primary` size, bordered like
+  `.btn-quiet` instead of filled) and used it for Cancel.
+
+- **The Jobs page's meta-refresh tag never actually auto-refreshed anything: it
+  sat inside `{% block content %}`, which renders into `<body>`, and a
+  `<meta http-equiv="refresh">` outside `<head>` is invalid HTML that browsers
+  ignore.** The identical bug was already fixed on the Update page by moving its
+  tag into the `head_extra` block `base.html` defines inside `<head>`; the same
+  fix is applied here. The existing regression test only checked that the tag's
+  text appeared and disappeared with `any_active`, which can't tell "in `<head>`"
+  from "in `<body>`" from "absent" — a new test on both pages now parses the
+  response and asserts the tag is actually inside `<head>`, closing the gap that
+  let both instances of this bug ship with a green suite.
+
 - **The TLS certificate section on Settings had two problems: its upload
   fields were labelled "(PEM)" while their file pickers actually accepted
   `.crt` and `.cer` for the certificate and `.key` for the private key too,
@@ -42,6 +102,51 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
   eight times back to back with no failures, plus the full suite.
 
 ### Added
+
+- **Self-update: check for and apply new releases from a new Update page,
+  opt-in and off by default.** `XCP_PULSE_ENABLE_SELF_UPDATE=false` is the
+  default; turning it on alone changes nothing until the Docker socket is
+  also mounted in, because applying an update needs it and it is effectively
+  host root — the opposite of this project's normal footprint, so it stays a
+  deliberate, separate step (see `docs/configuration.md`). Checking is
+  independent of applying and needs no socket: a new `app/update.py`
+  compares the digest GHCR's `latest` tag currently points at against the
+  digest the running container was actually created from (read via the
+  socket, when mounted — never trusted from a remembered value, so a manual
+  `docker compose pull && up -d` on the host can't leave the app advertising
+  an update that's already installed) and runs once at startup and once a
+  day in the background. Applying pulls the new image and hands the restart
+  to a throwaway container outside the compose project (`xcp_pulse_updater`)
+  — this container cannot reliably recreate itself, since `docker compose up
+  -d` would be killing the very process running it partway through. The
+  *replacement* container confirms success on its own startup, since the
+  process that started the update does not survive to see it finish; a
+  recreation that never completes is reaped after 3 minutes with an error
+  naming the manual command to finish the job. New page: **Update**
+  (`/update`, admin and operator — keeping the app current is day-to-day
+  running, not configuration, so it isn't folded into the admin-only
+  Settings page), plus a dashboard banner when an update is available and
+  self-update is on. The image now ships Docker's own `docker-ce-cli` and
+  `docker-compose-plugin` (from `download.docker.com`, not Debian's older
+  bundled `docker-compose`, which lacks the `env_file`/`format: raw` support
+  `xcp-pulse.env` depends on) — client binaries only, present at no
+  additional privilege since nothing in the image can reach a socket that
+  isn't explicitly mounted in. Because this container runs as a non-root
+  user, reaching the socket at all also needs the host's `docker` group
+  joined via `group_add`, which needs its host-specific GID supplied through
+  a genuinely bare `.env` file (kept separate from `xcp-pulse.env`
+  specifically to avoid Compose's own `$`-interpolation mangling the Argon2
+  hash inside it) — both spelled out in `docker-compose.yml.example` and
+  `docs/configuration.md`. A locally built image (`docker-compose.dev.yml`)
+  keeps the same `ghcr.io/...` tag the published image uses, so it gets a
+  real, different digest the moment anything changes — including a change
+  that's ahead of `:latest`, not behind it, which a bare digest comparison
+  can't tell apart from genuinely being outdated. `XCP_PULSE_DEV_BUILD`, set
+  only by that override's build arg, stops a dev build from ever reporting
+  an update against itself; the Update page explains this and offers **Run
+  update anyway**, which runs the real pull-and-restart cycle against the
+  published image so the mechanism can still be watched end to end without
+  the false claim.
 
 - **Multiple user accounts, three roles, and an activity log — XCP Pulse is no
   longer a single shared login.** Before this, "who is logged in" was one

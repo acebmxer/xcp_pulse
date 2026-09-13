@@ -56,6 +56,44 @@ services:
       # Holds the SQLite database, the session signing key, and (from v0.4.0)
       # collected log bundles. Bundles contain real internal addresses.
       - xcp-pulse-data:/data
+      #
+      # Self-update (XCP_PULSE_ENABLE_SELF_UPDATE, off by default — see
+      # docs/configuration.md): lets XCP Pulse pull a newer image and restart
+      # itself from the Update page, instead of you running
+      # `docker compose pull && docker compose up -d` by hand. Uncomment this
+      # line, the group_add block further down, AND set
+      # XCP_PULSE_ENABLE_SELF_UPDATE=true in xcp-pulse.env — the mount alone
+      # does nothing, and without group_add the app can see the socket but
+      # gets "permission denied" on every call to it (see group_add's
+      # comment). docker-compose.yml and xcp-pulse.env themselves don't need
+      # mounting in here: applying an update hands the actual pull and
+      # restart to a throwaway container that mounts this directory at its
+      # real host path instead (see app/update.py if you want the detail).
+      #
+      # This grants the container the Docker socket, which is effectively
+      # root on this host: anything with API access to it can create a
+      # privileged container. Only enable this on a host you already trust
+      # this container's image with root on — the same trust you place in
+      # anything else you `docker run` here.
+      #
+      # - /var/run/docker.sock:/var/run/docker.sock
+    # Self-update, continued: this container runs as a non-root user (unlike
+    # a lot of "just mount the socket" examples you'll find, which run as
+    # root and so never hit this), and the socket above is owned by root:docker
+    # on the host. Without also joining that group, the app can reach the
+    # socket file but every call to it fails with "permission denied". The
+    # docker group's GID is different on every host, so it can't be baked into
+    # the image — find yours with `getent group docker | cut -d: -f3`.
+    #
+    # DOCKER_GID here comes from Compose's OWN variable substitution, which
+    # reads a file literally named .env (or your shell's environment) — NOT
+    # xcp-pulse.env, which env_file above loads a completely different way
+    # (see its comment) specifically so it is exempt from this substitution.
+    # So this one value goes in an actual ".env" file next to this compose
+    # file: `echo "DOCKER_GID=$(getent group docker | cut -d: -f3)" >> .env`.
+    #
+    # group_add:
+    #   - "${DOCKER_GID}"
 
 volumes:
   xcp-pulse-data:

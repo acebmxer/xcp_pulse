@@ -191,6 +191,18 @@ button:focus-visible {
 
 .btn-quiet:hover { color: var(--text); border-color: var(--text-dim); }
 
+/* Full-size like .btn-primary, bordered like .btn-quiet: for a Cancel that
+   sits beside a primary action as an equally-weighted either/or choice,
+   rather than a minor secondary link the small .btn-quiet size implies. */
+.btn-secondary {
+  margin-top: 1.25rem;
+  background: transparent;
+  color: var(--text-dim);
+  border-color: var(--border);
+}
+
+.btn-secondary:hover { color: var(--text); border-color: var(--text-dim); }
+
 /* ---- alerts ---- */
 
 .alert {
@@ -500,6 +512,7 @@ code {
 .row-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 0.6rem;
   margin-top: 1.25rem;
 }

@@ -47,6 +47,7 @@ PAGES: list[tuple[str, str, Path, str | None]] = [
         _USER_GUIDE_DIR / "users-and-roles.md",
         "User guide",
     ),
+    ("update", "Update", _USER_GUIDE_DIR / "update.md", "User guide"),
     ("installation", "Installation", REPO_ROOT / "docs" / "installation.md", None),
     ("configuration", "Configuration", REPO_ROOT / "docs" / "configuration.md", None),
     ("architecture", "Architecture", REPO_ROOT / "docs" / "architecture.md", None),

@@ -92,6 +92,55 @@ than this.
 Default `INFO`. One of `DEBUG`, `INFO`, `WARNING`, `ERROR`. This is XCP Pulse's
 own logging, not the XCP-ng logs it collects.
 
+### `XCP_PULSE_ENABLE_SELF_UPDATE`
+
+Default `false`. Set `true` to check for and apply updates from the **Update**
+page (visible to admins and operators) instead of running
+`docker compose pull && docker compose up -d` by hand.
+
+Applying an update needs the Docker socket, which is effectively host root, so
+this is opt-in and needs three things together — all off by default:
+
+1. `XCP_PULSE_ENABLE_SELF_UPDATE=true` here.
+2. The Docker socket volume line uncommented in `docker-compose.yml` (see the
+   comment above it in `docker-compose.yml.example`). `docker-compose.yml`
+   and `xcp-pulse.env` themselves do **not** need mounting into this
+   container — applying an update hands the actual pull and restart to a
+   throwaway container that mounts the project directory at its real host
+   path instead (see `app/update.py` if you want the mechanism).
+3. `group_add` uncommented too, with a `DOCKER_GID` value — see below — and
+   `XCP_PULSE_COMPOSE_PROJECT_DIR` below, set to the host directory
+   `docker-compose.yml` lives in.
+
+With only the flag set and the socket left unmounted, the Update page still
+checks GHCR daily and says whether a new image is out, but Apply fails
+immediately with a clear error rather than doing nothing silently — checking
+and applying are independent, and only applying touches the socket.
+
+**`group_add` and the separate `.env` file it needs.** This container runs as
+a non-root user, and the socket is owned by `root:docker` on the host —
+without joining that group, every call to the socket fails with "permission
+denied" even though the mount itself succeeded. The `docker` group's GID is
+different on every host, so `docker-compose.yml.example` reads it from
+`${DOCKER_GID}`. That has to come from Compose's own variable substitution,
+which reads a file literally named `.env` — **not** `xcp-pulse.env`, which is
+deliberately named otherwise so this exact substitution never touches the
+Argon2 hash inside it (see that file's own comment). So this one value goes
+in an actual `.env` file next to `docker-compose.yml`:
+
+```bash
+echo "DOCKER_GID=$(getent group docker | cut -d: -f3)" > .env
+```
+
+### `XCP_PULSE_COMPOSE_PROJECT_DIR`
+
+No default; required for self-update to apply anything. The directory on the
+**host** — not inside the container — that `docker-compose.yml` lives in.
+Applying an update runs `docker compose` against the host's Docker daemon
+through the mounted socket, and it needs this to resolve the same project
+name and the same relative volume paths (like the `./data` bind some
+deployments use) that your original `docker compose up -d` did.
+
 ## Set in the web UI, not here
 
 Xen Orchestra connection settings are entered in the web UI and stored encrypted

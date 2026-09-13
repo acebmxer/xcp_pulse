@@ -6,6 +6,7 @@
   <title>{% block title %}XCP Pulse{% endblock %}</title>
   <link rel="stylesheet" href="/static/style.css?v={{ asset_token }}">
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  {% block head_extra %}{% endblock %}
 </head>
 <body>
   {% if username %}
@@ -22,6 +23,7 @@
       <a class="navlink" href="/support-package">Support package</a>
       {% if role in ("admin", "operator") %}
       <a class="navlink" href="/activity">Activity</a>
+      <a class="navlink" href="/update">Update</a>
       {% endif %}
       <a class="navlink" href="/help">User manual</a>
       {% if role == "admin" %}

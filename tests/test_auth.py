@@ -79,6 +79,9 @@ def test_rate_limit_blocks_after_repeated_failures(settings: Settings) -> None:
         login_max_attempts=3,
         login_lockout_minutes=15,
         log_level="WARNING",
+        enable_self_update=settings.enable_self_update,
+        compose_project_dir=settings.compose_project_dir,
+        is_dev_build=settings.is_dev_build,
     )
     with TestClient(create_app(limited), follow_redirects=False) as client:
         for _ in range(3):

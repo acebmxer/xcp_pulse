@@ -32,6 +32,12 @@
 <div class="alert alert-error">{{ error }}</div>
 {% endif %}
 
+{% if update_available %}
+<p class="alert" role="status">
+  A new version of XCP Pulse is available. <a href="/update">Review and apply</a>
+</p>
+{% endif %}
+
 {% if not connection %}
 <div class="card empty-state">
   <span class="empty-mark">◇</span>
@@ -273,15 +279,16 @@
       <span class="stage-name">Multiple users, roles and activity log</span>
       <span class="stage-state">complete</span>
     </li>
+    <li class="stage stage-done">
+      <span class="stage-name">Self-update from the UI</span>
+      <span class="stage-state">complete</span>
+    </li>
   </ol>
 
   <h3 class="stages-group">Planned — any order</h3>
   <ol class="stages">
     <li class="stage">
       <span class="stage-name">Finalise the dashboard and the UI</span>
-    </li>
-    <li class="stage">
-      <span class="stage-name">Self-update from the UI</span>
     </li>
     <li class="stage">
       <span class="stage-name">Optional TOTP two-factor</span>

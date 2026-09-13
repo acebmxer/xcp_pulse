@@ -163,6 +163,25 @@ _MIGRATIONS: list[str] = [
     );
     CREATE INDEX idx_activity_log_created ON activity_log (created_at DESC);
     """,
+    # 5 -> 6: self-update (see app/update.py).
+    #
+    # A single row, pinned by a CHECK to id = 1 — same reasoning as
+    # xo_connection: there is exactly one running deployment to track, so no
+    # code path has to decide which of several rows is current. Read from the
+    # database rather than kept in memory so the state survives this process
+    # being replaced mid-update, which is the whole point of the feature.
+    """
+    CREATE TABLE update_state (
+        id                  INTEGER PRIMARY KEY CHECK (id = 1),
+        latest_digest       TEXT NOT NULL DEFAULT '',
+        latest_checked_at   REAL,
+        available           INTEGER NOT NULL DEFAULT 0,
+        in_progress         INTEGER NOT NULL DEFAULT 0,
+        started_at          REAL,
+        last_result         TEXT NOT NULL DEFAULT '',
+        last_result_at      REAL
+    );
+    """,
 ]
 
 

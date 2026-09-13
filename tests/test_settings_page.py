@@ -64,6 +64,9 @@ def https_settings(tmp_path: Path) -> Settings:
         login_max_attempts=5,
         login_lockout_minutes=15,
         log_level="WARNING",
+        enable_self_update=False,
+        compose_project_dir="",
+        is_dev_build=False,
     )
 
 

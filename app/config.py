@@ -52,6 +52,9 @@ class Settings:
     login_max_attempts: int
     login_lockout_minutes: int
     log_level: str
+    enable_self_update: bool
+    compose_project_dir: str
+    is_dev_build: bool
 
     # Derived paths. Kept here so no other module builds a path by hand.
     db_path: Path = field(init=False)
@@ -132,4 +135,14 @@ def load_settings() -> Settings:
         login_max_attempts=_env_int("XCP_PULSE_LOGIN_MAX_ATTEMPTS", 5),
         login_lockout_minutes=_env_int("XCP_PULSE_LOGIN_LOCKOUT_MINUTES", 15),
         log_level=_env_str("XCP_PULSE_LOG_LEVEL", "INFO").upper(),
+        # Self-update: off unless the operator has deliberately mounted the
+        # Docker socket and set the project directory below — see
+        # app/update.py's module docstring for why this is opt-in rather than
+        # always available.
+        enable_self_update=_env_bool("XCP_PULSE_ENABLE_SELF_UPDATE", False),
+        compose_project_dir=_env_str("XCP_PULSE_COMPOSE_PROJECT_DIR"),
+        # Baked in by the Dockerfile's XCP_PULSE_DEV_BUILD ARG, which only
+        # docker-compose.dev.yml ever sets — see its comment, and
+        # app/update.py's use of this flag.
+        is_dev_build=_env_bool("XCP_PULSE_DEV_BUILD", False),
     )

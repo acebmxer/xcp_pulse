@@ -118,6 +118,27 @@ recorded on the row, and the body notices it at its next progress report —
 which is why reporting progress and checking for cancellation are the same
 call.
 
+## Self-update does not use the job queue
+
+Applying an update (`app/update.py`) deliberately does **not** go through
+`app/jobs.py`, even though it is exactly the kind of long-running background
+work that system exists for. The reason is what it has to survive: a
+successful update replaces *this container*, and the job queue's model —
+the same process that started a job stays alive to finish it, and a job row
+still `running` at startup means the process that owned it died — is the
+opposite of correct here. Reaching startup with an update `in_progress` means
+the update **worked**, not that it needs to be reaped, so `app/update.py`
+keeps its own single-row `update_state` table and its own thread rather than
+teaching the shared queue an exception to its restart-means-failure rule.
+
+The mechanism, and why applying needs the Docker socket at all, is opt-in and
+covered in [Configuration](configuration.md#xcp_pulse_enable_self_update) and
+the [Update](user-guide/update.md) user guide page — the short version
+is that a container cannot reliably replace itself, so a throwaway container
+outside the compose project does the recreation, and the *replacement*
+container confirms success on its own startup rather than the process that
+triggered it (which does not survive to see the outcome).
+
 ## The artifact store
 
 A job's output is a **file on the data volume**; only its metadata — name, media

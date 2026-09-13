@@ -1,16 +1,23 @@
 {% extends "base.html" %}
 {% block title %}Jobs — XCP Pulse{% endblock %}
 
-{% block content %}
 {#
   While anything is queued or running, the page reloads itself so progress
   moves without the operator pressing anything. It stops once everything has
   settled, so a finished list is not reloaded for ever.
+
+  Placed in head_extra rather than loose in block content: a <meta> tag
+  outside <head> is invalid HTML and browsers ignore it there, so this never
+  actually auto-refreshed anything — the identical bug fixed in update.html,
+  which is the block base.html defines for exactly this.
 #}
+{% block head_extra %}
 {% if any_active %}
 <meta http-equiv="refresh" content="3">
 {% endif %}
+{% endblock %}
 
+{% block content %}
 <h1 class="page-title">Jobs</h1>
 
 {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}

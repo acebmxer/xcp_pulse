@@ -695,6 +695,29 @@ asserting a fact that stops being true the moment an upload succeeds.
 Comparing public-key numbers rather than key bytes is what proves a cert and
 key belong together without needing to sign anything.
 
+## `app/update.py` — self-update
+
+Checks GHCR for a newer `latest` image by digest (not a version string — see
+the module docstring for why `latest` genuinely tracks the newest release
+here) and applies it by handing container recreation to a throwaway
+container outside the compose project. Every function is a no-op, or
+refuses outright, unless `XCP_PULSE_ENABLE_SELF_UPDATE` is on. State lives in
+the single-row `update_state` table, not in memory, so it survives this
+process being replaced mid-update — see
+[Architecture](../docs/architecture.md#self-update-does-not-use-the-job-queue)
+for why this does not use `app/jobs.py`.
+
+| Function | Signature | Does | Used by | Since |
+| --- | --- | --- | --- | --- |
+| `image_ref` | `() -> str` | The fully qualified `ghcr.io/.../xcp_pulse:latest` image ref | `check_for_updates`, `run_update`, `_spawn_recreator` | unreleased |
+| `current_state` | `(conn) -> UpdateState` | The update state worth showing, with a stale success hidden | `routes/update`, `routes/dashboard` | unreleased |
+| `clear_result` | `(conn) -> None` | Drops the recorded outcome so the UI stops showing it | `routes/update.dismiss_result` | unreleased |
+| `check_for_updates` | `(conn) -> bool` | Queries GHCR and records whether a newer digest is deployed | `routes/update.check_now`, the background checker | unreleased |
+| `finish_pending_update` | `(conn) -> None` | Resolves an in-flight update at startup — reaching this means this process is the replacement container | `main.lifespan` | unreleased |
+| `reap_stalled_update` | `(conn) -> None` | Fails an update that started but never replaced this container, past a timeout | `routes/update.update_page`, `routes/update.check_now` | unreleased |
+| `run_update` | `(settings, db_path) -> None` | Hands pulling and recreation to a throwaway container | `routes/update.apply_update`, on its own thread | unreleased |
+| `start_background_checker` | `(settings, db_path) -> None` | Starts the once-a-day GHCR check thread; a no-op unless self-update is enabled | `main.lifespan` | unreleased |
+
 ## `app/routes/` — HTTP endpoints
 
 | Function | Signature | Does | Used by | Since |
@@ -747,6 +770,12 @@ key belong together without needing to sign anything.
 | `account_password_page` | `(request, username) -> Response` | `GET /account/password` — change-your-own-password form | router | unreleased |
 | `account_password_change` | `(request, username, current_password, new_password) -> Response` | `POST /account/password` — self-service password change, requires the current password | router | unreleased |
 | `activity_page` | `(request, username) -> Response` | `GET /activity` — the activity log (admin and operator) | router | unreleased |
+| `update_page` | `(request, username) -> Response` | `GET /update` — version, last check, and available/applied state (admin and operator) | router | unreleased |
+| `check_now` | `(request, username) -> Response` | `POST /update/check` — forces an immediate GHCR check | router | unreleased |
+| `apply_update` | `(request, username) -> Response` | `POST /update/apply` — starts pulling and recreating on its own thread | router | unreleased |
+| `apply_anyway_confirm` | `(request, username) -> Response` | `GET /update/apply-anyway` — dev build only: warns that this replaces the running dev container with the published image, before the form below can POST to it | router | unreleased |
+| `apply_anyway` | `(request, username) -> Response` | `POST /update/apply-anyway` — dev build only, reached only from the confirmation page above: runs the real pull/recreate cycle against `:latest` regardless of whether anything is "available" | router | unreleased |
+| `dismiss_result` | `(request, username) -> Response` | `POST /update/dismiss` — clears the last check/apply outcome | router | unreleased |
 
 ## `app/hashpw.py` — password hash helper
 

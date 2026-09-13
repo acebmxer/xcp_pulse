@@ -94,6 +94,12 @@ docker compose pull
 docker compose up -d
 ```
 
+Or let XCP Pulse do this itself: the **Update** page can check for and apply
+new releases without a terminal, once you opt in — see
+[Configuration](configuration.md#xcp_pulse_enable_self_update). It is off by
+default because applying an update needs the Docker socket mounted into the
+container, which is effectively host root.
+
 To stay on one version instead, pin the tag in `docker-compose.yml` — the
 sample carries a commented example:
 

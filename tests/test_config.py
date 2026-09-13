@@ -18,6 +18,8 @@ def _clear_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         "XCP_PULSE_ENABLE_HTTPS",
         "XCP_PULSE_SESSION_HOURS",
         "XCP_PULSE_LOG_LEVEL",
+        "XCP_PULSE_ENABLE_SELF_UPDATE",
+        "XCP_PULSE_DEV_BUILD",
     ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("XCP_PULSE_DATA_DIR", str(tmp_path))
@@ -114,3 +116,21 @@ def test_xcp_pulse_https_can_override_enable_https_explicitly(
     settings = load_settings()
     assert settings.enable_https is True
     assert settings.https_only is False
+
+
+def test_dev_build_flag_defaults_off(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # Unset on every real image: only docker-compose.dev.yml's build arg ever
+    # sets XCP_PULSE_DEV_BUILD, and the published release workflow passes no
+    # build args at all.
+    _clear_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("XCP_PULSE_ADMIN_PASSWORD_HASH", "$argon2id$v=19$m=65536,t=3,p=4$fake")
+    assert load_settings().is_dev_build is False
+
+
+def test_dev_build_flag_reads_from_the_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _clear_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("XCP_PULSE_ADMIN_PASSWORD_HASH", "$argon2id$v=19$m=65536,t=3,p=4$fake")
+    monkeypatch.setenv("XCP_PULSE_DEV_BUILD", "true")
+    assert load_settings().is_dev_build is True

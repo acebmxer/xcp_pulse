@@ -40,6 +40,7 @@ from app.job_inventory import KIND as INVENTORY_KIND
 from app.job_inventory import inventory_from_job
 from app.jobs import enqueue, has_active, latest_job, latest_successful, list_jobs
 from app.redact import RULES, enabled_rules
+from app.update import current_state
 from app.xo_client import Inventory
 from app.xo_connection import get_connection
 
@@ -116,6 +117,11 @@ def dashboard(request: Request, username: str = Depends(login_required)) -> Resp
     # collect page shows, without repeating its policy form here.
     plan = retention.plan(db)
 
+    # Only when self-update is enabled and there is something to act on — this
+    # is the one panel-worthy case per the rule above: an operator who missed
+    # it would be running an old version with no other way to find out.
+    update_available = settings.enable_self_update and current_state(db).available
+
     return templates.TemplateResponse(
         request,
         "dashboard.html",
@@ -136,5 +142,6 @@ def dashboard(request: Request, username: str = Depends(login_required)) -> Resp
             "plan": plan,
             "recent_jobs": list_jobs(db, limit=RECENT_JOBS),
             "human_bytes": human_bytes,
+            "update_available": update_available,
         },
     )

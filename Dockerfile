@@ -47,14 +47,56 @@ FROM python:3.14-slim
 # TLS in front of uvicorn, openssl generates a self-signed certificate on
 # first run if none is supplied. Both are skipped entirely, at no image-size
 # cost beyond their own package weight, when the feature is off.
+#
 RUN apt-get update && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends nginx-light openssl \
     && rm -rf /var/lib/apt/lists/*
 
+# The Docker CLI and Compose plugin, for self-update (XCP_PULSE_ENABLE_SELF_UPDATE,
+# opt-in and off by default — see app/update.py): applying an update runs
+# `docker compose pull`/`up -d` against the Docker socket mounted in for that
+# purpose. Client only — no dockerd — so their presence in the image grants
+# nothing on its own; the socket mount is the actual privilege, and that
+# stays out of docker-compose.yml.example unless the operator opts in.
+#
+# From Docker's own apt repo, not Debian's docker-cli/docker-compose packages:
+# Debian trixie ships Compose 2.26.1, which predates `format: raw` support in
+# env_file — the exact setting docker-compose.yml.example relies on to hand
+# xcp-pulse.env's Argon2 hash to the container unmangled (see its comment).
+# Compose silently refuses to even parse the file on that version
+# ("unsupported env_file format \"raw\""), which would make every `docker
+# compose pull`/`up -d` this feature runs fail outright. Docker's repo tracks
+# current upstream releases, the same ones a real `docker compose` install
+# gets, so the recreator's `docker compose` behaves the same as the one an
+# operator would run by hand on their host.
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+    && install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
+    && chmod a+r /etc/apt/keyrings/docker.asc \
+    && . /etc/os-release \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $VERSION_CODENAME stable" \
+        > /etc/apt/sources.list.d/docker.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends docker-ce-cli docker-compose-plugin \
+    && apt-get purge -y --auto-remove curl gnupg \
+    && rm -rf /var/lib/apt/lists/* /etc/apt/sources.list.d/docker.list /etc/apt/keyrings/docker.asc
+
+# Set only by docker-compose.dev.yml (build.args), never by the published
+# release workflow, which passes no build args at all — so this is empty on
+# every real GHCR image and "true" only on an image built locally from
+# source. See app/update.py for why this matters: a local build tagged the
+# same as the published image (docker-compose.dev.yml deliberately keeps the
+# same image: name) still gets a real, different digest once built, and a
+# bare digest comparison cannot tell "this is a newer local build" apart from
+# "this is genuinely behind" — both look identical to the check. This flag is
+# the difference.
+ARG XCP_PULSE_DEV_BUILD=""
+
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH="/opt/venv/bin:$PATH" \
-    XCP_PULSE_DATA_DIR=/data
+    XCP_PULSE_DATA_DIR=/data \
+    XCP_PULSE_DEV_BUILD=${XCP_PULSE_DEV_BUILD}
 
 WORKDIR /srv/xcp-pulse
 

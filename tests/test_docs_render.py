@@ -22,6 +22,7 @@ USER_GUIDE_SLUGS = {
     "date-ranges",
     "settings",
     "users-and-roles",
+    "update",
 }
 TOP_LEVEL_SLUGS = {"installation", "configuration", "architecture"}
 
