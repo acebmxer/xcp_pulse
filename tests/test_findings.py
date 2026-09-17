@@ -362,7 +362,7 @@ def test_a_failed_backup_with_no_recognisable_detail_shape_falls_back_to_the_cou
 
     finding = report.findings[0]
     assert finding.evidence == "1 run(s) ended 'failure' within the window."
-    assert "Open the backup job in Xen Orchestra" in finding.action
+    assert "Collect XO diagnostics" in finding.action
 
 
 def test_a_failed_backup_whose_detail_fetch_is_refused_falls_back_to_the_count() -> None:
@@ -373,6 +373,416 @@ def test_a_failed_backup_whose_detail_fetch_is_refused_falls_back_to_the_count()
 
     finding = report.findings[0]
     assert finding.evidence == "1 run(s) ended 'failure' within the window."
+
+
+def test_two_distinct_failure_causes_for_one_job_each_become_their_own_finding() -> None:
+    """Reported directly, from a real window with five failed "Delta Backup"
+    runs that were actually two distinct problems: two failed because the
+    remote was unreachable, three failed later from an unrelated host
+    outage. Grouping only by job (keeping just the latest run's cause)
+    reported one finding with a count of five, silently absorbing the first,
+    unrelated failure into the second one's count. The two causes must be
+    two findings, each counting only the runs that share it."""
+    remote_1 = _backup(status="failure", job_name="Delta Backup", ago_days=0.9)
+    remote_2 = _backup(status="failure", job_name="Delta Backup", ago_days=0.8)
+    outage = _backup(status="failure", job_name="Delta Backup", ago_days=0.1)
+    remote_detail = {"message": "backup", "result": {"message": "couldn't instantiate any remote"}}
+    outage_detail = {
+        "tasks": [
+            {
+                "status": "failure",
+                "message": "backup VM",
+                "data": {"type": "VM", "name_label": "DockerThings"},
+                "result": {"message": "HOST_OFFLINE(OpaqueRef:host)"},
+            }
+        ]
+    }
+    report = _run(
+        backup_logs=[remote_1, remote_2, outage],
+        backup_log_detail={
+            remote_1["id"]: remote_detail,
+            remote_2["id"]: remote_detail,
+            outage["id"]: outage_detail,
+        },
+    )
+
+    failures = [f for f in report.findings if f.title == "Backup job failed: Delta Backup"]
+    assert len(failures) == 2
+    remote_finding = next(f for f in failures if "couldn't instantiate any remote" in f.evidence)
+    outage_finding = next(f for f in failures if "HOST_OFFLINE" in f.evidence)
+    assert remote_finding.count == 2
+    assert outage_finding.count == 1
+    # Sorted most recent first, same as the rest of the report.
+    assert report.findings.index(outage_finding) < report.findings.index(remote_finding)
+
+
+def test_a_per_vm_backup_failure_names_the_vm_and_the_cascaded_reason() -> None:
+    """Shaped from a real detail tree, captured live during an actual host
+    outage (job "Delta Backup"): the top level has no ``result`` at all — only
+    a whole-job failure puts the reason there — and each VM has its own task
+    under ``tasks``. Here the VM task's children (clean-vm, snapshot, export)
+    all succeeded; the error is a XAPI call the VM task made directly, so the
+    VM task itself is the deepest failing node."""
+    record = _backup(status="failure", job_name="Delta Backup")
+    detail = {
+        "message": "backup",
+        "tasks": [
+            {
+                "status": "failure",
+                "message": "backup VM",
+                "data": {"type": "VM", "name_label": "Audiobookshelf"},
+                "tasks": [
+                    {"status": "success", "message": "clean-vm"},
+                    {"status": "success", "message": "snapshot"},
+                    {"status": "success", "message": "export"},
+                ],
+                "result": {"message": "HOST_OFFLINE(OpaqueRef:host)", "name": "XapiError"},
+            }
+        ],
+    }
+    report = _run(backup_logs=[record], backup_log_detail={record["id"]: detail})
+
+    finding = report.findings[0]
+    assert finding.evidence.startswith(
+        "backup VM failed for Audiobookshelf: HOST_OFFLINE(OpaqueRef:host)"
+    )
+    assert finding.action == "Fix the failing step named above, then re-run the job."
+
+
+def test_a_per_vm_backup_failure_prefers_the_failing_child_step_over_its_parent() -> None:
+    """Also shaped from the same real run: one VM's own "snapshot" child task
+    failed with a distinct real reason (SR_BACKEND_FAILURE_82) while the VM's
+    own status cascaded up to "failure" too, with nothing informative of its
+    own beyond that cascade — the child is the node worth naming."""
+    record = _backup(status="failure", job_name="Delta Backup")
+    detail = {
+        "message": "backup",
+        "tasks": [
+            {
+                "status": "failure",
+                "message": "backup VM",
+                "data": {"type": "VM", "name_label": "Beacon_PXE"},
+                "tasks": [
+                    {"status": "success", "message": "clean-vm"},
+                    {
+                        "status": "failure",
+                        "message": "snapshot",
+                        "result": {
+                            "message": "SR_BACKEND_FAILURE_82(failed to pause VDI)",
+                            "name": "XapiError",
+                        },
+                    },
+                    {"status": "success", "message": "clean-vm"},
+                ],
+            }
+        ],
+    }
+    report = _run(backup_logs=[record], backup_log_detail={record["id"]: detail})
+
+    finding = report.findings[0]
+    assert "snapshot failed for Beacon_PXE: SR_BACKEND_FAILURE_82" in finding.evidence
+
+
+def test_a_backup_failure_with_no_vm_typed_task_falls_back_to_the_count() -> None:
+    """A per-VM tree with no recognisable VM-typed failing task (e.g. an
+    unrelated shape) degrades to the generic count, same as any other
+    unrecognised detail shape."""
+    record = _backup(status="failure", job_name="Delta Backup")
+    detail = {"message": "backup", "tasks": [{"status": "failure", "message": "something else"}]}
+    report = _run(backup_logs=[record], backup_log_detail={record["id"]: detail})
+
+    finding = report.findings[0]
+    assert finding.evidence == "1 run(s) ended 'failure' within the window."
+
+
+def test_a_successful_run_that_silently_fell_back_to_full_is_reported() -> None:
+    """Shaped from a real detail tree, captured live: disabling NBD on the
+    pool's network connection while leaving NBD enabled in the job forces
+    every VM to fall back from delta to full, with the run still recorded as
+    a plain "success". The NBD-specific warning line is preferred in the
+    evidence since it is the only one of the three real lines that says why."""
+    record = _backup(status="success", job_name="Delta Backup")
+    detail = {
+        "tasks": [
+            {
+                "status": "success",
+                "message": "backup VM",
+                "data": {"type": "VM", "name_label": "Audiobookshelf"},
+                "warnings": [
+                    {"message": "can't compute delta OpaqueRef:a from OpaqueRef:b, fall back"},
+                    {"message": "can't connect through NBD, fall back to stream export"},
+                    {"message": "Backup fell back to a full"},
+                ],
+            },
+            {
+                "status": "success",
+                "message": "backup VM",
+                "data": {"type": "VM", "name_label": "DockerThings"},
+                "warnings": [
+                    {"message": "can't compute delta OpaqueRef:c from OpaqueRef:d, fall back"},
+                    {"message": "can't connect through NBD, fall back to stream export"},
+                    {"message": "Backup fell back to a full"},
+                ],
+            },
+        ]
+    }
+    report = _run(backup_logs=[record], backup_log_detail={record["id"]: detail})
+
+    finding = report.findings[0]
+    assert finding.severity == WARNING
+    assert finding.title == "Backup job silently fell back to full: Delta Backup"
+    assert "Audiobookshelf" in finding.evidence
+    assert "DockerThings" in finding.evidence
+    assert "can't connect through NBD, fall back to stream export" in finding.evidence
+    # One degraded run, even though it affected two VMs — count tracks runs,
+    # matching `_failed_runs`' own convention, not VMs within a run.
+    assert finding.count == 1
+    assert "NBD" in finding.action
+
+
+def test_a_fallback_with_no_named_cause_does_not_blame_nbd() -> None:
+    """Reported directly, twice. First: not every fallback is an NBD problem.
+    A run whose only warnings are the generic "can't compute delta ..." and
+    "Backup fell back to a full" lines — with no "can't connect through NBD"
+    line at all — has no confirmed cause, so the action text must not blame
+    NBD, or even mention it, unless the kept message actually names it.
+    Second: telling the operator to go open the run in Xen Orchestra
+    themselves to find out why is the exact failure this whole project exists
+    to eliminate — the action must give a concrete next step (reset the delta
+    chain with a manual full backup) instead of punting the investigation
+    back to the operator."""
+    record = _backup(status="success", job_name="Delta Backup")
+    detail = {
+        "tasks": [
+            {
+                "status": "success",
+                "message": "backup VM",
+                "data": {"type": "VM", "name_label": "XO-CE"},
+                "warnings": [
+                    {"message": "can't compute delta OpaqueRef:a from OpaqueRef:b, fall back"},
+                    {"message": "Backup fell back to a full"},
+                ],
+            }
+        ]
+    }
+    report = _run(backup_logs=[record], backup_log_detail={record["id"]: detail})
+
+    finding = report.findings[0]
+    assert "NBD" not in finding.evidence
+    assert "NBD" not in finding.action
+    assert "open the run in Xen Orchestra" not in finding.action
+    assert "Trigger a manual full backup" in finding.action
+
+
+def test_a_successful_run_with_no_warnings_is_not_reported() -> None:
+    """A normal run's tasks carry no ``warnings`` at all — confirmed live —
+    so the absence of the key, not an empty list, is the common case."""
+    record = _backup(status="success", job_name="Delta Backup")
+    detail = {
+        "tasks": [
+            {
+                "status": "success",
+                "message": "backup VM",
+                "data": {"type": "VM", "name_label": "Audiobookshelf"},
+                "warnings": None,
+            }
+        ]
+    }
+    report = _run(backup_logs=[record], backup_log_detail={record["id"]: detail})
+
+    assert report.findings == []
+
+
+def test_a_vms_unrelated_warnings_do_not_trigger_a_false_fallback_finding() -> None:
+    """Detection is a substring match on "fall back" — a VM with some other
+    warning line must not be swept in."""
+    record = _backup(status="success", job_name="Delta Backup")
+    detail = {
+        "tasks": [
+            {
+                "status": "success",
+                "message": "backup VM",
+                "data": {"type": "VM", "name_label": "Audiobookshelf"},
+                "warnings": [{"message": "some unrelated notice"}],
+            }
+        ]
+    }
+    report = _run(backup_logs=[record], backup_log_detail={record["id"]: detail})
+
+    assert report.findings == []
+
+
+def test_a_failed_run_is_never_checked_for_a_silent_fallback() -> None:
+    """A failed run is already ``_failed_runs``' finding — a run's own
+    ``warnings`` are never consulted unless its status is "success"."""
+    record = _backup(status="failure", job_name="Delta Backup")
+    detail = {
+        "tasks": [
+            {
+                "status": "failure",
+                "message": "backup VM",
+                "data": {"type": "VM", "name_label": "Audiobookshelf"},
+                "warnings": [{"message": "fall back to a full"}],
+            }
+        ]
+    }
+    report = _run(backup_logs=[record], backup_log_detail={record["id"]: detail})
+
+    assert len(report.findings) == 1
+    assert report.findings[0].title == "Backup job failed: Delta Backup"
+
+
+def test_an_earlier_degraded_run_still_reports_even_when_the_latest_run_failed() -> None:
+    """Reported directly: an operator with a 24-hour window containing both an
+    earlier silently-degraded run and a later outright failure for the same
+    job saw only the failure — the degraded run was inside the chosen window
+    and simply never looked at, because the check used to examine only each
+    job's single latest run. A date range's whole point is that everything
+    inside it is reported, not just the newest thing, so both must appear."""
+    degraded_run = _backup(status="success", job_name="Delta Backup", ago_days=0.7)
+    failed_run = _backup(status="failure", job_name="Delta Backup", ago_days=0.1)
+    degraded_detail = {
+        "tasks": [
+            {
+                "status": "success",
+                "message": "backup VM",
+                "data": {"type": "VM", "name_label": "Audiobookshelf"},
+                "warnings": [{"message": "can't connect through NBD, fall back to stream export"}],
+            }
+        ]
+    }
+    failed_detail = {
+        "tasks": [
+            {
+                "status": "failure",
+                "message": "backup VM",
+                "data": {"type": "VM", "name_label": "Audiobookshelf"},
+                "result": {"message": "HOST_OFFLINE(OpaqueRef:host)"},
+            }
+        ]
+    }
+    report = _run(
+        backup_logs=[degraded_run, failed_run],
+        backup_log_detail={
+            degraded_run["id"]: degraded_detail,
+            failed_run["id"]: failed_detail,
+        },
+    )
+
+    titles = _titles(report)
+    assert "Backup job failed: Delta Backup" in titles
+    assert "Backup job silently fell back to full: Delta Backup" in titles
+    degraded = next(f for f in report.findings if "fell back" in f.title)
+    assert "can't connect through NBD" in degraded.evidence
+
+
+def test_two_distinct_causes_in_the_window_each_become_their_own_finding() -> None:
+    """Two different causes for the same job must not be bundled into one
+    finding — each is its own finding, with its own real date, the same way
+    `_classify_events` already treats the same message name recurring on two
+    different objects as two findings rather than one."""
+    older = _backup(status="success", job_name="Delta Backup", ago_days=2.0)
+    newer = _backup(status="success", job_name="Delta Backup", ago_days=1.0)
+    older_detail = {
+        "tasks": [
+            {
+                "status": "success",
+                "message": "backup VM",
+                "data": {"type": "VM", "name_label": "Audiobookshelf"},
+                "warnings": [{"message": "Backup fell back to a full"}],
+            }
+        ]
+    }
+    newer_detail = {
+        "tasks": [
+            {
+                "status": "success",
+                "message": "backup VM",
+                "data": {"type": "VM", "name_label": "DockerThings"},
+                "warnings": [{"message": "can't connect through NBD, fall back to stream export"}],
+            }
+        ]
+    }
+    report = _run(
+        backup_logs=[older, newer],
+        backup_log_detail={older["id"]: older_detail, newer["id"]: newer_detail},
+    )
+
+    fallbacks = [f for f in report.findings if "fell back" in f.title]
+    assert len(fallbacks) == 2
+    assert all(f.count == 1 for f in fallbacks)
+    # Sorted most recent first, same as the rest of the report.
+    assert "DockerThings" in fallbacks[0].evidence
+    assert "Audiobookshelf" in fallbacks[1].evidence
+
+
+def test_an_older_bigger_outage_is_its_own_finding_with_its_own_real_date() -> None:
+    """Reported directly, three times, against the same real window: a big
+    outage (7 VMs, a named NBD cause) that was older than two later runs
+    where only one VM (with a generic, causeless summary line) kept
+    degrading. First, the older outage was completely invisible, discarded in
+    favour of whichever run happened to be newest — fixed to keep every
+    distinct cause. Then those causes were bundled as lines inside one
+    job-level finding, so the finding's own displayed age was always the
+    *most recent* line's — the older outage's real date was hidden a day
+    behind the card's own age, and lines were sorted by how many VMs they
+    affected rather than by date, which read as wrong regardless of
+    severity. Fixed properly: each distinct cause is its own finding with its
+    own real timestamp, so no ordering logic is needed here at all — the
+    report's own overall sort already places each one where it actually
+    happened. The two later, identical single-VM occurrences still collapse
+    into one finding with a run count."""
+    outage = _backup(status="success", job_name="Delta Backup", ago_days=2.0)
+    later_1 = _backup(status="success", job_name="Delta Backup", ago_days=1.5)
+    later_2 = _backup(status="success", job_name="Delta Backup", ago_days=0.5)
+    outage_detail = {
+        "tasks": [
+            {
+                "status": "success",
+                "message": "backup VM",
+                "data": {"type": "VM", "name_label": vm},
+                "warnings": [{"message": "can't connect through NBD, fall back to stream export"}],
+            }
+            for vm in ["Audiobookshelf", "DockerThings", "XO-CE", "Seedbox", "Beacon_PXE"]
+        ]
+    }
+    small_detail = {
+        "tasks": [
+            {
+                "status": "success",
+                "message": "backup VM",
+                "data": {"type": "VM", "name_label": "XO-CE"},
+                "warnings": [{"message": "Backup fell back to a full"}],
+            }
+        ]
+    }
+    report = _run(
+        backup_logs=[outage, later_1, later_2],
+        backup_log_detail={
+            outage["id"]: outage_detail,
+            later_1["id"]: small_detail,
+            later_2["id"]: small_detail,
+        },
+    )
+
+    fallbacks = [f for f in report.findings if "fell back" in f.title]
+    assert len(fallbacks) == 2
+    # The two later, identical occurrences collapse into one finding...
+    small = next(f for f in fallbacks if "XO-CE:" in f.evidence and "Beacon_PXE" not in f.evidence)
+    assert small.count == 2
+    assert small.evidence == "XO-CE: Backup fell back to a full (2 run(s))"
+    # ...but the older 5-VM outage is not discarded, and carries its own,
+    # older, correct timestamp — not the newer runs' age.
+    outage_finding = next(f for f in fallbacks if "Beacon_PXE" in f.evidence)
+    assert outage_finding.count == 1
+    assert outage_finding.at < small.at
+
+
+def test_a_refused_fallback_detail_fetch_does_not_lose_other_jobs_findings() -> None:
+    record = _backup(status="success", job_name="Delta Backup")
+    report = _run(backup_logs=[record], backup_log_detail=XoError("no permission"))
+
+    assert report.findings == []
 
 
 def test_a_failed_restore_outranks_a_failed_backup() -> None:
@@ -650,6 +1060,33 @@ def test_log_findings_reads_a_bundle_and_groups_repeated_lines(tmp_path) -> None
     }
     assert len(report.findings) == 4
     assert sorted(finding.count for finding in report.findings) == [1, 1, 1, 2]
+
+
+def test_log_findings_evidence_is_the_line_with_the_latest_parsed_timestamp(tmp_path) -> None:
+    """A bundle's members are not read in chronological order — a rotated
+    ``xensource.log.1`` can land in the tar after the current
+    ``xensource.log`` — so "the last matching line the tar happened to yield"
+    is not "the most recent event" without checking each line's own
+    timestamp. Here the genuinely older-dated line is archived *second* (the
+    order a naive "last one wins" implementation would pick), and evidence
+    must still be the line whose own timestamp is later."""
+    older = tmp_path / "xensource.log.1"
+    older.write_text("2026-09-01T00:00:00Z multipathd reports failed path (rotated, older)")
+    newer = tmp_path / "xensource.log"
+    newer.write_text("2026-09-17T00:00:00Z multipathd reports failed path (current, newer)")
+    bundle = tmp_path / "logs.tar.gz"
+    with tarfile.open(bundle, "w:gz") as archive:
+        # Newer-dated content archived first, older-dated content archived
+        # second — the reverse of chronological order.
+        archive.add(newer, arcname="var/log/xensource.log")
+        archive.add(older, arcname="var/log/xensource.log.1")
+
+    report = collect_log_findings(bundle)
+
+    finding = next(f for f in report.findings if f.source == "logs_multipath")
+    assert finding.count == 2
+    assert "current, newer" in finding.evidence
+    assert "rotated, older" not in finding.evidence
 
 
 def test_log_findings_date_range_excludes_lines_outside_the_window(tmp_path) -> None:

@@ -532,11 +532,82 @@ four sources is worth more than an error.
 **A failed backup or restore job's evidence names the specific cause when it
 can.** `_failed_runs` fetches the most recent failing run's full detail tree
 (`XoClient.backup_log_detail`/`restore_log_detail`) and folds
-`backup_failure_message`'s headline into the evidence, replacing the generic
+`_detail_failure_cause`'s headline into the evidence, replacing the generic
 "N run(s) ended 'failure'" that a bare pass/fail summary is all that could say
-before. A detail fetch that is refused, or a detail tree with no recognisable
-message shape, degrades to that generic text rather than losing the finding —
-the same "never fail the run over one source" posture, one level deeper.
+before. That headline tries two real shapes in turn:
+`backup_failure_message` (a whole-job failure — nothing ran, e.g. the remote
+was unreachable; the reason sits at the top of the tree) and, when that finds
+nothing, `_locate_backup_failure` (a per-VM failure — each VM has its own
+task, and either the VM task itself is the deepest failure or one of its
+steps is; the walk always prefers a failing step over its failing parent, and
+names both the VM and the step). A detail fetch that is refused, or a detail
+tree matching neither shape, degrades to the generic count text rather than
+losing the finding — the same "never fail the run over one source" posture,
+one level deeper. Its action text points at collecting XO diagnostics (this
+project's own archive of the full task tree), not at opening Xen Orchestra —
+sending the operator away to investigate themselves is the exact gap this
+whole feature exists to close, and the fallback path is no exception.
+
+**A backup job that silently fell back from delta to full is its own
+finding, separate from a failure.** Confirmed live: disabling NBD on the
+pool's network connection while leaving NBD enabled in the job forces every
+VM to fall back, and the run is still recorded as a plain `success` —
+invisible to `_failed_runs`, which only ever looks at failed runs.
+`_degraded_backups` checks **every** `success` run in the window, not only a
+job's latest one — a job whose most recent run failed outright (already
+`_failed_runs`' finding) must not hide an earlier degraded run in the same
+window, since a date range's whole point is that everything inside it is
+reported. The actual scan is `_fallback_vms`, which checks each VM task's
+`warnings` for a "fall back"/"fell back" substring (both tenses — a VM whose
+only warning is the past-tense summary line must still be caught) and
+returns the affected VMs with the one line among the three real ones
+observed that actually names a cause (`"can't connect through NBD, ..."`)
+preferred over the generic/verbose lines.
+
+**Every distinct cause in the window is its own finding, not a line bundled
+into one job-level summary.** Reported directly, against a real window with
+three degraded runs: bundling every cause into one finding meant that
+finding's own displayed age was always the *most recent* cause's — an older,
+genuine NBD outage (seven VMs, a named cause) had its real date hidden a day
+behind a later, unrelated single-VM run's generic "Backup fell back to a
+full" summary sharing the same card. (Before that, the older outage was
+discarded from the evidence entirely, kept only if it happened to be the
+most recent run — and after that fix, still buried by a wrong choice to sort
+the bundled lines by VM count instead of date.) `_degraded_backups` now
+groups by job *and* cause and emits one finding per distinct cause, each
+with its own real timestamp — the same way `_classify_events` already
+treats the same message name recurring on two different objects as two
+findings, not one. This needs no ordering logic of its own: each finding
+falls into the report's overall chronological order via `sort_findings` like
+everything else. Identical (VM, cause) repeats across separate runs still
+collapse into one finding with a run count.
+
+**Not every fallback is an NBD problem, and the action text says so.**
+Confirmed by re-checking every real Delta Backup run on a live pool over 30
+days: one VM fell back to full three separate times with no stated cause at
+all — no `"can't connect through NBD"` line, just the generic
+`"can't compute delta ...`/`"Backup fell back to a full"` lines — completely
+unrelated to a separate, one-time, confirmed NBD outage on the same job.
+Telling the operator to check NBD for a fallback that never named NBD is
+wrong advice — and even mentioning NBD to rule it out is still bringing up a
+cause the log itself never named, which is its own kind of wrong. The action
+text now checks whether the kept message actually contains "NBD" before
+saying to check it; otherwise it says plainly that Xen Orchestra did not
+name a reason, with no mention of NBD at all — and instead of sending the
+operator to Xen Orchestra to investigate, recommends the standard fix for an
+unstated delta failure (a manual full backup, to reset the chain). Sending
+the operator away to find their own answer is the exact "backup failed, go
+look in XO yourself" gap this whole feature exists to close.
+
+**A log findings run's evidence is chosen by the line's own parsed
+timestamp, never by tar read order.** A bundle's members are not read in
+chronological order — a rotated `xensource.log.2.gz` can land in the archive
+before or after the current `xensource.log` — so `collect_log_findings`
+previously kept whichever matching line the tar happened to yield *last*,
+which is not the same as the line that actually happened last. It now calls
+`log_dates.parse_log_timestamp` on each match and only replaces the kept
+evidence when the new line's parsed time is later; a line whose timestamp
+cannot be parsed never overwrites a later, dated one.
 
 **Evidence is masked before it is stored**, by `redact.redact_line` under the
 rules switched on at the time — not by a second masking implementation for

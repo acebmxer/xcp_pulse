@@ -40,7 +40,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.log_dates import DateRange, line_in_range
+from app.log_dates import DateRange, line_in_range, parse_log_timestamp
 from app.redact import RULES, redact_line
 from app.xo_client import Pool, XoClient, XoError
 
@@ -860,9 +860,16 @@ def collect_log_findings(
                                 # Log lines usually carry a timestamp, process id, or
                                 # changing object detail. Those values make identical
                                 # failures look different, so group by the detected
-                                # condition and keep the latest matching line as evidence.
+                                # condition and keep the most recent matching line as
+                                # evidence — by the line's own parsed timestamp, never
+                                # by which line the tar happened to yield last. A
+                                # bundle's members are not read in chronological order
+                                # (a rotated ``xensource.log.2.gz`` can be read before
+                                # or after the current ``xensource.log``), so "last
+                                # seen" is not "most recent" without checking the date.
                                 key = source
                                 item = grouped.get(key)
+                                line_at = parse_log_timestamp(line)
                                 if item is None:
                                     grouped[key] = {
                                         "severity": severity,
@@ -872,10 +879,15 @@ def collect_log_findings(
                                         "source": source,
                                         "count": 1,
                                         "family": _LOG_SOURCE_FAMILIES.get(source),
+                                        "at": line_at,
                                     }
                                 else:
                                     item["count"] += 1
-                                    item["evidence"] = line
+                                    if line_at is not None and (
+                                        item["at"] is None or line_at >= item["at"]
+                                    ):
+                                        item["evidence"] = line
+                                        item["at"] = line_at
                 if progress is not None:
                     consumed = min(member.offset_data + member.size, total_bytes)
                     progress(int(10 + 80 * consumed / total_bytes), f"Scanning {member.name}")
@@ -1174,11 +1186,14 @@ def _from_patches(client: XoClient, pools: list[Pool], enabled) -> tuple[list[Fi
 def _from_backups(
     client: XoClient, cutoff: float, now: float, enabled, *, end: float | None = None
 ) -> tuple[list[Finding], int]:
-    """Findings from backup runs: failures, and jobs that have stopped running.
+    """Findings from backup runs: failures, stopped jobs, and silent fallbacks.
 
     A job whose last run failed and a job that has not run at all are different
     problems with the same consequence, so both are reported. The second is the
-    one nobody notices, because every dashboard it appears on looks green.
+    one nobody notices, because every dashboard it appears on looks green. A
+    job that "succeeded" but silently dropped from delta to full for every VM
+    (``_degraded_backups``) is a third variant of the same blind spot — the run
+    status alone says nothing is wrong.
 
     Staleness (``_stale_backups``) is a state check against the *latest* run
     regardless of ``end`` — a date range narrows which failures are reported,
@@ -1195,6 +1210,7 @@ def _from_backups(
         detail_fn=client.backup_log_detail,
     )
     findings.extend(_stale_backups(records, now, enabled))
+    findings.extend(_degraded_backups(client, records, cutoff, enabled, end=end))
     return findings, len(records)
 
 
@@ -1232,18 +1248,32 @@ def _failed_runs(
     end: float | None = None,
     detail_fn: Callable[[str], dict[str, Any]] | None = None,
 ) -> list[Finding]:
-    """One finding per job whose runs failed, counting the failures.
+    """One finding per distinct cause of a job's runs failing, counting the
+    failures that share that cause.
 
     ``detail_fn``, when given (``XoClient.backup_log_detail`` or
-    ``restore_log_detail``), fetches the full detail tree for each job's most
-    recent failing run and folds ``backup_failure_message`` — the specific
-    reason, when the API's detail has it — into the evidence, in place of the
+    ``restore_log_detail``), fetches the full detail tree for **every**
+    failing run in the window — not only the job's most recent one — and
+    folds ``_detail_failure_cause`` into the evidence, in place of the
     generic "N run(s) ended 'failure'" text that is all a bare pass/fail
-    summary can say. One job's detail fetch failing (or finding no
-    recognisable message shape) degrades that job's finding to the generic
-    text rather than losing it or failing the whole run.
+    summary can say.
+
+    This mirrors ``_degraded_backups``'s own history: an earlier version here
+    inspected only the latest failing run's cause and counted every other
+    failure against it, which silently merges genuinely different problems.
+    Confirmed live: a real window held five failed "Delta Backup" runs that
+    were actually two distinct problems — two failed because the remote was
+    unreachable ("couldn't instantiate any remote"), three failed later from
+    an unrelated host outage (``HOST_OFFLINE`` cascade) — and grouping by job
+    alone reported only the second cause, with a count of five that silently
+    absorbed the first. Grouping is by job *and* cause instead, so two
+    different causes are two findings, the same way ``_classify_events``
+    already treats a repeated message on two different objects. A cause that
+    cannot be determined (the detail fetch is refused, or the tree has no
+    recognisable shape) is its own group per job, same as before, so runs
+    with no specific reason still count together rather than one per run.
     """
-    grouped: dict[str, dict[str, Any]] = {}
+    causes: dict[tuple[str, str | None], dict[str, Any]] = {}
 
     for record in records:
         status = str(record.get("status") or "").lower()
@@ -1255,18 +1285,16 @@ def _failed_runs(
             continue
 
         name = str(record.get("jobName") or record.get("jobId") or "unnamed job")
-        item = grouped.setdefault(
-            name, {"at": at, "count": 0, "status": status, "id": record.get("id")}
-        )
+        cause = _detail_failure_cause(detail_fn, record.get("id"))
+        key = (name, cause)
+        item = causes.setdefault(key, {"at": at, "count": 0, "status": status})
         item["count"] += 1
-        if at > item["at"]:
+        if at >= item["at"]:
             item["at"] = at
             item["status"] = status
-            item["id"] = record.get("id")
 
     findings = []
-    for name, item in grouped.items():
-        cause = _detail_failure_cause(detail_fn, item["id"])
+    for (name, cause), item in causes.items():
         if cause is not None:
             evidence = (
                 f"{cause} ({item['count']} run(s) ended '{item['status']}' within the window.)"
@@ -1275,8 +1303,9 @@ def _failed_runs(
         else:
             evidence = f"{item['count']} run(s) ended '{item['status']}' within the window."
             action = (
-                f"Open the {noun.lower()} job in Xen Orchestra and read the failed "
-                f"run's tasks — the failing step names the VM or the remote."
+                "The detail for this run could not be read or had no "
+                "recognisable shape. Collect XO diagnostics to archive the full "
+                "task tree for this job."
             )
         findings.append(
             _finding(
@@ -1302,6 +1331,13 @@ def _detail_failure_cause(
     refused or failed fetch, and a detail tree with no recognisable message
     shape are all the same "cannot say anything more specific" outcome here —
     none of them are worth failing the finding over.
+
+    Tries ``backup_failure_message`` first (a whole-job failure — confirmed
+    live to leave ``tasks`` empty and put the reason at the top level), then
+    ``_locate_backup_failure`` (a per-VM failure — confirmed live to leave the
+    top level with no ``result`` at all and the reason inside one VM's task).
+    The two shapes are mutually exclusive in every real run seen so far, so
+    trying both costs nothing when the first finds nothing.
     """
     if detail_fn is None or not log_id:
         return None
@@ -1309,7 +1345,7 @@ def _detail_failure_cause(
         detail = detail_fn(str(log_id))
     except XoError:
         return None
-    return backup_failure_message(detail)
+    return backup_failure_message(detail) or _locate_backup_failure(detail)
 
 
 def backup_failure_message(detail: object) -> str | None:
@@ -1338,6 +1374,70 @@ def backup_failure_message(detail: object) -> str | None:
         return None
     message = result.get("message")
     return message if isinstance(message, str) and message else None
+
+
+def _locate_backup_failure(detail: object) -> str | None:
+    """The specific step and VM behind a *per-VM* run failure, or None.
+
+    ``backup_failure_message`` covers a whole-job failure (nothing ran, e.g.
+    the remote was unreachable). This covers the other real shape, confirmed
+    live during an actual host outage (job "Delta Backup", 7 VMs): each VM
+    gets its own task under ``detail["tasks"]``, tagged
+    ``data: {type: "VM", name_label: ...}``. Sometimes that VM task is itself
+    the deepest failure — its children (clean-vm, snapshot, export) all
+    succeeded, and the error came from a XAPI call the VM task made directly
+    (observed: ``VDI.get_nbd_info`` against an offline host). Sometimes a
+    child step fails instead — observed, same run: one VM's "snapshot" child
+    failed with ``SR_BACKEND_FAILURE_82`` while the VM's own status cascaded
+    up to "failure" too, with no information of its own beyond that cascade.
+    ``_deepest_failure`` always prefers a failing child over its failing
+    parent, since the child is the informative node.
+
+    Returns the first failing VM found, not necessarily the most specific one
+    when several failed in the same run (observed: 6 of 7 VMs failed with the
+    same cascaded ``HOST_OFFLINE``, one with a distinct real cause) — naming
+    one specific step and VM is already strictly better than today's bare
+    count, and picking the "best" one among several is not worth the
+    complexity.
+    """
+    if not isinstance(detail, dict):
+        return None
+    for vm_task in detail.get("tasks") or []:
+        if not isinstance(vm_task, dict):
+            continue
+        data = vm_task.get("data")
+        if not isinstance(data, dict) or data.get("type") != "VM":
+            continue
+        if str(vm_task.get("status") or "").lower() not in ("failure", "interrupted"):
+            continue
+        name = data.get("name_label")
+        if not isinstance(name, str) or not name:
+            continue
+        node = _deepest_failure(vm_task)
+        message = backup_failure_message(node)
+        if message is None:
+            continue
+        step = node.get("message")
+        step = step if isinstance(step, str) and step else "backup"
+        return f"{step} failed for {name}: {message}"
+    return None
+
+
+def _deepest_failure(node: dict[str, Any]) -> dict[str, Any]:
+    """The most specific failing node in a task tree — a child over its parent.
+
+    A VM-level task's own status can read "failure" purely because a child
+    step failed beneath it; the child names the real problem, and the
+    parent's only extra information (the VM name) is already read separately
+    by the caller.
+    """
+    for child in node.get("tasks") or []:
+        if isinstance(child, dict) and str(child.get("status") or "").lower() in (
+            "failure",
+            "interrupted",
+        ):
+            return _deepest_failure(child)
+    return node
 
 
 def _stale_backups(records: list[dict[str, Any]], now: float, enabled) -> list[Finding]:
@@ -1373,6 +1473,171 @@ def _stale_backups(records: list[dict[str, Any]], now: float, enabled) -> list[F
         for name, at in latest.items()
         if at < threshold
     ]
+
+
+def _degraded_backups(
+    client: XoClient,
+    records: list[dict[str, Any]],
+    cutoff: float,
+    enabled,
+    *,
+    end: float | None = None,
+) -> list[Finding]:
+    """One finding per distinct cause of a job's runs "succeeding" while
+    silently falling back to full.
+
+    Confirmed live (2026-09-17): disabling NBD on the pool's network
+    connection while leaving NBD enabled in the backup job forces every VM in
+    that job to fall back from a delta to a full backup, with the run still
+    recorded as a plain ``success`` — invisible to ``_failed_runs``, which
+    only ever looks at failed runs.
+
+    Every ``success`` run in the window is checked, not only the job's latest
+    run — a job whose most recent run failed outright (already reported by
+    ``_failed_runs``) must not hide an earlier degraded run from the same
+    window; that is a second, distinct problem, and the whole point of a date
+    range is that everything inside it gets reported, not just the newest
+    thing.
+
+    Reported directly, three times, against the same real window (three
+    degraded runs: an older 7-VM NBD outage and two later occurrences of one
+    VM with a different, generic cause). First, only the *latest* run's
+    cause was kept, discarding the rest. Fixed to keep every distinct cause —
+    but bundled as extra lines inside one job-level finding, so its own
+    ``at`` was always the *most recent* line's time; the older NBD outage's
+    real date was invisible, hidden a day behind the card's own displayed
+    age. Sorting those bundled lines by how many VMs each cause affected
+    (rather than by date) was also wrong, and got fixed separately — but the
+    bundling itself was the deeper problem. Every distinct cause is now its
+    own finding, with its own real timestamp, exactly the way
+    ``_classify_events`` already treats a repeated message: two different
+    causes for the same job are two findings (same title is fine — the same
+    message on two different objects is already two findings there too), and
+    they fall into the report's overall date order via ``sort_findings`` like
+    everything else, rather than needing their own ordering logic here at
+    all. Identical (VM, cause) repeats across different runs still collapse
+    into one finding with a run count.
+
+    The actual detection and VM naming is ``_fallback_vms``. One run's detail
+    fetch being refused or unreachable is not worth losing every other run's
+    finding over, matching every other source in this module.
+
+    **Not every fallback is an NBD problem.** Flagged directly: only the
+    line naming NBD by name (``"can't connect through NBD, ..."``) confirms
+    that cause — the generic ``"can't compute delta ..., fall back to a
+    full"``/``"Backup fell back to a full"`` lines say only that a delta
+    could not be computed, for any reason XO did not name (a broken chain, a
+    missing checkpoint, anything). Telling the operator to check NBD for a
+    fallback that never named NBD is wrong advice, so the action text below
+    only says that when the kept message actually contains "NBD".
+    """
+    causes: dict[tuple[str, str], dict[str, Any]] = {}
+    for record in records:
+        if str(record.get("status") or "").lower() != "success":
+            continue
+        at = millis_to_seconds(record.get("end")) or millis_to_seconds(record.get("start"))
+        if at is None or at < cutoff or (end is not None and at > end):
+            continue
+        log_id = record.get("id")
+        if not log_id:
+            continue
+        try:
+            detail = client.backup_log_detail(str(log_id))
+        except XoError:
+            continue
+        degraded = _fallback_vms(detail)
+        if not degraded:
+            continue
+
+        name = str(record.get("jobName") or record.get("jobId") or "unnamed job")
+        for vm_name, message in degraded:
+            key = (name, message)
+            cause = causes.setdefault(key, {"vms": [], "run_ids": set(), "at": at})
+            if vm_name not in cause["vms"]:
+                cause["vms"].append(vm_name)
+            cause["run_ids"].add(log_id)
+            cause["at"] = max(cause["at"], at)
+
+    findings = []
+    for (name, message), cause in causes.items():
+        evidence = f"{', '.join(cause['vms'])}: {message}"
+        run_count = len(cause["run_ids"])
+        if run_count > 1:
+            evidence += f" ({run_count} run(s))"
+        if "NBD" in message:
+            action = (
+                "Check NBD is enabled both on the pool's network connection and "
+                "in the backup job — the two are set independently."
+            )
+        else:
+            action = (
+                "Xen Orchestra's own log names no reason. Trigger a manual full "
+                "backup for the affected VM(s) to reset the delta chain — this is "
+                "the standard fix when a delta backup can't compute against its "
+                "last checkpoint for an unstated reason."
+            )
+        findings.append(
+            _finding(
+                severity=WARNING,
+                title=f"Backup job silently fell back to full: {name}",
+                evidence=evidence,
+                action=action,
+                source=SOURCE_BACKUPS,
+                enabled=enabled,
+                at=cause["at"],
+                count=run_count,
+            )
+        )
+    return findings
+
+
+def _fallback_vms(detail: object) -> list[tuple[str, str]]:
+    """VMs in one run's detail tree whose backup silently fell back to full.
+
+    Returns ``(vm_name, message)`` pairs, one per affected VM, in tree order.
+    Detection is a broad "fall back"/"fell back" substring match across all of
+    a VM's ``warnings`` (both tenses, deliberately — a VM whose only warning
+    is the past-tense summary line must still be caught) — confirmed live, a
+    degraded VM's task carries three related lines: a present-tense "can't
+    compute delta OpaqueRef:... from OpaqueRef:..., fall back to a full"
+    (names no cause, carries internal object references), "can't connect
+    through NBD, fall back to stream export" (names the actual cause — this
+    line does **not** contain "to a full", which is why detection cannot
+    search for that specific phrase), and a past-tense "Backup fell back to a
+    full" summary. A normal run's tasks carry no ``warnings`` at all.
+    ``message`` prefers the NBD-specific line when present (it is the only one
+    of the three that says why), else the clean summary line, else whatever
+    fallback line is there.
+    """
+    if not isinstance(detail, dict):
+        return []
+    found = []
+    for vm_task in detail.get("tasks") or []:
+        if not isinstance(vm_task, dict):
+            continue
+        data = vm_task.get("data")
+        if not isinstance(data, dict) or data.get("type") != "VM":
+            continue
+        name = data.get("name_label")
+        if not isinstance(name, str) or not name:
+            continue
+        warnings = vm_task.get("warnings")
+        if not isinstance(warnings, list):
+            continue
+        lines = [
+            warning.get("message")
+            for warning in warnings
+            if isinstance(warning, dict) and isinstance(warning.get("message"), str)
+        ]
+        if not any("fall back" in line or "fell back" in line for line in lines):
+            continue
+        message = next((line for line in lines if "NBD" in line), None)
+        if message is None:
+            message = next((line for line in lines if line.startswith("Backup fell back")), None)
+        if message is None:
+            message = lines[0]
+        found.append((name, message))
+    return found
 
 
 def _from_dashboard(client: XoClient, enabled) -> tuple[list[Finding], int]:

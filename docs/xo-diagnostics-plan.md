@@ -246,7 +246,7 @@ selection refused inline).
 
 ---
 
-### Stage 3 — Findings: name the actual cause of a backup/restore failure
+### Stage 3 — Findings: name the actual cause of a backup/restore failure — ✅ DONE (see Status at bottom of file)
 
 Today's code already admits the gap: `findings.py`'s `_failed_runs` (used by
 both `_from_backups`/`_from_restores`) builds its `action` text as *"Open the
@@ -298,21 +298,36 @@ the real reason `"couldn't instantiate any remote"` was under `result`, and
 `XoError` on the fetch, or no recognisable shape, degrades to the original
 count-only evidence.
 
-**Not yet built, still open:** the deeper per-VM walk this section originally
-specified — locating a failure inside one VM's step (snapshot/transfer/merge)
-when the failure is per-VM rather than whole-job, and naming that VM
-(`data.name_label`) in the evidence. Only the whole-job failure shape above
-has been confirmed against real data; a per-VM failure is a different shape,
-unverified — don't guess it, verify against a real one the same way.
+**Per-VM failure localization: built and confirmed against real data
+(2026-09-17).** During an actual host outage, job "Delta Backup" produced a
+run with 7 failing VMs — confirmed live via the REST API directly
+(`GET /backup-logs/{id}`), not synthesized. That run's top level has no
+`result` at all (only a whole-job failure puts it there); each VM has its own
+task under `tasks`, tagged `data: {type: "VM", name_label: ...}`. Two distinct
+shapes confirmed in the same run: 6 of 7 VMs had the VM task itself as the
+deepest failure (its clean-vm/snapshot/export children all succeeded; the
+error was a XAPI call the VM task made directly — `VDI.get_nbd_info` against
+the offline host, cascaded `HOST_OFFLINE`), and 1 VM ("Beacon_PXE") had its
+"snapshot" child task fail instead with a distinct real reason
+(`SR_BACKEND_FAILURE_82`, "failed to pause VDI") while the VM's own status
+cascaded up to "failure" too with nothing informative of its own. New
+`findings._locate_backup_failure` walks the tree, via new `_deepest_failure`
+preferring a failing child over its failing parent, and names both the VM and
+the specific step/reason. Wired into `_detail_failure_cause` as a fallback
+after `backup_failure_message` (whole-job case) finds nothing. Returns the
+first failing VM found, not necessarily the most specific one when several
+failed in the same run — naming one specific step and VM is already strictly
+better than the bare count.
 
-**Additional scope for this stage, not yet built — a successful-but-degraded
-run, confirmed against real data (2026-09-17):** disabling NBD on the pool's
+**Additional scope for this stage — successful-but-degraded run: built and
+confirmed against real data (2026-09-17).** Disabling NBD on the pool's
 network connection while leaving NBD enabled in the backup job forces every
 VM in that job to silently fall back from a delta to a full backup, with
 nothing reporting a failure anywhere — XO records the run as a plain
 `success`. This is invisible to `_failed_runs`, which only ever looks at
 failed runs. Confirmed live (job "Delta Backup", run id `1789612969276`, 7
-VMs): each affected VM's task in `backup_log_detail`'s `tasks` array carries
+VMs — re-verified directly against the same live run while building this):
+each affected VM's task in `backup_log_detail`'s `tasks` array carries
 a `warnings` list with three related lines — `"can't compute delta
 OpaqueRef:... from OpaqueRef:..., fall back to a full"` (present tense, names
 no cause, carries internal object references), `"can't connect through NBD,
@@ -320,16 +335,141 @@ fall back to stream export"` (names the actual cause — note this line does
 **not** contain "to a full", so a naive "fall back to a full" pattern misses
 it), and `"Backup fell back to a full"` (past tense, the clean summary). A
 normal, non-degraded run's tasks carry no `warnings` at all (`warnings:
-None`) — confirmed on the same job's earlier runs. Building this needs: a
-new pass over each job's *most recent* run regardless of status (not just
-failures — `_failed_runs`' grouping only tracks failed ones), fetching that
-run's detail only when its status is `success` (a failed latest run is
-already `_failed_runs`' job, not this one — one run should be one finding),
-scanning each VM task's `warnings` for the fallback pattern, and reporting
-the affected VM names plus the NBD-specific line when present (preferred
-over the generic/verbose one). Action text should say to check NBD is
-enabled both on the pool's network connection and in the job, since the two
-are set independently.
+None`) — confirmed on the same job's earlier runs.
+
+**Revised 2026-09-17, same day, after direct feedback:** the first version of
+`findings._degraded_backups` only checked each job's *latest* run, skipping
+the check entirely once that run's status was anything but `success`. Nick
+caught this directly — a 24-hour window containing both an earlier degraded
+run and a later outright failure only reported the failure, because the
+degraded run was inside the chosen window and simply never looked at. Fixed:
+it now checks every `success` run in the window (not only the latest), and
+groups by job the same way `_failed_runs` already does — one finding per job,
+counting every degraded run in range, evidenced by the most recent. Re-verified
+live: a 1-day window against the real pool now reports both
+"Backup job silently fell back to full: Delta Backup" (3 runs degraded) and
+"Backup job failed: Delta Backup" (5 runs failed) side by side. Fixing this
+also surfaced a real detection bug: the "fall back" substring match missed a
+VM whose only warning was the past-tense "Backup fell back to a full" summary
+line (which reads "fell back", not "fall back") — `_fallback_vms` now matches
+both tenses.
+
+New `findings._degraded_backups` scans each `success` run in the window and
+calls new `findings._fallback_vms`, which scans each VM task's `warnings` for
+a "fall back"/"fell back" substring and returns the affected VM names with the
+NBD-specific line preferred over the generic/verbose one. The finding's action
+text says to check NBD is enabled both on the pool's network connection and in
+the job, since the two are set independently. Re-run directly against
+`_fallback_vms(detail)` for the real degraded run: all 7 VMs detected, each
+with the NBD-specific line selected. Also verified against today's live data
+that a currently-*failing* latest run for the same job still correctly
+produces only `_failed_runs`' finding, not a second one from this
+path.
+
+**Revised again 2026-09-17, same day, after further direct feedback:** with
+the fix above, the evidence for a job with multiple degraded runs still kept
+only the *most recent* run's cause once counted, discarding the rest. Nick
+caught this too, from a real window with three degraded runs: an older run
+that genuinely was an NBD outage (7 VMs, the real named cause) was completely
+invisible in the evidence, buried behind a single VM's later, generic
+"Backup fell back to a full" line, which happened to be newer. Fixed:
+`_degraded_backups` now groups by job *and* by distinct cause — every
+distinct (VM, cause) combination seen in the window gets its own evidence
+line — with identical repeats across separate runs collapsing into one line
+with a run count.
+
+An intermediate version of that fix ordered the lines by how many VMs each
+cause affected (biggest first), which put the older 7-VM outage ahead of
+runs that happened later — Nick caught that too, immediately and furiously:
+order has to be by when it actually happened, full stop, not by any measure
+of severity. Fixed to order by recency instead. Re-verified live: the finding
+read `XO-CE: Backup fell back to a full (2 run(s))` first, then the 7-VM NBD
+outage — correct order, but Nick immediately flagged a deeper problem behind
+it, backed by the two runs' actual raw JSON: bundling both causes into one
+job-level finding meant that finding's own `at` (and its displayed "N hours
+ago" age) was always the *most recent* cause's time, silently hiding that the
+NBD outage's real date was a full day earlier than the card made it look —
+correct line order inside the card did not fix a wrong date on the card
+itself.
+
+**Fixed properly, same day:** `_degraded_backups` no longer bundles causes as
+lines inside one finding at all. Every distinct (job, cause) combination is
+now its own finding, with its own real timestamp — the same way
+`_classify_events` already treats the same message name recurring on two
+different objects as two separate findings rather than one. This needs no
+ordering logic of its own: each finding falls into the report's overall
+chronological position via the existing `sort_findings` call, interleaved
+correctly with every other finding type, which is what "just like every
+other thing" actually required all along. Identical (VM, cause) repeats
+across separate runs still collapse into one finding with a run count.
+Verified directly against the two runs' actual downloaded JSON (not just the
+live API pull): the NBD outage is its own finding dated 2026-09-17 03:07 UTC
+(its real time), separate from the `XO-CE: Backup fell back to a full (2
+run(s))` finding dated 2026-09-17 17:32 UTC — and a full live report shows
+both correctly interleaved by actual time among every "Task failed" finding
+around them, exactly matching Xen Orchestra's own backup-log history table.
+
+While checking for the same mistake elsewhere per Nick's explicit "not just
+findings, logs too, everything" instruction: found and fixed a real,
+pre-existing instance of the identical class of bug in
+`collect_log_findings` (unrelated to this stage — it is the log-bundle
+findings path) — it kept whichever matching line the tar archive happened to
+yield *last* as evidence, not the line with the latest actual timestamp. A
+bundle's members are not read in chronological order (a rotated
+`xensource.log.2.gz` can land before or after the current `xensource.log`),
+so that was silently wrong the same way. Now parses each line's own
+timestamp via `log_dates.parse_log_timestamp` and only replaces the kept
+evidence with a line whose parsed time is later.
+
+**One more real bug found the same day, this time a correctness bug, not an
+ordering one:** Nick pointed out directly that not every fallback is an NBD
+problem — the action text was unconditionally telling every operator to
+"check NBD is enabled," even for a fallback whose own warnings never named
+NBD at all. Re-checking every real Delta Backup run on the live pool over 30
+days (35 runs, all manually cross-checked against raw JSON, not just the
+function's output) confirmed it: one VM ("XO-CE") had silently fallen back to
+full three separate times (2026-09-15, twice on 2026-09-16/17) with no stated
+cause each time — no `"can't connect through NBD"` line, just the generic
+`"can't compute delta ..."`/`"Backup fell back to a full"` lines — entirely
+unrelated to the one confirmed NBD outage on the same job. `_degraded_backups`
+now only gives the NBD-specific action when the kept message actually
+contains "NBD"; otherwise it says Xen Orchestra gave no reason, with **no
+mention of NBD at all** — Nick caught, immediately, that the first version of
+this fix still said "this is not necessarily an NBD problem" for the
+generic case, which is technically true but brings up a cause the log never
+named; not mentioning NBD one way or the other is the only correct behaviour
+when the log doesn't say it. This also surfaced a real, previously invisible
+finding on Nick's own pool: XO-CE has a recurring, unexplained delta-backup
+fallback that has nothing to do with the NBD outage and is worth his own
+investigation separately.
+
+**The most serious catch of the day, same fix session:** the generic-cause
+action text — even after removing the NBD mention — still read "open the run
+in Xen Orchestra to see why a delta could not be computed." Nick called this
+out furiously and correctly: that is *exactly* the "backup failed, go look in
+XO yourself" gap named in this plan's own Context section as the reason
+Stage 3 exists at all, reproduced by the fallback path of the very feature
+built to close it. Fixed properly: when no cause is named,
+`_degraded_backups` now recommends the standard real-world fix (trigger a
+manual full backup to reset the delta chain) instead of sending the operator
+away to investigate. The same exact anti-pattern was found, in the same pass,
+in the sibling `_failed_runs` function's own fallback (used when a run's
+detail cannot be read at all) — it said "open the {job} job in Xen Orchestra
+and read the failed run's tasks," the literal original wording quoted in this
+plan's Context section. Fixed the same way: it now recommends collecting XO
+diagnostics — this project's own tool, built in Stage 2, for archiving the
+full task tree — instead of Xen Orchestra's UI.
+
+**Also confirmed real, same session, unrelated to any of the above:** two
+CRITICAL findings ("A host was fenced by high availability" /
+"High availability fenced a host") appeared at the top of a live report,
+newer than every backup-related finding. Nick asked where they came from —
+verified directly against Xen Orchestra's own message log
+(`GET /rest/v0/messages`): real `HA_HOST_FAILED`/`HA_HOST_WAS_FENCED`
+messages on host `xcp-ng-host3`, timestamped minutes before the check. A
+genuine new problem on the live pool, not a bug in this feature.
+
+Stage 3 is now fully built.
 
 ---
 
@@ -457,4 +597,41 @@ restore runs, 98 tasks, 167 messages/alarms), detail fetched for all 33 runs
 (not just failures), 3,180 values masked across ipv4/uuid/hostname, raw and
 redacted copies both downloadable and distinct, delete removes the run from
 the page. Full test suite (764 tests), `ruff check` and `ruff format --check`
-all pass. Stages 3-5 are still unbuilt.
+all pass.
+
+**Stage 3: fully built 2026-09-17, both parts — see the Stage 3 section above
+for the confirmed real data behind each.** `findings._detail_failure_cause`
+now tries `backup_failure_message` (whole-job) then `_locate_backup_failure`
+(per-VM, via `_deepest_failure`) for a failed run's cause; `_from_backups`
+also calls new `_degraded_backups`/`_fallback_vms` for any `success` run in
+the window that silently fell back from delta to full.
+
+This went through six same-day revisions after Nick caught, in turn: the
+initial version only checking a job's latest run (hiding an earlier degraded
+run whenever a later run in the same window had failed outright); then, once
+fixed, the evidence for multiple degraded runs keeping only the most recent
+cause, burying a real NBD outage behind a smaller, later, generic one; then,
+once every cause was kept, sorting the bundled lines by VM count instead of
+date; then that bundling causes into one job-level finding at all was wrong
+regardless of line order, since the finding's own date was always the most
+recent cause's — fixed by making every distinct cause its own finding with
+its own real timestamp; then the exact same "bundle by job, keep only the
+latest cause" defect found, separately, in the sibling `_failed_runs`
+function (real failures, not degraded-but-successful runs) — a real window
+had five failed runs that were actually two distinct causes, and grouping by
+job alone reported only one of them — fixed the same way, one finding per
+(job, cause); and finally that the action text unconditionally told every
+operator to check NBD even when the run's own warnings never named NBD,
+found by re-checking all 35 real Delta Backup runs on the live pool over 30
+days against raw JSON, which also surfaced a real, previously invisible
+finding on Nick's own pool: one VM has a recurring, unexplained delta-backup
+fallback unrelated to the one confirmed NBD outage.
+
+Also fixed, in the same pass, a pre-existing instance of the identical "wrong
+thing decides order" bug in the unrelated `collect_log_findings` path
+(log-bundle findings, not this stage) — found by checking the rest of the
+codebase per Nick's explicit instruction to check everywhere, not just this
+feature. All confirmed directly against live real data on
+`xo-ce.pozzatech.com`, including raw downloaded JSON, not synthesized. Full
+test suite (784 tests), `ruff check` and `ruff format --check` all pass.
+Stages 4-5 are still unbuilt.
