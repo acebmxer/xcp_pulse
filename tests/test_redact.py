@@ -18,7 +18,9 @@ from app.db import init_db
 from app.redact import (
     DEFAULT_ENABLED,
     RULES,
+    build_username_rule,
     enabled_rules,
+    redact_json,
     redact_line,
     redact_text,
     rule_by_name,
@@ -270,3 +272,117 @@ def test_a_new_rule_is_on_even_on_a_database_written_before_it(conn: sqlite3.Con
     conn.commit()
     assert "uuid" in enabled_rules(conn)
     assert "ipv4" not in enabled_rules(conn)
+
+
+# ---- the "username" rule: no fixed pattern of its own ----
+
+
+def test_username_rule_exists_and_is_inert_by_default() -> None:
+    """The static RULES entry matches nothing until given a live list."""
+    rule = rule_by_name("username")
+    assert rule is not None
+    assert rule.pattern is None
+    assert redact_line("nick logged in") == "nick logged in"
+
+
+def test_build_username_rule_with_no_names_returns_the_static_entry() -> None:
+    assert build_username_rule([]) is rule_by_name("username")
+    assert build_username_rule([""]) is rule_by_name("username")
+
+
+def test_build_username_rule_masks_known_names() -> None:
+    rule = build_username_rule(["nick", "claude-test"])
+    assert redact_line("nick logged in", username_rule=rule) == "[USER] logged in"
+    assert redact_line("claude-test ran a job", username_rule=rule) == "[USER] ran a job"
+
+
+def test_build_username_rule_is_case_insensitive() -> None:
+    rule = build_username_rule(["nick"])
+    assert redact_line("NICK logged in", username_rule=rule) == "[USER] logged in"
+
+
+def test_build_username_rule_respects_word_boundaries() -> None:
+    """A username must not eat "nickel" — the same care every other rule takes."""
+    rule = build_username_rule(["nick"])
+    assert redact_line("a nickel fell", username_rule=rule) == "a nickel fell"
+
+
+def test_build_username_rule_ignores_blank_and_duplicate_entries() -> None:
+    rule = build_username_rule(["nick", "", "  ", "nick"])
+    assert redact_line("nick logged in", username_rule=rule) == "[USER] logged in"
+
+
+def test_username_rule_is_off_when_disabled_even_with_a_live_list() -> None:
+    rule = build_username_rule(["nick"])
+    enabled = DEFAULT_ENABLED - {"username"}
+    assert redact_line("nick logged in", enabled, username_rule=rule) == "nick logged in"
+
+
+def test_username_rule_does_not_affect_other_rules() -> None:
+    rule = build_username_rule(["nick"])
+    result = redact_line("nick at 10.0.0.1", username_rule=rule)
+    assert result == "[USER] at [IPv4]"
+
+
+# ---- redact_json: masking a parsed JSON structure ----
+
+
+def test_redact_json_masks_string_leaves_only() -> None:
+    value = {
+        "id": "job-1",
+        "ip": "10.0.0.1",
+        "tags": ["10.0.0.2", 3, None, True],
+        "nested": {"message": "trackid=abc123 failed"},
+    }
+    masked, counts = redact_json(value)
+    assert masked["id"] == "job-1"
+    assert masked["ip"] == "[IPv4]"
+    assert masked["tags"] == ["[IPv4]", 3, None, True]
+    assert masked["nested"]["message"] == "trackid=[TOKEN] failed"
+    assert counts["ipv4"] == 2
+    assert counts["trackid"] == 1
+
+
+def test_redact_json_leaves_keys_untouched() -> None:
+    """A key that happens to look like an address must not be masked."""
+    value = {"10.0.0.1": "reachable"}
+    masked, _ = redact_json(value)
+    assert "10.0.0.1" in masked
+    assert masked["10.0.0.1"] == "reachable"
+
+
+def test_redact_json_respects_the_enabled_set() -> None:
+    value = {"ip": "10.0.0.1", "id": "4c8a1f2e-77b3-4a91-9f0e-2d5c8b1a6e34"}
+    masked, counts = redact_json(value, DEFAULT_ENABLED - {"ipv4"})
+    assert masked["ip"] == "10.0.0.1"
+    assert masked["id"] == "[UUID]"
+    assert "ipv4" not in counts
+
+
+def test_redact_json_supports_the_username_rule() -> None:
+    rule = build_username_rule(["nick"])
+    value = {"properties": {"credentials": {"username": "nick"}}}
+    masked, counts = redact_json(value, username_rule=rule)
+    assert masked["properties"]["credentials"]["username"] == "[USER]"
+    assert counts["username"] == 1
+
+
+def test_redact_json_survives_quotes_and_backslashes_in_values() -> None:
+    """The actual point of walking the tree instead of regexing serialised JSON."""
+    import json
+
+    value = {"message": 'path "C:\\logs\\10.0.0.1.txt" unreachable'}
+    masked, _ = redact_json(value)
+    # Round-tripping proves the structure was never corrupted by a masked value
+    # that happened to contain a quote or backslash.
+    round_tripped = json.loads(json.dumps(masked))
+    assert round_tripped == masked
+    assert "[IPv4]" in masked["message"]
+
+
+def test_redact_json_on_a_bare_string_or_scalar() -> None:
+    masked, counts = redact_json("trackid=abc123")
+    assert masked == "trackid=[TOKEN]"
+    assert counts == {"trackid": 1}
+    assert redact_json(42) == (42, {})
+    assert redact_json(None) == (None, {})

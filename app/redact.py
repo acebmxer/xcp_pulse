@@ -26,7 +26,7 @@ import re
 import sqlite3
 import time
 from collections.abc import Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from app.db import transaction
 
@@ -113,7 +113,7 @@ class Rule:
     name: str
     title: str
     description: str
-    pattern: re.Pattern[str]
+    pattern: re.Pattern[str] | None
     placeholder: str
     keep: frozenset[str] = field(default=frozenset())
 
@@ -123,7 +123,14 @@ class Rule:
         The count is what a redaction report is built from later, which is why
         it is produced here rather than by re-scanning the output — a rule
         whose placeholder its own pattern matches would count wrongly.
+
+        ``pattern`` is ``None`` for a rule with no fixed shape of its own (see
+        "username" below) — matches nothing until a caller supplies a real
+        pattern via a rule built for the occasion.
         """
+        if self.pattern is None:
+            return text, 0
+
         hits = 0
 
         def _replace(match: re.Match[str]) -> str:
@@ -231,6 +238,19 @@ RULES: tuple[Rule, ...] = (
         pattern=re.compile(r"\b(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}\b"),
         placeholder="[HOST]",
     ),
+    Rule(
+        name="username",
+        title="Xen Orchestra usernames",
+        description=(
+            "Account names read live from the connected Xen Orchestra "
+            "instance. Unlike every rule above, this has no fixed pattern of "
+            "its own — see build_username_rule — so it matches nothing here, "
+            "and nothing in the redaction preview page below, which has no "
+            "connection to build a live list from."
+        ),
+        pattern=None,
+        placeholder="[USER]",
+    ),
 )
 
 # Every rule is on unless a caller says otherwise. Turning one off is a
@@ -246,26 +266,72 @@ def rule_by_name(name: str) -> Rule | None:
     return None
 
 
-def active_rules(enabled: frozenset[str] | set[str] | None = None) -> tuple[Rule, ...]:
-    """The rules to apply, in order. ``None`` means all of them."""
-    if enabled is None:
-        return RULES
-    return tuple(rule for rule in RULES if rule.name in enabled)
+def active_rules(
+    enabled: frozenset[str] | set[str] | None = None,
+    *,
+    username_rule: Rule | None = None,
+) -> tuple[Rule, ...]:
+    """The rules to apply, in order. ``None`` means all of them.
+
+    ``username_rule`` substitutes a live-data rule (see ``build_username_rule``)
+    for the static, inert "username" placeholder in ``RULES``. Every existing
+    caller omits it and gets the placeholder, which matches nothing.
+    """
+    rules = RULES if enabled is None else tuple(rule for rule in RULES if rule.name in enabled)
+    if username_rule is not None:
+        rules = tuple(username_rule if rule.name == "username" else rule for rule in rules)
+    return rules
 
 
-def redact_line(line: str, enabled: frozenset[str] | set[str] | None = None) -> str:
+def build_username_rule(usernames: Iterable[str]) -> Rule:
+    """The "username" rule with a pattern built from a live account list.
+
+    A username has no fixed shape, unlike every other rule, so it can only be
+    masked by knowing the real ones. Replaces the static entry's pattern
+    (``dataclasses.replace``, keeping its name/title/placeholder) so hit
+    counting and the on/off toggle both still key off "username" whether or
+    not real data was ever supplied.
+
+    Names are sorted longest first, so a short name is not matched inside a
+    longer one that happens to contain it before the longer alternative is
+    tried, and the pattern is ``\\b``-bounded and case-insensitive so "nick"
+    does not eat "nickel". An empty or absent list returns the static entry
+    unchanged — no usernames to mask is not an error.
+    """
+    base = rule_by_name("username")
+    assert base is not None
+    names = sorted(
+        {name.strip() for name in usernames if name and name.strip()},
+        key=len,
+        reverse=True,
+    )
+    if not names:
+        return base
+    pattern = re.compile(r"(?i)\b(?:" + "|".join(re.escape(name) for name in names) + r")\b")
+    return replace(base, pattern=pattern)
+
+
+def redact_line(
+    line: str,
+    enabled: frozenset[str] | set[str] | None = None,
+    *,
+    username_rule: Rule | None = None,
+) -> str:
     """Mask one line. The unit everything else is built from.
 
     A line rather than a whole file because the caller that matters most reads
     a 56 MB log a line at a time and must never hold it in memory.
     """
-    for rule in active_rules(enabled):
+    for rule in active_rules(enabled, username_rule=username_rule):
         line, _ = rule.apply(line)
     return line
 
 
 def redact_text(
-    text: str, enabled: frozenset[str] | set[str] | None = None
+    text: str,
+    enabled: frozenset[str] | set[str] | None = None,
+    *,
+    username_rule: Rule | None = None,
 ) -> tuple[str, dict[str, int]]:
     """Mask a block of text. Returns the result and per-rule hit counts.
 
@@ -273,7 +339,7 @@ def redact_text(
     CRLFs rewritten no longer matches the file it came from.
     """
     counts: dict[str, int] = {}
-    rules = active_rules(enabled)
+    rules = active_rules(enabled, username_rule=username_rule)
     out: list[str] = []
 
     for line in text.splitlines(keepends=True):
@@ -284,6 +350,48 @@ def redact_text(
         out.append(line)
 
     return "".join(out), counts
+
+
+def redact_json(
+    value: object,
+    enabled: frozenset[str] | set[str] | None = None,
+    *,
+    username_rule: Rule | None = None,
+) -> tuple[object, dict[str, int]]:
+    """Mask every string leaf in a JSON-shaped value.
+
+    Returns the masked value and per-rule hit counts, the same shape
+    ``redact_text`` returns.
+
+    Whole-document regex substitution — running ``redact_text`` on an already
+    serialised JSON string — is unsafe here: a hit spanning or landing on a
+    quote character could corrupt the document. Walking the *parsed* tree and
+    masking only string leaves means a substitution only ever happens inside a
+    value Python already knows is a string, so the surrounding structure can
+    never become invalid.
+
+    Dict keys are left alone — they are the API's own field names (``id``,
+    ``jobId``, ``message``, ...) and masking one would make the document steer
+    a reader wrong about which field they are looking at.
+    """
+    rules = active_rules(enabled, username_rule=username_rule)
+    counts: dict[str, int] = {}
+
+    def _walk(node: object) -> object:
+        if isinstance(node, dict):
+            return {key: _walk(item) for key, item in node.items()}
+        if isinstance(node, list):
+            return [_walk(item) for item in node]
+        if isinstance(node, str):
+            masked = node
+            for rule in rules:
+                masked, hits = rule.apply(masked)
+                if hits:
+                    counts[rule.name] = counts.get(rule.name, 0) + hits
+            return masked
+        return node
+
+    return _walk(value), counts
 
 
 def enabled_rules(conn: sqlite3.Connection) -> frozenset[str]:

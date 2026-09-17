@@ -10,6 +10,26 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+### Added
+
+- **Foundation for collecting raw diagnostics straight from Xen Orchestra's
+  API** — backup/restore job detail, XAPI tasks, and messages/alarms — rather
+  than only the per-host `logs.tgz` bundle. This lays the groundwork only;
+  nothing user-visible ships yet. `XoClient` gained `backup_log_detail` and
+  `restore_log_detail` (`/backup-logs/{id}` and `/restore-logs/{id}` — a
+  different, hyphenated pair of routes from the flat-summary `/backup/logs`
+  and `/restore/logs` already used, returning the full nested per-VM/per-disk
+  task tree instead of just a pass/fail line) and `users` (`/users`, feeding
+  the new redaction rule below). `redact.py` gained `redact_json`, which walks
+  a parsed JSON value and masks only its string leaves — safer than running
+  the existing line-based masking against an already-serialized JSON string,
+  where a hit landing on a quote character could corrupt the document — and a
+  new "username" redaction rule, which unlike every existing rule has no
+  fixed pattern of its own (a username has no consistent shape to match): it
+  ships as an inert placeholder (`pattern=None`, matching nothing) until
+  `build_username_rule` compiles a real one from a live account list at
+  collection time.
+
 ## [0.9.1] - 2026-09-13
 
 ### Fixed

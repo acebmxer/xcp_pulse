@@ -88,6 +88,81 @@ def test_admin_detection_accepts_the_dashboard_route() -> None:
     assert _client(handler).is_admin() is True
 
 
+# ---- single-object reads: backup_log_detail, restore_log_detail, users ----
+
+
+def test_backup_log_detail_returns_the_full_tree() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/backup-logs/abc123")
+        return httpx.Response(200, json={"id": "abc123", "tasks": [{"status": "success"}]})
+
+    result = _client(handler).backup_log_detail("abc123")
+    assert result["id"] == "abc123"
+    assert result["tasks"] == [{"status": "success"}]
+
+
+def test_backup_log_detail_missing_id_raises() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"error": "not found"})
+
+    with pytest.raises(XoError, match="no backup log"):
+        _client(handler).backup_log_detail("nonesuch")
+
+
+def test_backup_log_detail_refused_raises() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, json={"error": "unauthorized"})
+
+    with pytest.raises(XoError, match="refused"):
+        _client(handler).backup_log_detail("abc123")
+
+
+def test_restore_log_detail_uses_its_own_hyphenated_route() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/restore-logs/xyz789")
+        return httpx.Response(200, json={"id": "xyz789"})
+
+    result = _client(handler).restore_log_detail("xyz789")
+    assert result["id"] == "xyz789"
+
+
+def test_restore_log_detail_missing_id_raises() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"error": "not found"})
+
+    with pytest.raises(XoError, match="no restore log"):
+        _client(handler).restore_log_detail("nonesuch")
+
+
+def test_single_object_read_rejects_a_non_dict_body() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=["not", "a", "dict"])
+
+    with pytest.raises(XoError, match="unexpected shape"):
+        _client(handler).backup_log_detail("abc123")
+
+
+def test_users_returns_the_account_list() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/users")
+        return httpx.Response(
+            200,
+            json=[{"id": "1", "email": "nick", "permission": "admin"}],
+        )
+
+    result = _client(handler).users()
+    assert result == [{"id": "1", "email": "nick", "permission": "admin"}]
+
+
+def test_users_for_a_restricted_account_is_an_empty_list_not_a_refusal() -> None:
+    """Matches the same ACL-filtered-collection trap every other read here has."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[])
+
+    assert _client(handler).users() == []
+
+
 def test_restricted_account_gets_200_and_an_empty_list() -> None:
     """Measured behaviour: no 403 on collections, just nothing in them.
 

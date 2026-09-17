@@ -220,6 +220,7 @@ stored URL, token and TLS setting are applied in one place.
 | Method | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
 | `XoClient.alarms` | `(since: float) -> list[dict]` | Alarms raised since a Unix time | `findings.collect_findings` | v0.7.0 |
+| `XoClient.backup_log_detail` | `(log_id: str) -> dict` | Full nested per-VM/per-disk detail for one backup run | not yet called — foundation for an upcoming XO API diagnostics job | unreleased |
 | `XoClient.backup_logs` | `(since: float) -> list[dict]` | Backup job runs since a Unix time | `findings.collect_findings` | v0.7.0 |
 | `XoClient.check_log_export` | `(*, is_admin: bool) -> LogExportSupport` | Whether this account can download host logs, and why not | `test_connection`, settings page | v0.2.0 |
 | `XoClient.grantable_host_actions` | `() -> set[str]` | Host actions this instance can grant to a role | `check_log_export` | v0.2.0 |
@@ -231,8 +232,10 @@ stored URL, token and TLS setting are applied in one place.
 | `XoClient.messages` | `(since: float) -> list[dict]` | XAPI messages since a Unix time | `findings.collect_findings` | v0.7.0 |
 | `XoClient.missing_patches` | `(pool_id: str) -> list[dict]` | Patches XO reports missing on one pool | `findings.collect_findings` | v0.7.0 |
 | `XoClient.pool_dashboard` | `() -> dict` | The dashboard totals: patches, backups, storage, host state | `findings.collect_findings` | v0.7.0 |
+| `XoClient.restore_log_detail` | `(log_id: str) -> dict` | Full nested detail for one restore run — see `backup_log_detail` | not yet called — same upcoming job | unreleased |
 | `XoClient.restore_logs` | `(since: float) -> list[dict]` | Restore runs since a Unix time | `findings.collect_findings` | v0.7.0 |
 | `XoClient.tasks` | `(since: float) -> list[dict]` | XO tasks since a Unix time, with failure results | `findings.collect_findings` | v0.7.0 |
+| `XoClient.users` | `() -> list[dict]` | Every account this instance knows: id, email, permission | not yet called — will feed `redact.build_username_rule` | unreleased |
 | `XoClient.list_hosts` | `() -> list[str]` | Host hrefs this account can see, for counting only | `test_connection` | v0.2.0 |
 | `XoClient.list_pools` | `() -> list[str]` | Pool hrefs this account can see, for counting only | `test_connection` | v0.2.0 |
 | `XoClient.test_connection` | `() -> ConnectionTest` | Checks URL and token, reports what the account reaches | `routes.settings.settings_test` | v0.2.0 |
@@ -651,17 +654,28 @@ password, and `mac` before `ipv6` because a MAC is also colon-separated hex.
 
 | Function | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
-| `active_rules` | `(enabled: frozenset[str] \| set[str] \| None = None) -> tuple[Rule, ...]` | The rules to apply, in order; `None` means all | `redact_line`, `redact_text` | v0.5.0 |
+| `active_rules` | `(enabled=None, *, username_rule: Rule \| None = None) -> tuple[Rule, ...]` | The rules to apply, in order; `None` means all | `redact_line`, `redact_text`, `redact_json` | v0.5.0 |
+| `build_username_rule` | `(usernames: Iterable[str]) -> Rule` | The "username" rule with a pattern built from a live account list | not yet called — foundation for an upcoming XO API diagnostics job | unreleased |
 | `enabled_rules` | `(conn: sqlite3.Connection) -> frozenset[str]` | The names of the rules currently switched on | `routes.redaction`, `routes.dashboard` | v0.5.1 |
-| `redact_line` | `(line: str, enabled=None) -> str` | Masks one line — the unit a streaming repack uses | `redact_text`, `job_collect` | v0.5.0 |
-| `redact_text` | `(text: str, enabled=None) -> tuple[str, dict[str, int]]` | Masks a block and counts hits per rule | `routes.redaction` | v0.5.0 |
-| `rule_by_name` | `(name: str) -> Rule \| None` | One rule by name | `set_enabled_rules` | v0.5.0 |
+| `redact_json` | `(value: object, enabled=None, *, username_rule=None) -> tuple[object, dict[str, int]]` | Masks every string leaf in a JSON-shaped value, keys untouched | not yet called — same upcoming job | unreleased |
+| `redact_line` | `(line: str, enabled=None, *, username_rule=None) -> str` | Masks one line — the unit a streaming repack uses | `redact_text`, `job_collect` | v0.5.0 |
+| `redact_text` | `(text: str, enabled=None, *, username_rule=None) -> tuple[str, dict[str, int]]` | Masks a block and counts hits per rule | `routes.redaction` | v0.5.0 |
+| `rule_by_name` | `(name: str) -> Rule \| None` | One rule by name | `set_enabled_rules`, `build_username_rule` | v0.5.0 |
 | `set_enabled_rules` | `(conn: sqlite3.Connection, names: Iterable[str]) -> frozenset[str]` | Switches on exactly the named rules, off the rest | `routes.redaction` | v0.5.1 |
 
 `Rule` is a frozen dataclass carrying the pattern, the placeholder and a `keep`
 set of values not worth masking; `Rule.apply` returns the masked text and its
 own hit count. `DEFAULT_ENABLED` is every rule — a rule is only off when
 somebody turns it off.
+
+**`pattern` may be `None`.** Every rule above "username" has a fixed shape
+compiled once at import time. A username has none — it can only be
+identified from a live account list — so the static `RULES` entry for it
+carries `pattern=None` (an inert placeholder: `Rule.apply` returns its input
+unchanged) and `build_username_rule` produces a real one from
+`XoClient.users()` at collection time via `dataclasses.replace`, keeping the
+same name so hit-counting and the on/off toggle still key off "username"
+either way.
 
 Only the switched-off rules are stored (table `redaction_disabled`), so a rule
 added to `RULES` in a later version is on from the moment it exists, including

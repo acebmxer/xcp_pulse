@@ -76,7 +76,20 @@ BACKUP_LOGS_PATH = "/backup/logs"
 RESTORE_LOGS_PATH = "/restore/logs"
 BACKUP_LOG_FIELDS = "id,jobId,jobName,status,start,end,message"
 
+# The full per-run detail tree, by id — a different, hyphenated route from the
+# flat summary above (confirmed live: "/backup-logs/{id}", not "/backup/logs").
+# This is where the actual per-VM/per-disk steps and failure messages live;
+# the summary above only carries the coarse outcome.
+BACKUP_LOG_DETAIL_PATH = "/backup-logs/{id}"
+RESTORE_LOG_DETAIL_PATH = "/restore-logs/{id}"
+
 MISSING_PATCHES_PATH = "/pools/{pool_id}/missing_patches"
+
+# Every account this instance knows. Feeds redact.build_username_rule, since a
+# username has no fixed shape to match against, unlike every other redaction
+# rule — it can only be masked by knowing the real ones.
+USERS_PATH = "/users"
+USER_FIELDS = "id,email,permission"
 
 # How the event routes are bounded to a time window.
 #
@@ -361,6 +374,63 @@ class XoClient:
         return self._events(
             RESTORE_LOGS_PATH, BACKUP_LOG_FIELDS, TASK_TIME_FIELD, since, millis=True
         )
+
+    def backup_log_detail(self, log_id: str) -> dict[str, object]:
+        """The full nested per-VM/per-disk task tree for one backup run.
+
+        A single-object GET by id rather than a filtered collection, so it
+        goes through ``_single_object`` rather than ``_events``/
+        ``_record_list``. Carries the detail ``backup_logs`` omits —
+        snapshot/transfer/merge steps, sizes, per-task failure messages.
+        """
+        return self._single_object(
+            BACKUP_LOG_DETAIL_PATH.format(id=log_id),
+            not_found=f"Xen Orchestra has no backup log {log_id}.",
+        )
+
+    def restore_log_detail(self, log_id: str) -> dict[str, object]:
+        """The full nested detail tree for one restore run.
+
+        See ``backup_log_detail`` — same route shape, same reason for it.
+        """
+        return self._single_object(
+            RESTORE_LOG_DETAIL_PATH.format(id=log_id),
+            not_found=f"Xen Orchestra has no restore log {log_id}.",
+        )
+
+    def users(self) -> list[dict[str, object]]:
+        """Every account this instance knows: id, email, permission.
+
+        A plain collection route like the findings sources above, so it goes
+        through ``_record_list``: a restricted account is answered with
+        ``200 []`` rather than a refusal, which means no accounts visible
+        rather than a failure.
+        """
+        return _record_list(self._get(USERS_PATH, fields=USER_FIELDS))
+
+    def _single_object(self, path: str, *, not_found: str | None = None) -> dict[str, object]:
+        """One record fetched by id, rather than a filtered collection.
+
+        Shares ``pool_dashboard``'s status/shape checks rather than
+        ``_record_list``'s, because these routes return one JSON object, not
+        an array. Deliberately not shared with ``pool_dashboard`` itself —
+        that method's error message is specific to it and already relied on
+        elsewhere, so it is left alone rather than folded into this helper.
+        """
+        response = self._get(path)
+        if response.status_code in (401, 403):
+            raise XoError(f"Xen Orchestra refused {path}. Check the token has not been revoked.")
+        if response.status_code == 404:
+            raise XoError(not_found or f"Xen Orchestra has no {path}.")
+        if response.status_code != 200:
+            raise XoError(f"Xen Orchestra returned HTTP {response.status_code} for {path}.")
+        try:
+            payload = response.json()
+        except ValueError:
+            raise XoError(f"Xen Orchestra did not return JSON for {path}.") from None
+        if not isinstance(payload, dict):
+            raise XoError(f"Xen Orchestra returned an unexpected shape for {path}.")
+        return payload
 
     def _events(
         self,
