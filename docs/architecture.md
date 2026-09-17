@@ -72,6 +72,7 @@ streaming download.
 | `app/findings.py` | Turns Xen Orchestra API reads into findings: severity, title, evidence, action, source. |
 | `app/job_findings.py` | The **API findings** job: runs the sources, stores the report as JSON and Markdown. |
 | `app/job_log_findings.py` | The **log findings** job: reads a stored `*-logs.tgz` bundle, stores the report as JSON and Markdown. |
+| `app/job_api_diagnostics.py` | The **Collect XO diagnostics** job: raw backup/restore run detail, XAPI tasks, messages and alarms, stores the report as JSON and Markdown. |
 | `app/retention.py` | What stored collections to delete, always previewed before it acts. |
 | `app/artifacts.py` | What a job produced: files on the volume, metadata in the database. |
 | `app/redact.py` | The masking rules. The **only** place a redaction pattern is written. |

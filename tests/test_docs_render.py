@@ -18,6 +18,7 @@ USER_GUIDE_SLUGS = {
     "redaction",
     "jobs",
     "findings",
+    "diagnostics",
     "support-package",
     "date-ranges",
     "settings",

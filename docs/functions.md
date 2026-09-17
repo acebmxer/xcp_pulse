@@ -164,7 +164,9 @@ that's fine for now and where a cap would go if it's ever needed.
 | `date_coverage` | `(report, fallback: str = "") -> str` | How to phrase a findings report's date window, delegating to `Report.coverage_text` so the page and the downloaded Markdown never disagree | `findings.html`, as the `date_coverage` filter | 0.8.0 |
 
 `templates` is the shared Jinja environment; `RedirectToLogin` is the exception
-`login_required` raises, handled in `main.create_app`.
+`login_required` raises, handled in `main.create_app`. Two more filters are
+registered here but defined in `app/job_api_diagnostics.py` (see that
+section): `run_headline` and `pretty_detail`, as `diagnostics.html` filters.
 
 ## `app/logging_conf.py` — application logging
 
@@ -219,9 +221,9 @@ stored URL, token and TLS setting are applied in one place.
 
 | Method | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
-| `XoClient.alarms` | `(since: float) -> list[dict]` | Alarms raised since a Unix time | `findings.collect_findings` | v0.7.0 |
-| `XoClient.backup_log_detail` | `(log_id: str) -> dict` | Full nested per-VM/per-disk detail for one backup run | not yet called — foundation for an upcoming XO API diagnostics job | unreleased |
-| `XoClient.backup_logs` | `(since: float) -> list[dict]` | Backup job runs since a Unix time | `findings.collect_findings` | v0.7.0 |
+| `XoClient.alarms` | `(since: float) -> list[dict]` | Alarms raised since a Unix time | `findings.collect_findings`, `job_api_diagnostics.run` | v0.7.0 |
+| `XoClient.backup_log_detail` | `(log_id: str) -> dict` | Full nested per-VM/per-disk detail for one backup run | `job_api_diagnostics.run`, for a failed backup run | unreleased |
+| `XoClient.backup_logs` | `(since: float) -> list[dict]` | Backup job runs since a Unix time | `findings.collect_findings`, `job_api_diagnostics.run` | v0.7.0 |
 | `XoClient.check_log_export` | `(*, is_admin: bool) -> LogExportSupport` | Whether this account can download host logs, and why not | `test_connection`, settings page | v0.2.0 |
 | `XoClient.grantable_host_actions` | `() -> set[str]` | Host actions this instance can grant to a role | `check_log_export` | v0.2.0 |
 | `XoClient.download_audit` | `(host_id, destination, *, on_chunk=None) -> int` | Streams a host's XAPI audit trail to a file | `job_collect.run` | v0.6.0 |
@@ -229,13 +231,13 @@ stored URL, token and TLS setting are applied in one place.
 | `XoClient.download_to` | `(path, destination, *, on_chunk=None) -> int` | Streams any XO route to a file, never holding the body | `download_logs`, `download_audit` | v0.6.0 |
 | `XoClient.inventory` | `() -> Inventory` | Pools and hosts with their details, for the dashboard | `job_inventory.run` | v0.3.0 |
 | `XoClient.is_admin` | `() -> bool` | Whether the account has XO administrator permission | `test_connection` | v0.2.0 |
-| `XoClient.messages` | `(since: float) -> list[dict]` | XAPI messages since a Unix time | `findings.collect_findings` | v0.7.0 |
+| `XoClient.messages` | `(since: float) -> list[dict]` | XAPI messages since a Unix time | `findings.collect_findings`, `job_api_diagnostics.run` | v0.7.0 |
 | `XoClient.missing_patches` | `(pool_id: str) -> list[dict]` | Patches XO reports missing on one pool | `findings.collect_findings` | v0.7.0 |
 | `XoClient.pool_dashboard` | `() -> dict` | The dashboard totals: patches, backups, storage, host state | `findings.collect_findings` | v0.7.0 |
-| `XoClient.restore_log_detail` | `(log_id: str) -> dict` | Full nested detail for one restore run — see `backup_log_detail` | not yet called — same upcoming job | unreleased |
-| `XoClient.restore_logs` | `(since: float) -> list[dict]` | Restore runs since a Unix time | `findings.collect_findings` | v0.7.0 |
-| `XoClient.tasks` | `(since: float) -> list[dict]` | XO tasks since a Unix time, with failure results | `findings.collect_findings` | v0.7.0 |
-| `XoClient.users` | `() -> list[dict]` | Every account this instance knows: id, email, permission | not yet called — will feed `redact.build_username_rule` | unreleased |
+| `XoClient.restore_log_detail` | `(log_id: str) -> dict` | Full nested detail for one restore run — see `backup_log_detail` | `job_api_diagnostics.run`, for a failed restore run | unreleased |
+| `XoClient.restore_logs` | `(since: float) -> list[dict]` | Restore runs since a Unix time | `findings.collect_findings`, `job_api_diagnostics.run` | v0.7.0 |
+| `XoClient.tasks` | `(since: float) -> list[dict]` | XO tasks since a Unix time, with failure results | `findings.collect_findings`, `job_api_diagnostics.run` | v0.7.0 |
+| `XoClient.users` | `() -> list[dict]` | Every account this instance knows: id, email, permission | `job_api_diagnostics.run`, to feed `redact.build_username_rule` | unreleased |
 | `XoClient.list_hosts` | `() -> list[str]` | Host hrefs this account can see, for counting only | `test_connection` | v0.2.0 |
 | `XoClient.list_pools` | `() -> list[str]` | Pool hrefs this account can see, for counting only | `test_connection` | v0.2.0 |
 | `XoClient.test_connection` | `() -> ConnectionTest` | Checks URL and token, reports what the account reaches | `routes.settings.settings_test` | v0.2.0 |
@@ -508,7 +510,9 @@ constructor and redacts the evidence on the way in.
 | --- | --- | --- | --- | --- |
 | `collect_findings` | `(client, pools, *, enabled=None, window_days=30, now=None, progress=None) -> Report` | Reads every source and builds the report | `job_findings.run` | v0.7.0 |
 | `collect_log_findings` | `(bundle_path, *, enabled=None, progress=None) -> Report` | Reads a stored tar bundle, groups storage, multipath, XAPI, HA, out-of-memory and clock-skew matches, and builds the report; a bundle that ends early is salvaged rather than failed | `job_log_findings.run` | v0.7.0 |
-| `disabled_rule_titles` | `(enabled) -> list[str]` | The titles of the redaction rules switched off, for the report | `collect_findings` | v0.7.0 |
+| `disabled_rule_titles` | `(enabled) -> list[str]` | The titles of the redaction rules switched off, for the report | `collect_findings`, `job_api_diagnostics.run` | v0.7.0 |
+| `millis_to_seconds` | `(value: object) -> float \| None` | An XO timestamp (milliseconds) as seconds — task-shaped records (tasks, backup/restore logs) | internal to this module, `job_api_diagnostics._within` | unreleased |
+| `seconds_value` | `(value: object) -> float \| None` | A XAPI timestamp (already seconds) as a float — message-shaped records (messages, alarms) | internal to this module, `job_api_diagnostics._within` | unreleased |
 | `sort_findings` | `(findings: list[Finding]) -> list[Finding]` | Worst first, then most recent, then by title | `collect_findings`, `job_findings.report_from_job` | v0.7.0 |
 | `correlate_reports` | `(api_report: Report \| None, log_report: Report \| None) -> None` | Marks findings that appear in both the API report and the log report — same condition family, within an hour of each other — by setting `confirmed_by` on each side; a log finding with no timestamp of its own is timed by when its report was scanned | `routes/findings.findings_page` | v0.7.0 |
 
@@ -599,6 +603,49 @@ collection.
 | `to_markdown` | `(report: Report, source_name: str) -> str` | Formats a log report for a support ticket | `job_log_findings.run` | v0.7.0 |
 | `to_payload` | `(report: Report, source_id: str) -> dict` | Serializes a log report as JSON | `job_log_findings.run` | v0.7.0 |
 
+## `app/job_api_diagnostics.py` — the Collect XO diagnostics job
+
+Findings classifies events into a short list of problems; this stores the raw
+detail classification throws away — the full per-VM/per-disk task tree behind
+a failed backup or restore run, plus the same window's XAPI tasks, messages
+and alarms. Every source is a Xen Orchestra API call; nothing is downloaded
+from a host.
+
+| Function | Signature | Does | Used by | Since |
+| --- | --- | --- | --- | --- |
+| `pretty_detail` | `(detail: object) -> str` | A run's detail tree as indented JSON, not a Python `repr` | `to_markdown`, `diagnostics.html` (Jinja filter) | unreleased |
+| `report_from_job` | `(conn, data_dir, job_id: str) -> dict \| None` | Rebuilds the stored diagnostics payload | `routes.diagnostics.diagnostics_page` | unreleased |
+| `run` | `(context: JobContext) -> None` | Reads every source, fetches detail for failed backup/restore runs, masks, stores | `job_runner`, via `register` | unreleased |
+| `run_headline` | `(detail: object) -> str \| None` | The one line worth reading first from a run's detail tree (`result.message`), or None if that shape isn't there | `to_markdown`, `diagnostics.html` (Jinja filter) | unreleased |
+| `to_markdown` | `(payload: dict) -> str` | The payload as Markdown, for a support ticket | `job_api_diagnostics.run` | unreleased |
+
+Detail is fetched only for a backup or restore run whose summary already shows
+`failure`, `error` or `interrupted` — the same three statuses
+`findings.py`'s `_failed_runs` treats as a failure — so a busy pool with many
+successful runs does not turn this into as slow a job as a full log
+collection. A run whose detail fetch itself fails still stores its summary,
+with `detail_error` in place of `detail`.
+
+The username redaction rule is built here from a live `XoClient.users()` call
+rather than reused from findings, because findings does not need it yet — this
+is the first job to mask account names. A `users()` failure only means
+usernames go unmasked by name; it does not fail the job.
+
+`report_from_job` returns a plain dict, not a dataclass — the page only reads
+it back, so a key an older stored payload lacks is simply absent rather than a
+reason to reject the whole artifact.
+
+A run's `detail` is XO's own arbitrarily-shaped task tree, with no schema this
+project controls. `pretty_detail` renders it as indented JSON rather than
+Python's `repr` (single-quoted, no indentation), leaving the JSON shape itself
+exactly as XO returns it — a multi-line value like a stack trace stays one
+valid JSON string with a literal `\n` in it. `run_headline` pulls out
+`result.message` — the one field observed to consistently carry the actual
+failure text rather than the job type or a schedule id — when that shape is
+present, returning `None` rather than guessing when it is not. Both are
+registered as Jinja filters in `app/dependencies.py`; the page renders the
+detail tree as plain text, with only the headline set apart.
+
 ## `app/retention.py` — what to delete, previewed first
 
 A collection is about 433 MB, so a data volume fills quickly. Every caller asks
@@ -655,9 +702,9 @@ password, and `mac` before `ipv6` because a MAC is also colon-separated hex.
 | Function | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
 | `active_rules` | `(enabled=None, *, username_rule: Rule \| None = None) -> tuple[Rule, ...]` | The rules to apply, in order; `None` means all | `redact_line`, `redact_text`, `redact_json` | v0.5.0 |
-| `build_username_rule` | `(usernames: Iterable[str]) -> Rule` | The "username" rule with a pattern built from a live account list | not yet called — foundation for an upcoming XO API diagnostics job | unreleased |
+| `build_username_rule` | `(usernames: Iterable[str]) -> Rule` | The "username" rule with a pattern built from a live account list | `job_api_diagnostics.run` | unreleased |
 | `enabled_rules` | `(conn: sqlite3.Connection) -> frozenset[str]` | The names of the rules currently switched on | `routes.redaction`, `routes.dashboard` | v0.5.1 |
-| `redact_json` | `(value: object, enabled=None, *, username_rule=None) -> tuple[object, dict[str, int]]` | Masks every string leaf in a JSON-shaped value, keys untouched | not yet called — same upcoming job | unreleased |
+| `redact_json` | `(value: object, enabled=None, *, username_rule=None) -> tuple[object, dict[str, int]]` | Masks every string leaf in a JSON-shaped value, keys untouched | `job_api_diagnostics.run` | unreleased |
 | `redact_line` | `(line: str, enabled=None, *, username_rule=None) -> str` | Masks one line — the unit a streaming repack uses | `redact_text`, `job_collect` | v0.5.0 |
 | `redact_text` | `(text: str, enabled=None, *, username_rule=None) -> tuple[str, dict[str, int]]` | Masks a block and counts hits per rule | `routes.redaction` | v0.5.0 |
 | `rule_by_name` | `(name: str) -> Rule \| None` | One rule by name | `set_enabled_rules`, `build_username_rule` | v0.5.0 |
@@ -790,6 +837,9 @@ for why this does not use `app/jobs.py`.
 | `start_findings` | `(request, username) -> Response` | `POST /findings` — queues a findings run | router | v0.7.0 |
 | `start_log_findings` | `(request, artifact_id, username) -> Response` | `POST /findings/from-logs` — queues findings from one stored log bundle | router | v0.7.0 |
 | `download_findings` | `(artifact_id, request, username) -> Response` | `GET /findings/download/{id}` — streams the stored JSON or Markdown | router | v0.7.0 |
+| `diagnostics_page` | `(request, username) -> Response` | `GET /diagnostics` — the latest stored diagnostics run | router | unreleased |
+| `start_diagnostics` | `(request, username, date_preset, date_start, date_end) -> Response` | `POST /diagnostics` — queues a diagnostics run | router | unreleased |
+| `download_diagnostics` | `(artifact_id, request, username) -> Response` | `GET /diagnostics/download/{id}` — streams the stored JSON or Markdown | router | unreleased |
 | `support_package_page` | `(request, username) -> Response` | `GET /support-package` — stored collections and built packages | router | v0.7.0 |
 | `package_collection` | `(job_id, request, username) -> Response` | `POST /support-package/{id}/package` — queues a package from an already-stored collection | router | v0.7.0 |
 | `collect_and_package` | `(request, username, host_id, include_audit) -> Response` | `POST /support-package/collect` — queues a collection, then a package from it | router | v0.7.0 |

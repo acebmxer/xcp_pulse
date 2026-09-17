@@ -960,7 +960,7 @@ def _classify_events(
     grouped: dict[tuple[str, str], dict[str, Any]] = {}
 
     for record in records:
-        at = _seconds(record.get("time"))
+        at = seconds_value(record.get("time"))
         if at is None or at < cutoff or (end is not None and at > end):
             continue
 
@@ -1049,7 +1049,7 @@ def _from_tasks(
         if str(record.get("status") or "").lower() != "failure":
             continue
 
-        at = _millis(record.get("end")) or _millis(record.get("start"))
+        at = millis_to_seconds(record.get("end")) or millis_to_seconds(record.get("start"))
         if at is None or at < cutoff or (end is not None and at > end):
             continue
 
@@ -1223,7 +1223,7 @@ def _failed_runs(
         if status not in ("failure", "error", "interrupted"):
             continue
 
-        at = _millis(record.get("end")) or _millis(record.get("start"))
+        at = millis_to_seconds(record.get("end")) or millis_to_seconds(record.get("start"))
         if at is None or at < cutoff or (end is not None and at > end):
             continue
 
@@ -1262,7 +1262,7 @@ def _stale_backups(records: list[dict[str, Any]], now: float, enabled) -> list[F
     """
     latest: dict[str, float] = {}
     for record in records:
-        at = _millis(record.get("start"))
+        at = millis_to_seconds(record.get("start"))
         if at is None:
             continue
         name = str(record.get("jobName") or record.get("jobId") or "unnamed job")
@@ -1599,20 +1599,25 @@ def _finding(
     )
 
 
-def _seconds(value: object) -> float | None:
-    """A XAPI timestamp, which is seconds, as a float."""
+def seconds_value(value: object) -> float | None:
+    """A XAPI timestamp, which is seconds, as a float.
+
+    Public — ``job_api_diagnostics`` needs the exact same conversion for the
+    same message/alarm-shaped records, and this is the one place it is
+    written, per the note on ``millis_to_seconds`` below.
+    """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return float(value)
 
 
-def _millis(value: object) -> float | None:
+def millis_to_seconds(value: object) -> float | None:
     """An XO timestamp, which is milliseconds, as seconds.
 
     XAPI messages carry seconds and XO tasks carry milliseconds — measured on
     the same instance, ``1783217728`` against ``1788552365766``. Mixing the two
     would put every task a thousand lifetimes in the future and silently pass
-    every window check.
+    every window check. Public for the same reason as ``seconds_value``.
     """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None

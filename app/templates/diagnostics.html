@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% import "_date_range.html" as date_range %}
+{% block title %}Diagnostics — XCP Pulse{% endblock %}
+
+{% block content %}
+{% if running %}
+<meta http-equiv="refresh" content="3">
+{% endif %}
+
+<h1 class="page-title">Diagnostics</h1>
+
+{% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
+{% if notice %}<div class="alert alert-ok">{{ notice }}</div>{% endif %}
+
+<div class="card">
+  <div class="job-actions">
+    <div>
+      <h2>Collect XO diagnostics</h2>
+      <p class="note">
+        Asks the API for the raw detail behind backup and restore runs — the
+        full per-VM/per-disk task tree for any that failed, not just
+        pass/fail — plus XAPI tasks, messages and alarms for the same
+        window. Downloads nothing from a host; a busy pool can still take a
+        few seconds.
+      </p>
+    </div>
+    <form method="post" action="/diagnostics" class="inline" id="diagnostics-form">
+      <button type="submit" class="btn btn-primary"
+              {% if not connection or running %}disabled{% endif %}>
+        {% if running %}Running…{% else %}Run now{% endif %}
+      </button>
+    </form>
+  </div>
+  {{ date_range.date_range_picker("diagnostics-form") }}
+  {% if active_job and active_job.is_active %}
+  <div class="progress" role="progressbar" aria-valuenow="{{ active_job.progress }}"
+       aria-valuemin="0" aria-valuemax="100">
+    <div class="progress-bar" style="width: {{ active_job.progress }}%"></div>
+  </div>
+  <p class="job-step">{{ active_job.step | counts_in or 'Waiting to start' }} — {{ active_job.progress }}%</p>
+  <form method="post" action="/jobs/{{ active_job.id }}/cancel" class="inline">
+    <button type="submit" class="btn btn-quiet">Cancel</button>
+  </form>
+  {% endif %}
+  {% if not connection %}
+  <p class="note">
+    No Xen Orchestra connection is configured. Add one in
+    <a href="/settings">Settings</a>.
+  </p>
+  {% endif %}
+</div>
+
+{% if active_job and active_job.state == "failed" and active_job.error %}
+<div class="alert alert-error">
+  <strong>The last diagnostics run failed.</strong> {{ active_job.error }}
+</div>
+{% endif %}
+
+{% if not report %}
+<div class="card empty-state">
+  <span class="empty-mark">◇</span>
+  <h2>Nothing has been collected yet</h2>
+  <p>Run it above. Raw backup, restore, task, message and alarm detail appears here.</p>
+</div>
+{% else %}
+
+<div class="card">
+  <div class="inventory-head">
+    <h2>Diagnostics</h2>
+    <p class="inventory-source">Read {{ report.created_at | age }}</p>
+  </div>
+
+  {% if artifacts %}
+  <ul class="artifacts">
+    {% for artifact in artifacts %}
+    <li>
+      <span class="mono">{{ artifact.name }}</span>
+      <span class="artifact-size">
+        {{ artifact.size_human }}
+        <a class="btn btn-quiet" href="/diagnostics/download/{{ artifact.id }}">Download</a>
+      </span>
+    </li>
+    {% endfor %}
+  </ul>
+  <p class="note">
+    The Markdown copy is the one to paste into a support ticket. Values in
+    both are masked with the rules switched on in
+    <a href="/redaction">Redaction</a>.
+  </p>
+  {% endif %}
+
+  {#
+    A partly-masked report is the failure worth seeing before it is sent, so
+    this sits with the download links rather than at the foot of the page —
+    the same placement Findings uses.
+  #}
+  {% if report.rules_disabled %}
+  <div class="alert alert-error">
+    {% set off_count = report.rules_disabled | length %}
+    <strong>{{ off_count }} redaction rule{{ '' if off_count == 1 else 's' }} {{ 'was' if off_count == 1 else 'were' }} switched off</strong>
+    when this ran: {{ report.rules_disabled | join(', ') }}. Values below are
+    masked only by the rules that were on.
+    <a href="/redaction">Change them</a> and run again to re-mask.
+  </div>
+  {% endif %}
+
+  <table class="report">
+    <thead><tr><th>Source</th><th>Result</th></tr></thead>
+    <tbody>
+      {% for category in report.categories %}
+      <tr>
+        <th>{{ category.title }}</th>
+        <td>
+          {% if category.read %}
+            {{ category.count | count }} record(s){% if category.detail_count %}, {{ category.detail_count }} with full detail fetched{% endif %}
+          {% else %}
+            <strong>not read</strong>: {{ category.reason }}
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% set failed_runs = (report.backups + report.restores) | selectattr('status', 'in', ['failure', 'error', 'interrupted']) | list %}
+{% if failed_runs %}
+<ul class="findings">
+  {% for run in failed_runs %}
+  <li class="card finding finding-warning">
+    <div class="finding-head">
+      <span class="sev-tag sev-warning">{{ run.status }}</span>
+      <h2 class="finding-title">{{ run.jobName or run.jobId or 'Unnamed job' }}</h2>
+    </div>
+    {% if run.detail is defined %}
+    {% set headline = run.detail | run_headline %}
+    {% if headline %}
+    <p class="finding-meta"><strong>{{ headline }}</strong></p>
+    {% endif %}
+    <pre class="finding-evidence">{{ run.detail | pretty_detail }}</pre>
+    {% elif run.detail_error is defined %}
+    <p class="finding-meta">Detail could not be read: {{ run.detail_error }}</p>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+
+{% endif %}
+{% endblock %}
