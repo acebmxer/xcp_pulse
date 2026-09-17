@@ -36,6 +36,7 @@ import re
 import tarfile
 import time
 import zlib
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -1184,7 +1185,15 @@ def _from_backups(
     not whether a job has stopped firing right now.
     """
     records = client.backup_logs(cutoff)
-    findings = _failed_runs(records, cutoff, enabled, SOURCE_BACKUPS, "Backup", end=end)
+    findings = _failed_runs(
+        records,
+        cutoff,
+        enabled,
+        SOURCE_BACKUPS,
+        "Backup",
+        end=end,
+        detail_fn=client.backup_log_detail,
+    )
     findings.extend(_stale_backups(records, now, enabled))
     return findings, len(records)
 
@@ -1200,7 +1209,14 @@ def _from_restores(
     """
     records = client.restore_logs(cutoff)
     findings = _failed_runs(
-        records, cutoff, enabled, SOURCE_RESTORES, "Restore", severity=CRITICAL, end=end
+        records,
+        cutoff,
+        enabled,
+        SOURCE_RESTORES,
+        "Restore",
+        severity=CRITICAL,
+        end=end,
+        detail_fn=client.restore_log_detail,
     )
     return findings, len(records)
 
@@ -1214,8 +1230,19 @@ def _failed_runs(
     *,
     severity: str = WARNING,
     end: float | None = None,
+    detail_fn: Callable[[str], dict[str, Any]] | None = None,
 ) -> list[Finding]:
-    """One finding per job whose runs failed, counting the failures."""
+    """One finding per job whose runs failed, counting the failures.
+
+    ``detail_fn``, when given (``XoClient.backup_log_detail`` or
+    ``restore_log_detail``), fetches the full detail tree for each job's most
+    recent failing run and folds ``backup_failure_message`` — the specific
+    reason, when the API's detail has it — into the evidence, in place of the
+    generic "N run(s) ended 'failure'" text that is all a bare pass/fail
+    summary can say. One job's detail fetch failing (or finding no
+    recognisable message shape) degrades that job's finding to the generic
+    text rather than losing it or failing the whole run.
+    """
     grouped: dict[str, dict[str, Any]] = {}
 
     for record in records:
@@ -1228,28 +1255,89 @@ def _failed_runs(
             continue
 
         name = str(record.get("jobName") or record.get("jobId") or "unnamed job")
-        item = grouped.setdefault(name, {"at": at, "count": 0, "status": status})
+        item = grouped.setdefault(
+            name, {"at": at, "count": 0, "status": status, "id": record.get("id")}
+        )
         item["count"] += 1
         if at > item["at"]:
             item["at"] = at
             item["status"] = status
+            item["id"] = record.get("id")
 
-    return [
-        _finding(
-            severity=severity,
-            title=f"{noun} job failed: {name}",
-            evidence=f"{item['count']} run(s) ended '{item['status']}' within the window.",
-            action=(
+    findings = []
+    for name, item in grouped.items():
+        cause = _detail_failure_cause(detail_fn, item["id"])
+        if cause is not None:
+            evidence = (
+                f"{cause} ({item['count']} run(s) ended '{item['status']}' within the window.)"
+            )
+            action = "Fix the failing step named above, then re-run the job."
+        else:
+            evidence = f"{item['count']} run(s) ended '{item['status']}' within the window."
+            action = (
                 f"Open the {noun.lower()} job in Xen Orchestra and read the failed "
                 f"run's tasks — the failing step names the VM or the remote."
-            ),
-            source=source,
-            enabled=enabled,
-            at=item["at"],
-            count=item["count"],
+            )
+        findings.append(
+            _finding(
+                severity=severity,
+                title=f"{noun} job failed: {name}",
+                evidence=evidence,
+                action=action,
+                source=source,
+                enabled=enabled,
+                at=item["at"],
+                count=item["count"],
+            )
         )
-        for name, item in grouped.items()
-    ]
+    return findings
+
+
+def _detail_failure_cause(
+    detail_fn: Callable[[str], dict[str, Any]] | None, log_id: object
+) -> str | None:
+    """The specific failure text for one run, or None to fall back to a count.
+
+    A missing ``detail_fn`` (no caller supplied one), a missing ``log_id``, a
+    refused or failed fetch, and a detail tree with no recognisable message
+    shape are all the same "cannot say anything more specific" outcome here —
+    none of them are worth failing the finding over.
+    """
+    if detail_fn is None or not log_id:
+        return None
+    try:
+        detail = detail_fn(str(log_id))
+    except XoError:
+        return None
+    return backup_failure_message(detail)
+
+
+def backup_failure_message(detail: object) -> str | None:
+    """The specific reason one backup/restore run failed, from its detail tree.
+
+    ``detail`` is XO's own nested task tree (``XoClient.backup_log_detail``/
+    ``restore_log_detail``), shaped however that job type happened to fail —
+    there is no schema to rely on. The one field observed to consistently
+    carry the actual failure text (rather than the job type, a task name, or
+    a schedule id) is ``result.message`` — measured against real failed
+    backup runs, including one deliberately caused by disconnecting the
+    backup remote, where the top-level ``message`` was just ``"backup"`` and
+    the real reason ("couldn't instantiate any remote") was nested under
+    ``result``.
+
+    Returns None rather than guessing when that shape is not there, so a run
+    whose detail looks different degrades to a generic count instead of a
+    wrong headline. Public because ``job_diagnostics``'s own per-run
+    headlines are the same read against the same shape — one implementation,
+    not two that could disagree about what the message field is.
+    """
+    if not isinstance(detail, dict):
+        return None
+    result = detail.get("result")
+    if not isinstance(result, dict):
+        return None
+    message = result.get("message")
+    return message if isinstance(message, str) and message else None
 
 
 def _stale_backups(records: list[dict[str, Any]], now: float, enabled) -> list[Finding]:
@@ -1602,7 +1690,7 @@ def _finding(
 def seconds_value(value: object) -> float | None:
     """A XAPI timestamp, which is seconds, as a float.
 
-    Public — ``job_api_diagnostics`` needs the exact same conversion for the
+    Public — ``job_diagnostics`` needs the exact same conversion for the
     same message/alarm-shaped records, and this is the one place it is
     written, per the note on ``millis_to_seconds`` below.
     """

@@ -10,26 +10,45 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ## [Unreleased]
 
+### Fixed
+
+- **A failed backup or restore job's finding just said "N run(s) ended
+  'failure'"**, with no hint of why, even though Xen Orchestra's own API
+  carries the actual reason. Reported from a real backup deliberately broken
+  by disconnecting its remote: the Findings page said a run had failed
+  without saying what "couldn't instantiate any remote" — the real cause —
+  was, and only appeared by coincidence in an unrelated "Task failed" entry
+  further down the same report. `findings._failed_runs` now fetches the most
+  recent failing run's full detail tree and folds its specific message into
+  the evidence (`findings.backup_failure_message`, reading `result.message`
+  the same way the diagnostics card's own per-run headlines do — one
+  implementation, not two that could disagree). A detail fetch that is
+  refused, or a tree with no recognisable message shape, degrades to the
+  original generic text rather than losing the finding.
+
 ### Added
 
-- **A new Diagnostics page and job** (`GET/POST /diagnostics`) puts the
-  previous entry's foundation to use: it asks Xen Orchestra for backup and
-  restore run summaries, XAPI tasks, messages and alarms in a chosen window,
-  then fetches the full per-VM/per-disk detail (`backup_log_detail` /
-  `restore_log_detail`) for any backup or restore run whose summary already
-  shows `failure`, `error` or `interrupted` — the case a support ticket exists
-  to explain. Fetching detail only for failed runs, rather than every run in
-  the window, keeps a busy pool's diagnostics run to a few seconds instead of
-  as slow as a full log collection. Everything is masked with the redaction
-  rules switched on, including account names — built fresh each run from a
-  live `XoClient.users()` call via `redact.build_username_rule`, the first
-  caller of that rule and of `redact_json`. Two artifacts are stored, the same
-  split Findings uses: `diagnostics.json` for the page, `diagnostics.md` for a
-  support ticket. Added to the ☰ menu, and to the in-app User manual. A failed
-  run's detail tree is rendered as indented JSON (`pretty_detail`) rather than
-  Python's `repr`, and its `result.message`, when present, is pulled out as a
-  headline (`run_headline`) above the raw tree, in both the page and the
-  Markdown copy.
+- **A "Collect XO diagnostics" card on the Collect page** puts the previous
+  entry's foundation to use: three checkboxes let an operator pull backup and
+  restore run detail, XAPI tasks, and messages/alarms straight from the Xen
+  Orchestra API, each into its own raw and redacted JSON artifact
+  (`backup-restore-detail.json`, `xapi-tasks.json`, `messages-alarms.json`),
+  plus a `diagnostics-report.json` recording what was read, the per-rule hit
+  counts, and — reported from the same real run above — a `failures` list
+  naming each failed backup/restore run's specific cause where the detail
+  tree has one, rendered on the page the same way a Findings failure is.
+  None of this is host- or pool-scoped — every source is instance-wide — so
+  it lives as its own independent card here rather than a separate page or
+  nav entry, and rather than nested inside the per-host collection form.
+  Detail (`backup_log_detail`/`restore_log_detail`) is fetched for every
+  enumerated backup and restore run in the window, not only failed ones:
+  this is an archive feature, meant to hand Vates everything a support
+  ticket needs, not a failures-only summary. One source failing never fails
+  the run. Everything is masked with the redaction rules switched on,
+  including account names — built fresh each run from a live
+  `XoClient.users()` call via `redact.build_username_rule`, the first caller
+  of that rule and of `redact_json`. Coverage of pools reached through an XO
+  Proxy has not been verified against a real one, and the card says so.
 
 - **Foundation for collecting raw diagnostics straight from Xen Orchestra's
   API** — backup/restore job detail, XAPI tasks, and messages/alarms — rather

@@ -17,8 +17,8 @@ from app.dependencies import STATIC_DIR, Forbidden, RedirectToLogin, templates
 # Importing a job module is what registers its kind with the runner, which
 # deliberately holds no list of its own. Anything defining a job kind has to be
 # imported here or its jobs fail at run time with "no handler".
-from app.job_api_diagnostics import KIND as _API_DIAGNOSTICS_KIND  # noqa: F401
 from app.job_collect import KIND as _COLLECT_KIND  # noqa: F401
+from app.job_diagnostics import KIND as _DIAGNOSTICS_KIND  # noqa: F401
 from app.job_extract import KIND as _EXTRACT_KIND  # noqa: F401
 from app.job_findings import KIND as _FINDINGS_KIND  # noqa: F401
 from app.job_inventory import KIND as _INVENTORY_KIND  # noqa: F401
@@ -29,7 +29,6 @@ from app.job_support_package import KIND as _SUPPORT_PACKAGE_KIND  # noqa: F401
 from app.jobs import reset_orphans
 from app.logging_conf import configure_logging
 from app.routes import auth, collect, dashboard, docs, health, redaction
-from app.routes import diagnostics as diagnostics_routes
 from app.routes import findings as findings_routes
 from app.routes import jobs as job_routes
 from app.routes import settings as settings_routes
@@ -149,7 +148,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(redaction.router)
     app.include_router(collect.router)
     app.include_router(findings_routes.router)
-    app.include_router(diagnostics_routes.router)
     app.include_router(support_package_routes.router)
     app.include_router(docs.router)
     app.include_router(users_routes.router)

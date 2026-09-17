@@ -103,6 +103,15 @@ class FakeXo:
     def restore_logs(self, since: float) -> list[dict]:
         return self._get("restore_logs", [])
 
+    def backup_log_detail(self, log_id: str) -> dict:
+        detail = self._get("backup_log_detail", {})
+        if isinstance(detail, dict) and log_id in detail:
+            return detail[log_id]
+        raise XoError(f"no detail for {log_id}")
+
+    def restore_log_detail(self, log_id: str) -> dict:
+        return self.backup_log_detail(log_id)
+
     def missing_patches(self, pool_id: str) -> list[dict]:
         return self._get("missing_patches", [])
 
@@ -324,6 +333,46 @@ def test_a_failed_backup_job_is_reported_and_a_successful_one_is_not() -> None:
 
     titles = _titles(report)
     assert titles == ["Backup job failed: Delta Backup"]
+
+
+def test_a_failed_backups_evidence_names_the_specific_cause_when_detail_has_it() -> None:
+    """Reported from a real run: a backup job disconnected from its remote
+    failed with the generic "N run(s) ended 'failure'" text even though the
+    API's own detail for that run carried the real reason."""
+    record = _backup(status="failure", job_name="Delta Backup")
+    report = _run(
+        backup_logs=[record],
+        backup_log_detail={
+            record["id"]: {
+                "message": "backup",
+                "result": {"message": "couldn't instantiate any remote"},
+            }
+        },
+    )
+
+    finding = report.findings[0]
+    assert "couldn't instantiate any remote" in finding.evidence
+    assert "1 run(s) ended 'failure'" in finding.evidence
+    assert finding.action == "Fix the failing step named above, then re-run the job."
+
+
+def test_a_failed_backup_with_no_recognisable_detail_shape_falls_back_to_the_count() -> None:
+    record = _backup(status="failure", job_name="Delta Backup")
+    report = _run(backup_logs=[record], backup_log_detail={record["id"]: {"message": "backup"}})
+
+    finding = report.findings[0]
+    assert finding.evidence == "1 run(s) ended 'failure' within the window."
+    assert "Open the backup job in Xen Orchestra" in finding.action
+
+
+def test_a_failed_backup_whose_detail_fetch_is_refused_falls_back_to_the_count() -> None:
+    """A detail-fetch refusal must not lose the finding or fail the run —
+    the same posture every other source in this module already has."""
+    record = _backup(status="failure", job_name="Delta Backup")
+    report = _run(backup_logs=[record], backup_log_detail=XoError("no permission"))
+
+    finding = report.findings[0]
+    assert finding.evidence == "1 run(s) ended 'failure' within the window."
 
 
 def test_a_failed_restore_outranks_a_failed_backup() -> None:

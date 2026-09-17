@@ -38,7 +38,6 @@ PAGES: list[tuple[str, str, Path, str | None]] = [
     ("redaction", "Redaction", _USER_GUIDE_DIR / "redaction.md", "User guide"),
     ("jobs", "Jobs", _USER_GUIDE_DIR / "jobs.md", "User guide"),
     ("findings", "Findings", _USER_GUIDE_DIR / "findings.md", "User guide"),
-    ("diagnostics", "Diagnostics", _USER_GUIDE_DIR / "diagnostics.md", "User guide"),
     ("support-package", "Support package", _USER_GUIDE_DIR / "support-package.md", "User guide"),
     ("date-ranges", "Date ranges", _USER_GUIDE_DIR / "date-ranges.md", "User guide"),
     ("settings", "Settings", _USER_GUIDE_DIR / "settings.md", "User guide"),

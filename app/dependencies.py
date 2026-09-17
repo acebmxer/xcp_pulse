@@ -16,7 +16,6 @@ from fastapi.templating import Jinja2Templates
 
 from app import __version__
 from app.artifacts import artifact_path, get_artifact
-from app.job_api_diagnostics import pretty_detail, run_headline
 from app.security import current_user
 from app.users import get_user
 
@@ -132,8 +131,6 @@ templates.env.filters["age"] = age
 templates.env.filters["count"] = count
 templates.env.filters["counts_in"] = counts_in
 templates.env.filters["date_coverage"] = date_coverage
-templates.env.filters["run_headline"] = run_headline
-templates.env.filters["pretty_detail"] = pretty_detail
 
 
 class RedirectToLogin(Exception):

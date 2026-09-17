@@ -123,6 +123,168 @@
   {% endif %}
 </div>
 
+<div class="card">
+  <div class="job-actions">
+    <div>
+      <h2>Collect XO diagnostics</h2>
+      <p class="note">
+        Asks the Xen Orchestra API for the full per-VM/per-disk detail behind
+        every backup and restore run in the window, plus XAPI tasks, messages
+        and alarms. Downloads nothing from a host — every source is an API
+        call — but a busy pool can still take a few seconds. None of this is
+        host- or pool-scoped: it reads instance-wide, so there is no host to
+        pick here. Coverage of pools reached through an XO Proxy has not been
+        verified against a real one.
+      </p>
+    </div>
+    <form method="post" action="/collect/diagnostics" class="inline" id="diagnostics-form">
+      <button type="submit" class="btn btn-primary" {% if not connection %}disabled{% endif %}>
+        Collect diagnostics
+      </button>
+    </form>
+  </div>
+
+  <ul class="category-grid">
+    {% for key, title in diagnostics_sources %}
+    <li>
+      <label class="check">
+        <input type="checkbox" name="sources" value="{{ key }}" form="diagnostics-form">
+        <span>{{ title }}</span>
+      </label>
+    </li>
+    {% endfor %}
+  </ul>
+
+  {{ date_range.date_range_picker("diagnostics-form") }}
+
+  {% if not connection %}
+  <p class="note">
+    No Xen Orchestra connection is configured. Add one in
+    <a href="/settings">Settings</a>.
+  </p>
+  {% endif %}
+</div>
+
+<h2 class="section-title">Stored diagnostics</h2>
+
+{% if not diagnostics_jobs %}
+<div class="card empty-state">
+  <span class="empty-mark">◇</span>
+  <h2>Nothing collected yet</h2>
+  <p>Diagnostics runs appear here with their files, ready to download or delete.</p>
+</div>
+{% else %}
+<ul class="joblist">
+  {% for job in diagnostics_jobs %}
+  <li class="card job job-{{ job.state }}">
+    <div class="job-head">
+      <span class="job-kind">
+        {% for key in job.params.get('sources', []) %}
+        {{ diagnostics_source_titles.get(key, key) }}{{ ', ' if not loop.last }}
+        {% endfor %}
+      </span>
+      <span class="job-state job-state-{{ job.state }}">{{ job.state }}</span>
+      {% if job.duration is not none %}
+      <span class="job-duration">{{ '%.0f'|format(job.duration) }}s</span>
+      {% endif %}
+    </div>
+
+    {% if job.is_active %}
+    <div class="progress" role="progressbar" aria-valuenow="{{ job.progress }}"
+         aria-valuemin="0" aria-valuemax="100">
+      <div class="progress-bar" style="width: {{ job.progress }}%"></div>
+    </div>
+    <p class="job-step">{{ job.step | counts_in or 'Waiting to start' }} — {{ job.progress }}%</p>
+    <form method="post" action="/jobs/{{ job.id }}/cancel" class="inline">
+      <button type="submit" class="btn btn-quiet">Cancel</button>
+    </form>
+    {% elif job.step %}
+    <p class="job-step">{{ job.step | counts_in }}</p>
+    {% endif %}
+
+    {% if job.error %}
+    <p class="job-error">{{ job.error }}</p>
+    {% endif %}
+
+    {% set produced = artifacts.get(job.id, []) %}
+    {% if produced %}
+    <ul class="artifacts">
+      {% for artifact in produced %}
+      {% set is_redacted = '.redacted.' in artifact.name %}
+      <li>
+        <span class="mono">
+          {{ artifact.name }}
+          {% if artifact.name != diagnostics_report_artifact %}
+            {% if is_redacted %}
+            <span class="tag">redacted — safe to send</span>
+            {% else %}
+            <span class="tag tag-warn">raw — unmasked</span>
+            {% endif %}
+          {% endif %}
+        </span>
+        <span class="artifact-size">
+          {{ artifact.size_human }}
+          <a class="btn btn-quiet" href="/collect/download/{{ artifact.id }}">Download</a>
+        </span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+
+    {% set diagnostics_report = diagnostics_reports.get(job.id) %}
+    {% if diagnostics_report %}
+    <table class="report">
+      <caption class="visually-hidden">What each redaction rule masked</caption>
+      <thead>
+        <tr><th scope="col">Rule</th><th scope="col">Masked as</th>
+            <th scope="col" class="num">Hits</th></tr>
+      </thead>
+      <tbody>
+        {% for row in diagnostics_report %}
+        <tr class="{{ 'rule-off' if not row.enabled }}">
+          <th scope="row">{{ row.title }}</th>
+          <td><code>{{ row.placeholder }}</code></td>
+          <td class="num">
+            {% if row.enabled %}{{ row.hits | count }}{% else %}off{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+
+    {% set failed_runs = diagnostics_failures.get(job.id, []) %}
+    {% if failed_runs %}
+    <ul class="findings">
+      {% for failure in failed_runs %}
+      <li class="card finding finding-warning">
+        <div class="finding-head">
+          <span class="sev-tag sev-warning">{{ failure.status }}</span>
+          <h2 class="finding-title">{{ failure.job_name }}</h2>
+        </div>
+        {% if failure.headline %}
+        <p class="finding-meta"><strong>{{ failure.headline }}</strong></p>
+        {% else %}
+        <p class="finding-meta">
+          No specific failure message was found in this run's detail tree —
+          see <code>backup-restore-detail.json</code> above for the full tree.
+        </p>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+    {% endif %}
+
+    {% if not job.is_active %}
+    <form method="post" action="/collect/diagnostics/{{ job.id }}/delete" class="inline row-actions">
+      <button type="submit" class="btn btn-quiet">Delete this diagnostics run</button>
+    </form>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+
 <h2 class="section-title">Stored collections</h2>
 
 {% if not jobs %}

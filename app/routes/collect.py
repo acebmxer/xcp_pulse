@@ -27,6 +27,11 @@ from app.dependencies import (
     wake_worker,
 )
 from app.job_collect import KIND as COLLECT_KIND
+from app.job_diagnostics import KIND as DIAGNOSTICS_KIND
+from app.job_diagnostics import REPORT_ARTIFACT as DIAGNOSTICS_REPORT_ARTIFACT
+from app.job_diagnostics import SOURCE_TITLES as DIAGNOSTICS_SOURCE_TITLES
+from app.job_diagnostics import SOURCES as DIAGNOSTICS_SOURCES
+from app.job_diagnostics import report_from_job as diagnostics_report_from_job
 from app.job_extract import KIND as EXTRACT_KIND
 from app.job_extract import REPORT_ARTIFACT as EXTRACT_REPORT_ARTIFACT
 from app.job_extract import report_from_job as extract_report_from_job
@@ -45,6 +50,7 @@ log = logging.getLogger("xcp_pulse.collect")
 # module-level default, the same way redaction.py's rule checkboxes are,
 # rather than a mutable default argument.
 _CATEGORIES_FIELD = Form(default_factory=list)
+_SOURCES_FIELD = Form(default_factory=list)
 
 # How many collections the page lists. A collection is a large thing an
 # operator acts on individually, not a stream of events to scroll.
@@ -77,11 +83,14 @@ def collect_page(
     jobs = list_jobs(db, kind=COLLECT_KIND, limit=PAGE_LIMIT)
     plan = retention.plan(db, keep_days=keep_days, keep_count=keep_count)
     extractions = list_jobs(db, kind=EXTRACT_KIND, limit=PAGE_LIMIT)
-    # Keyed by both collection and extraction job ids: the template reads an
-    # extraction's own produced files the same way it reads a collection's,
-    # and an extraction id absent from this dict was rendering with no
+    diagnostics_jobs = list_jobs(db, kind=DIAGNOSTICS_KIND, limit=PAGE_LIMIT)
+    # Keyed by every job id on the page: the template reads an extraction's or
+    # a diagnostics run's own produced files the same way it reads a
+    # collection's, and a job id absent from this dict was rendering with no
     # download link at all — reported from a real run.
-    artifacts = {job.id: list_for_job(db, job.id) for job in [*jobs, *extractions]}
+    artifacts = {
+        job.id: list_for_job(db, job.id) for job in [*jobs, *extractions, *diagnostics_jobs]
+    }
 
     # A collection redacted by a separate, chained `redact_artifact` job — the
     # "Redact now" button, or a fresh raw-only collection — has its redacted
@@ -118,10 +127,21 @@ def collect_page(
                 db, data_dir, extractions, reader=extract_report_from_job
             ),
             "extract_kind": EXTRACT_KIND,
+            "diagnostics_jobs": diagnostics_jobs,
+            "diagnostics_sources": [
+                (key, DIAGNOSTICS_SOURCE_TITLES[key]) for key in DIAGNOSTICS_SOURCES
+            ],
+            "diagnostics_source_titles": DIAGNOSTICS_SOURCE_TITLES,
+            "diagnostics_report_artifact": DIAGNOSTICS_REPORT_ARTIFACT,
+            "diagnostics_reports": _reports(
+                db, data_dir, diagnostics_jobs, reader=diagnostics_report_from_job
+            ),
+            "diagnostics_failures": _diagnostics_failures(db, data_dir, diagnostics_jobs),
             "notice": request.query_params.get("notice"),
             "error": request.query_params.get("error"),
             "any_active": any(job.is_active for job in jobs)
-            or any(job.is_active for job in extractions),
+            or any(job.is_active for job in extractions)
+            or any(job.is_active for job in diagnostics_jobs),
         },
     )
 
@@ -294,6 +314,67 @@ def start_extraction(
     return redirect("/collect?notice=Extracting+the+selected+categories.")
 
 
+@router.post("/collect/diagnostics")
+def start_diagnostics(
+    request: Request,
+    username: str = Depends(operator_required),
+    sources: list[str] = _SOURCES_FIELD,
+    date_preset: str = Form(default=""),
+    date_start: str = Form(default=""),
+    date_end: str = Form(default=""),
+) -> Response:
+    """Queue a diagnostics run: instance-wide, no host or pool to pick.
+
+    Every source this reads ignores pool and host entirely (see
+    ``job_diagnostics``'s module docstring), so unlike ``/collect`` there is
+    no host to choose here — this is its own independent card on the same
+    page, not a per-host form.
+    """
+    db = request.app.state.db
+
+    if get_connection(db) is None:
+        return redirect("/collect?error=Configure+a+Xen+Orchestra+connection+first.")
+
+    keys = [key for key in sources if key in DIAGNOSTICS_SOURCES]
+    if not keys:
+        return redirect("/collect?error=Pick+at+least+one+diagnostics+source.")
+
+    if has_active(db, DIAGNOSTICS_KIND):
+        return redirect("/collect?notice=A+diagnostics+run+is+already+going.")
+
+    job = enqueue(
+        db,
+        DIAGNOSTICS_KIND,
+        {
+            "sources": keys,
+            "date_preset": date_preset,
+            "date_start": date_start,
+            "date_end": date_end,
+        },
+    )
+    wake_worker(request)
+    log.info("queued %s job %s by %s", DIAGNOSTICS_KIND, job.id, username)
+    log_activity(db, username, "diagnostics.start", ip=client_ip(request))
+    return redirect("/collect?notice=Reading+diagnostics+from+Xen+Orchestra.")
+
+
+@router.post("/collect/diagnostics/{job_id}/delete")
+def delete_diagnostics(
+    job_id: str,
+    request: Request,
+    username: str = Depends(operator_required),
+) -> Response:
+    """Delete one diagnostics run and the files it produced."""
+    db = request.app.state.db
+    data_dir = request.app.state.settings.data_dir
+
+    if retention.delete_job(db, data_dir, job_id, kind=DIAGNOSTICS_KIND):
+        log.info("%s deleted diagnostics run %s", username, job_id)
+        log_activity(db, username, "diagnostics.delete", detail=job_id, ip=client_ip(request))
+        return redirect("/collect?notice=Diagnostics+run+deleted.")
+    return redirect("/collect?error=There+is+no+such+diagnostics+run+to+delete.")
+
+
 @router.get("/collect/download/{artifact_id}")
 def download_artifact(
     artifact_id: str,
@@ -410,6 +491,25 @@ def _reports(db, data_dir, jobs, *, reader=report_from_job, chained=None) -> dic
         if report is not None:
             rows[job.id] = report_rows(report)
     return rows
+
+
+def _diagnostics_failures(db, data_dir, jobs) -> dict[str, list[dict]]:
+    """Each diagnostics run's failed-backup/restore summaries, keyed by job id.
+
+    Separate from ``_reports`` because that helper returns ``report_rows``'
+    per-rule table, not a report's other fields — this reads the same stored
+    report back and pulls out ``failures`` instead, so a failed run's headline
+    (see ``job_diagnostics._run_headline``) is answerable from the page
+    itself rather than only from a downloaded archive.
+    """
+    failures: dict[str, list[dict]] = {}
+    for job in jobs:
+        if job.is_active:
+            continue
+        report = diagnostics_report_from_job(db, data_dir, job.id)
+        if report:
+            failures[job.id] = report.get("failures", [])
+    return failures
 
 
 def _chained_redactions(db, data_dir, jobs) -> dict[str, str]:

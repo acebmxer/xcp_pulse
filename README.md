@@ -109,13 +109,12 @@ rather than estimated:
   job. A finding seen in both the API report and a log report — matched by
   condition and, when timed, within an hour of each other — is marked as
   confirmed by the other, so one incident doesn't read as two.
-- **Collect XO diagnostics** — the raw detail Findings' classification leaves
-  out: the full per-VM/per-disk task tree behind any backup or restore run
-  that failed, plus that window's XAPI tasks, messages and alarms. Detail is
-  fetched only for runs that already failed, so a busy pool doesn't turn this
-  into as slow a job as a full log collection. Nothing is downloaded from a
-  host, values are redacted the same way, and results are stored as JSON and
-  Markdown.
+- **Collect XO diagnostics** — a second, independent card on the Collect page
+  for the raw detail Findings' classification leaves out: the full
+  per-VM/per-disk task tree behind every backup and restore run in the
+  window, plus that window's XAPI tasks, messages and alarms. Nothing is
+  downloaded from a host, and none of it is host- or pool-scoped — pick which
+  sources to read, each stored as its own raw and redacted JSON artifact.
 - **Extract individual log categories** — ten families (XAPI, storage, audit,
   security, kernel, system, high availability, xenstore, RRD plugins, network)
   pulled from an already-collected bundle, current logs only unless rotated
