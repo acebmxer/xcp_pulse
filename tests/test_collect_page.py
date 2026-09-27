@@ -114,6 +114,16 @@ def test_without_an_inventory_the_page_says_to_refresh_first(connected: TestClie
     assert "No hosts are known yet" in body
 
 
+def test_loading_the_page_queues_a_refresh_when_none_has_ever_run(
+    connected: TestClient,
+) -> None:
+    """A host added or removed since the last visit should not sit unseen
+    here until someone happens to click Refresh — see ``ensure_fresh``."""
+    app = connected.app  # type: ignore[attr-defined]
+    connected.get("/collect")
+    assert len(list_jobs(app.state.db, kind=INVENTORY_KIND)) == 1
+
+
 def test_the_page_offers_every_known_host(with_inventory: TestClient) -> None:
     body = with_inventory.get("/collect").text
     assert HOST.name in body

@@ -6,7 +6,8 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, Response
 
 from app.activity import log_activity
-from app.dependencies import redirect, templates
+from app.dependencies import redirect, templates, wake_worker
+from app.job_inventory import ensure_fresh
 from app.security import (
     PENDING_2FA_COOKIE,
     PENDING_2FA_MINUTES,
@@ -125,6 +126,9 @@ def login_submit(
 
     session_id = create_session(conn, user.username, settings.session_hours)
     log_activity(conn, user.username, "login", ip=ip)
+    # Catches drift since the last session — see job_inventory.ensure_fresh.
+    ensure_fresh(conn)
+    wake_worker(request)
     response = redirect(target)
     _set_session_cookie(response, request, session_id)
     return response
@@ -196,6 +200,9 @@ def login_2fa_submit(
     clear_login_failures(conn, ip)
     session_id = create_session(conn, user.username, settings.session_hours)
     log_activity(conn, user.username, "login", ip=ip)
+    # Catches drift since the last session — see job_inventory.ensure_fresh.
+    ensure_fresh(conn)
+    wake_worker(request)
 
     target = next if next.startswith("/") and not next.startswith("//") else "/"
     response = redirect(target)

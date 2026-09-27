@@ -48,10 +48,30 @@ _IDLE_POLL_SECONDS = 1.0
 # not import them and cannot become a list everything has to be added to.
 _REGISTRY: dict[str, Callable[[JobContext], None]] = {}
 
+# Called on every idle tick. Like ``_REGISTRY``, filled in by the module that
+# owns the decision so this file still never imports a job body — each check
+# decides for itself whether anything is actually due (a connection exists,
+# nothing of that kind is already queued, the stored result is old enough),
+# this just calls it regularly.
+_PERIODIC_CHECKS: list[Callable[[sqlite3.Connection], None]] = []
+
 
 def register(kind: str, body: Callable[[JobContext], None]) -> None:
     """Make a job kind runnable. Called at import time by the defining module."""
     _REGISTRY[kind] = body
+
+
+def register_periodic(check: Callable[[sqlite3.Connection], None]) -> None:
+    """Run ``check(conn)`` on every idle tick of the worker loop.
+
+    For a job kind whose stored result should stay current on its own instead
+    of only changing when an operator remembers to click Refresh — see
+    ``job_inventory.ensure_fresh`` for the first user of this. Idle ticks are
+    ~1 second apart and each check is a couple of indexed lookups, so calling
+    every one of them every tick is cheap; the check itself is what decides
+    whether anything is actually due.
+    """
+    _PERIODIC_CHECKS.append(check)
 
 
 def registered_kinds() -> list[str]:
@@ -110,10 +130,20 @@ class JobWorker:
         try:
             while not self._stop.is_set():
                 if not self.run_one(conn):
+                    self.run_periodic_checks(conn)
                     self._wake.wait(_IDLE_POLL_SECONDS)
                     self._wake.clear()
         finally:
             conn.close()
+
+    def run_periodic_checks(self, conn: sqlite3.Connection) -> None:
+        """Run every registered periodic check once. See ``register_periodic``.
+
+        Public for the same reason ``run_one`` is: so a test can trigger it
+        directly on the calling thread rather than racing a background one.
+        """
+        for check in _PERIODIC_CHECKS:
+            check(conn)
 
     def run_one(self, conn: sqlite3.Connection) -> bool:
         """Claim and run a single job on the calling thread. True if one ran.

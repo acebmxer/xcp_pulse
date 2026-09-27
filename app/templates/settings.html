@@ -140,7 +140,7 @@
 {% if ssh_test %}
 <div class="card">
   <h2>{% if ssh_test.ok %}Connection working{% else %}Connection failed{% endif %}</h2>
-  <p class="note">Tested against {{ ssh_test.host }}, the first host with an address in the stored inventory.</p>
+  <p class="note">Tested against {{ ssh_test.host }}.</p>
   <p>{{ ssh_test.message }}</p>
 </div>
 {% endif %}
@@ -177,6 +177,14 @@
 
   <div class="row-actions">
     <form method="post" action="/settings/ssh/test" class="inline">
+      {% if ssh_hosts %}
+      <label for="ssh_test_host_id" class="visually-hidden">Host to test</label>
+      <select id="ssh_test_host_id" name="host_id">
+        {% for host in ssh_hosts %}
+        <option value="{{ host.id }}" {% if ssh_test and ssh_test.host_id == host.id %}selected{% endif %}>{{ host.name }}</option>
+        {% endfor %}
+      </select>
+      {% endif %}
       <button type="submit" class="btn btn-primary">Test connection</button>
     </form>
     <form method="post" action="/settings/ssh/delete" class="inline">

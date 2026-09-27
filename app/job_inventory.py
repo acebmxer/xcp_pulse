@@ -9,24 +9,43 @@ It replaces the read-on-page-load in the dashboard route. The difference that
 matters is not speed: the inventory is now a *stored result with a time on it*,
 so the page says when it was read, and a Xen Orchestra that is down leaves the
 last known inventory on screen instead of an error where the hosts were.
+
+A stored result would otherwise only ever change when an operator remembers to
+click Refresh on the Jobs page, so a pool or host added or removed in Xen
+Orchestra would sit unseen here indefinitely. ``ensure_fresh`` below is called
+from several places that each catch a different way that can happen: on login
+(catch drift since the last session), from Collect and Findings before they
+build a host picker out of this (catch drift since the last visit to a page
+that needs it), and periodically from the job worker's idle loop via
+``app.job_runner.register_periodic`` (catch drift when nobody visits anything
+at all). All four are one check, so "is it due" is answered the same way
+everywhere rather than drifting between call sites; a manual Refresh from the
+Jobs page still exists for "I want it now."
 """
 
 from __future__ import annotations
 
+import time
 from dataclasses import asdict
 from typing import Any
 
 from app.artifacts import list_for_job, read_json, store_json
-from app.job_runner import register
-from app.jobs import JobContext, latest_successful
+from app.job_runner import register, register_periodic
+from app.jobs import JobContext, enqueue, has_active, latest_job, latest_successful
 from app.xo_client import Host, Inventory, Pool
-from app.xo_connection import build_client
+from app.xo_connection import build_client, get_connection
 
 KIND = "refresh_inventory"
 
 # The artifact this job produces. One name, used to write it and to find it
 # again, so the reader cannot drift from the writer.
 INVENTORY_ARTIFACT = "inventory.json"
+
+# How long a stored inventory is trusted before ``ensure_fresh`` queues a new
+# read on its own. Pool and host topology does not change minute to minute, so
+# this favours not hammering Xen Orchestra over catching a change instantly —
+# an operator who wants it sooner still has the manual Refresh button.
+STALE_AFTER_SECONDS = 15 * 60
 
 
 def run(context: JobContext) -> None:
@@ -121,4 +140,24 @@ def _build(cls, record: dict[str, Any]):
     return cls(**{key: value for key, value in record.items() if key in fields})
 
 
+def ensure_fresh(conn) -> None:
+    """Queue a refresh if none has ever run, or the newest is stale — unless
+    one is already queued or running. A no-op with no connection configured.
+
+    See the module docstring for the four places this is called from. This
+    does not wait for the job it queues; callers that render a host list right
+    after calling this may still show the previous result on this exact
+    request, with the fresh one ready by the next one.
+    """
+    if get_connection(conn) is None:
+        return
+    if has_active(conn, KIND):
+        return
+    newest = latest_job(conn, KIND)
+    if newest is not None and time.time() - newest.created_at < STALE_AFTER_SECONDS:
+        return
+    enqueue(conn, KIND)
+
+
 register(KIND, run)
+register_periodic(ensure_fresh)

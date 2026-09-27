@@ -16,9 +16,15 @@ import pytest
 
 from app.artifacts import list_for_job
 from app.db import init_db
-from app.job_inventory import INVENTORY_ARTIFACT, KIND, inventory_from_job
+from app.job_inventory import (
+    INVENTORY_ARTIFACT,
+    KIND,
+    STALE_AFTER_SECONDS,
+    ensure_fresh,
+    inventory_from_job,
+)
 from app.job_runner import JobWorker
-from app.jobs import FAILED, SUCCEEDED, enqueue, get_job
+from app.jobs import FAILED, SUCCEEDED, enqueue, get_job, has_active, list_jobs
 from app.xo_client import Host, Inventory, Pool, XoError
 from app.xo_connection import save_connection
 
@@ -168,3 +174,47 @@ def test_an_artifact_missing_a_field_still_loads(
     assert rebuilt.pools[0].name == "Pool1"
     assert rebuilt.pools[0].master_id == ""
     assert rebuilt.hosts[0].enabled is True
+
+
+class TestEnsureFresh:
+    """``ensure_fresh`` is what every auto-refresh trigger calls — see its
+    docstring for the four call sites (login, Collect, Findings, the periodic
+    worker check) and the dashboard's own first-load case."""
+
+    def test_does_nothing_with_no_connection_configured(self, tmp_path: Path) -> None:
+        conn = init_db(tmp_path / "test.db")
+        ensure_fresh(conn)
+        assert list_jobs(conn, kind=KIND) == []
+
+    def test_queues_a_refresh_when_none_has_ever_run(self, conn: sqlite3.Connection) -> None:
+        ensure_fresh(conn)
+        assert has_active(conn, KIND)
+
+    def test_does_not_queue_a_second_refresh_while_one_is_active(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        enqueue(conn, KIND)
+        ensure_fresh(conn)
+        assert len(list_jobs(conn, kind=KIND)) == 1
+
+    def test_does_not_queue_again_while_the_latest_result_is_fresh(
+        self, conn: sqlite3.Connection, worker: JobWorker
+    ) -> None:
+        _run(conn, worker, Inventory(pools=[POOL], hosts=[HOST]))
+        ensure_fresh(conn)
+        assert len(list_jobs(conn, kind=KIND)) == 1
+
+    def test_queues_again_once_the_latest_result_has_gone_stale(
+        self, conn: sqlite3.Connection, worker: JobWorker
+    ) -> None:
+        job_id = _run(conn, worker, Inventory(pools=[POOL], hosts=[HOST]))
+        conn.execute(
+            "UPDATE jobs SET created_at = created_at - ? WHERE id = ?",
+            (STALE_AFTER_SECONDS + 1, job_id),
+        )
+        conn.commit()
+
+        ensure_fresh(conn)
+
+        assert has_active(conn, KIND)
+        assert len(list_jobs(conn, kind=KIND)) == 2

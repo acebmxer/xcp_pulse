@@ -31,6 +31,10 @@ PRIVATE_KEY = (
 def _seed_host(client: TestClient, *, address: str = "203.0.113.5") -> None:
     """Store a stand-in "last successful refresh" so the settings page's test
     route has a host to try — the same shape ``job_inventory.run`` writes."""
+    _seed_hosts(client, [{"id": "host-1", "name": "xcp-ng-host1", "address": address}])
+
+
+def _seed_hosts(client: TestClient, hosts: list[dict]) -> None:
     app = client.app
     conn = app.state.db
     data_dir = app.state.settings.data_dir
@@ -40,10 +44,7 @@ def _seed_host(client: TestClient, *, address: str = "203.0.113.5") -> None:
         data_dir,
         job_id=job.id,
         name=INVENTORY_ARTIFACT,
-        payload={
-            "pools": [],
-            "hosts": [{"id": "host-1", "name": "xcp-ng-host1", "address": address}],
-        },
+        payload={"pools": [], "hosts": hosts},
     )
     mark_succeeded(conn, job.id)
 
@@ -142,6 +143,55 @@ def test_testing_succeeds_with_no_check_configured(saved_key: TestClient) -> Non
     assert response.status_code == 200
     assert "Connection working" in response.text
     assert "xcp-ng-host1" in response.text
+
+
+def test_testing_can_target_a_chosen_host_instead_of_the_alphabetically_first(
+    saved_key: TestClient,
+) -> None:
+    """An operator adding a second host must be able to test that one, not
+    only whichever host happens to sort first — see settings.html's picker."""
+    _seed_hosts(
+        saved_key,
+        [
+            {"id": "host-1", "name": "aaa-host", "address": "203.0.113.5"},
+            {"id": "host-2", "name": "zzz-host", "address": "203.0.113.6"},
+        ],
+    )
+
+    with patch("app.routes.settings.run_check", return_value=(PING_REPLY, False)) as run_check:
+        response = saved_key.post("/settings/ssh/test", data={"host_id": "host-2"})
+
+    assert response.status_code == 200
+    assert "Connected to zzz-host" in response.text
+    assert run_check.call_args.kwargs["host"] == "203.0.113.6"
+
+
+def test_testing_defaults_to_the_alphabetically_first_host_with_no_choice(
+    saved_key: TestClient,
+) -> None:
+    _seed_hosts(
+        saved_key,
+        [
+            {"id": "host-1", "name": "aaa-host", "address": "203.0.113.5"},
+            {"id": "host-2", "name": "zzz-host", "address": "203.0.113.6"},
+        ],
+    )
+
+    with patch("app.routes.settings.run_check", return_value=(PING_REPLY, False)):
+        response = saved_key.post("/settings/ssh/test")
+
+    assert "Connected to aaa-host" in response.text
+
+
+def test_testing_a_host_id_no_longer_in_the_inventory_is_refused(
+    saved_key: TestClient,
+) -> None:
+    _seed_host(saved_key)
+
+    response = saved_key.post("/settings/ssh/test", data={"host_id": "gone"})
+
+    assert response.status_code == 400
+    assert "no longer in the stored inventory" in response.text
 
 
 def test_ssh_routes_require_login(client: TestClient) -> None:

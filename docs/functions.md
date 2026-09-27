@@ -395,12 +395,16 @@ without changing `app/jobs.py`, the schema, or any job body.
 | Function | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
 | `register` | `(kind: str, body: Callable[[JobContext], None]) -> None` | Makes a job kind runnable | each job module at import | v0.4.0 |
+| `register_periodic` | `(check: Callable[[sqlite3.Connection], None]) -> None` | Runs `check(conn)` on every idle tick of the worker loop | `job_inventory`, via `register_periodic(ensure_fresh)` at import | unreleased |
 | `registered_kinds` | `() -> list[str]` | Every runnable job kind | tests, logging | v0.4.0 |
 
 `JobWorker` owns the thread. `JobWorker.run_one(conn)` is the whole of what it
 does per job and is public so tests can run a job without a background thread
 racing their assertions. Registration happens at import, so a module defining a
 kind must be imported in `main.py` or its jobs fail with "no handler".
+`register_periodic` exists for the same reason `register` does — so this file
+never imports a job module — but for a check that decides on its own whether
+anything is due, rather than a job body the queue dispatches to.
 
 ## `app/job_inventory.py` — the Refresh inventory job
 
@@ -411,6 +415,7 @@ job lands on them.
 
 | Function | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
+| `ensure_fresh` | `(conn) -> None` | Queues a refresh if none has run or the stored one is older than `STALE_AFTER_SECONDS`, unless one is already queued/running or no connection is configured | `routes.dashboard`, `routes.auth` (on login), `routes.collect`, `routes.findings`, and periodically via `job_runner.register_periodic` | unreleased |
 | `inventory_from_job` | `(conn, data_dir, job_id: str) -> Inventory \| None` | Rebuilds the Inventory a job stored | `routes.dashboard.dashboard`, `known_inventory` | v0.4.0 |
 | `known_inventory` | `(conn, data_dir) -> Inventory` | The last successful refresh's pools and hosts, or an empty Inventory | `routes.collect`, `routes.support_package`, `job_findings.run` | 0.8.0 |
 | `run` | `(context: JobContext) -> None` | Reads XO and stores the inventory as an artifact | `job_runner`, via `register` | v0.4.0 |
@@ -419,7 +424,10 @@ job lands on them.
 dataclass default, so an artifact written by an older version still loads.
 `known_inventory` is the one place `routes.collect`, `routes.support_package`
 and `job_findings.run` all read the stored inventory from — it replaced three
-copies of the same lookup.
+copies of the same lookup. `ensure_fresh` is the one place "is the inventory
+due for a refresh" is answered — called from four different triggers (login,
+Collect, Findings, the periodic worker check, plus the dashboard's own
+first-load case) so they cannot drift out of sync with each other.
 
 ## `app/job_redact.py` — the Redact artifact job
 
@@ -988,9 +996,9 @@ for why this does not use `app/jobs.py`.
 | `dashboard` | `(request, username) -> Response` | `GET /` — the inventory the last refresh stored, plus findings, redaction, storage and recent-job panels | router | v0.1.0 |
 | `healthz` | `() -> dict[str, str]` | `GET /healthz` — unauthenticated liveness | router, compose healthcheck | v0.1.0 |
 | `login_form` | `(request, next: str = "/") -> Response` | `GET /login` | router | v0.1.0 |
-| `login_submit` | `(request, username, password, next) -> Response` | `POST /login` — if the account has TOTP on, redirects to `/login/2fa` instead of creating a session | router | v0.1.0 |
+| `login_submit` | `(request, username, password, next) -> Response` | `POST /login` — if the account has TOTP on, redirects to `/login/2fa` instead of creating a session; otherwise creates one and calls `job_inventory.ensure_fresh` | router | v0.1.0 |
 | `login_2fa_form` | `(request, next: str = "/") -> Response` | `GET /login/2fa` — the verification-code form, reached only after a correct password | router | 0.9.0 |
-| `login_2fa_submit` | `(request, code, next) -> Response` | `POST /login/2fa` — checks the TOTP or backup code and creates the session | router | 0.9.0 |
+| `login_2fa_submit` | `(request, code, next) -> Response` | `POST /login/2fa` — checks the TOTP or backup code, creates the session and calls `job_inventory.ensure_fresh` | router | 0.9.0 |
 | `job_status` | `(job_id, request, username) -> Response` | `GET /jobs/{id}/status` — one job's state as JSON | router | v0.4.0 |
 | `jobs_page` | `(request, username) -> Response` | `GET /jobs` — history, progress and starting a refresh | router | v0.4.0 |
 | `logout` | `(request) -> Response` | `POST /logout` | router | v0.1.0 |
@@ -1002,12 +1010,12 @@ for why this does not use `app/jobs.py`.
 | `settings_save` | `(request, username, url, token, account_type, verify_tls) -> Response` | `POST /settings` — stores the connection | router | v0.2.0 |
 | `settings_ssh_delete` | `(request, username) -> Response` | `POST /settings/ssh/delete` — forgets the host SSH connection | router | unreleased |
 | `settings_ssh_save` | `(request, username, private_key, passphrase, port) -> Response` | `POST /settings/ssh` — stores the SSH key, encrypting it | router | unreleased |
-| `settings_ssh_test` | `(request, username) -> Response` | `POST /settings/ssh/test` — connects to the first inventoried host with an address and reports what came back | router | unreleased |
+| `settings_ssh_test` | `(request, username, host_id: str = "") -> Response` | `POST /settings/ssh/test` — connects to the chosen inventoried host (the alphabetically first one with an address, if none was picked) and reports what came back | router | unreleased |
 | `settings_test` | `(request, username) -> Response` | `POST /settings/test` — tests and reports reach | router | v0.2.0 |
 | `settings_tls_upload` | `(request, username, cert_file, key_file) -> Response` | `POST /settings/tls` — validates and installs an uploaded certificate (built-in HTTPS only) | router | 0.9.0 |
 | `start_inventory_refresh` | `(request, username) -> Response` | `POST /jobs/refresh-inventory` — queues a refresh | router | v0.4.0 |
 | `start_redaction` | `(request, username, artifact_id) -> Response` | `POST /jobs/redact` — queues a redaction of one stored file | router | v0.5.2 |
-| `collect_page` | `(request, username, keep_days, keep_count) -> Response` | `GET /collect` — hosts, stored collections, stored diagnostics runs, retention preview | router | v0.6.0 |
+| `collect_page` | `(request, username, keep_days, keep_count) -> Response` | `GET /collect` — hosts, stored collections, stored diagnostics runs, retention preview; calls `job_inventory.ensure_fresh` before building the host list | router | v0.6.0 |
 | `delete_collection` | `(job_id, request, username) -> Response` | `POST /collect/{id}/delete` — deletes one collection | router | v0.6.0 |
 | `download_artifact` | `(artifact_id, request, username) -> Response` | `GET /collect/download/{id}` — streams a stored file from disk | router | v0.6.0 |
 | `delete_redaction` | `(job_id, request, username) -> Response` | `POST /jobs/{id}/delete` — deletes one redaction and its files | router | v0.6.3 |
@@ -1018,7 +1026,7 @@ for why this does not use `app/jobs.py`.
 | `delete_extraction` | `(job_id, request, username) -> Response` | `POST /collect/extractions/{id}/delete` — deletes one extraction and its file | router | v0.7.0 |
 | `start_diagnostics` | `(request, username, sources, date_preset, date_start, date_end) -> Response` | `POST /collect/diagnostics` — queues a diagnostics run against the ticked instance-wide sources | router | unreleased |
 | `delete_diagnostics` | `(job_id, request, username) -> Response` | `POST /collect/diagnostics/{id}/delete` — deletes one diagnostics run and its files | router | unreleased |
-| `findings_page` | `(request, username) -> Response` | `GET /findings` — the latest stored findings report | router | v0.7.0 |
+| `findings_page` | `(request, username) -> Response` | `GET /findings` — the latest stored findings report; calls `job_inventory.ensure_fresh` before building the NIC statistics host list | router | v0.7.0 |
 | `start_findings` | `(request, username) -> Response` | `POST /findings` — queues a findings run | router | v0.7.0 |
 | `start_log_findings` | `(request, artifact_id, username) -> Response` | `POST /findings/from-logs` — queues findings from one stored log bundle | router | v0.7.0 |
 | `start_nic_stats` | `(request, username, host_ids) -> Response` | `POST /findings/nic-stats` — queues a NIC statistics read across every ticked host | router | unreleased |

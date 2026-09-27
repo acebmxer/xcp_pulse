@@ -12,6 +12,15 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ### Fixed
 
+- **Settings → Host SSH connection's "Test connection" could only ever reach
+  the alphabetically first host in the stored inventory, with no way to point
+  it at any other one.** Reported directly: adding a second host and testing
+  the connection kept reaching the first host regardless, with nothing on the
+  page saying that was by design rather than a bug. `settings_ssh_test` now
+  takes an optional `host_id` and the page gained a host picker next to the
+  button, defaulting to the same alphabetically-first host only when nothing
+  is chosen. `_render` now also builds the host list once for the template
+  rather than the test route being the only place that read it.
 - **When no specific cause could be found, both the failed-backup and
   silent-fallback findings told the operator to go open the run in Xen
   Orchestra themselves** — precisely the "backup failed, go look in XO
@@ -129,6 +138,21 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ### Added
 
+- **The stored inventory (pools and hosts) now keeps itself current instead of
+  only changing when an operator remembers to click Refresh.** Reported
+  directly: a host added to a pool in Xen Orchestra was not appearing here,
+  because the inventory was read exactly once, automatically, right after the
+  connection was first saved — every refresh after that required a manual
+  visit to the Jobs page. `job_inventory.ensure_fresh` now queues a refresh
+  whenever none has ever run or the stored one is older than 15 minutes
+  (`STALE_AFTER_SECONDS`), and is called from four places: on every login, from
+  Collect and Findings right before they build a host picker out of the
+  inventory, from the dashboard (replacing its old first-load-only check), and
+  periodically from the job worker's own idle loop. `job_runner.py` gained a
+  small, generic `register_periodic` — a list of `check(conn)` callbacks run on
+  every idle tick — so it can drive this without importing `job_inventory` and
+  breaking the rule that this file never imports a job body. A manual refresh
+  from the Jobs page still exists for "I want it now."
 - **A single, general-purpose SSH connection, kept separate from the Xen
   Orchestra one, lets XCP Pulse reach a host directly for whatever the XO API
   has no route for — NIC statistics (`ethtool -S` driver counters) is the

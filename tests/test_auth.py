@@ -5,10 +5,13 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 
 from app.config import Settings
+from app.job_inventory import KIND as INVENTORY_KIND
+from app.jobs import list_jobs
 from app.main import create_app
 from app.security import PENDING_2FA_COOKIE, SESSION_COOKIE
 from app.totp import current_code
 from app.users import confirm_totp_enrollment, get_user
+from app.xo_connection import save_connection
 from tests.conftest import TEST_PASSWORD, TEST_USER
 
 
@@ -40,6 +43,23 @@ def test_wrong_username_is_rejected(client: TestClient) -> None:
     )
     assert response.status_code == 401
     assert not client.cookies.get(SESSION_COOKIE)
+
+
+def test_logging_in_queues_an_inventory_refresh(client: TestClient) -> None:
+    """Catches drift since the last session — see job_inventory.ensure_fresh."""
+    app = client.app  # type: ignore[attr-defined]
+    save_connection(
+        app.state.db,
+        url="https://xo.example.com",
+        token="stored-token",
+        account_type="admin",
+        verify_tls=True,
+        secret_key=app.state.settings.secret_key,
+    )
+
+    client.post("/login", data={"username": TEST_USER, "password": TEST_PASSWORD, "next": "/"})
+
+    assert len(list_jobs(app.state.db, kind=INVENTORY_KIND)) == 1
 
 
 def test_session_persists_across_requests(logged_in: TestClient) -> None:

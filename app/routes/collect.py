@@ -35,7 +35,7 @@ from app.job_diagnostics import report_from_job as diagnostics_report_from_job
 from app.job_extract import KIND as EXTRACT_KIND
 from app.job_extract import REPORT_ARTIFACT as EXTRACT_REPORT_ARTIFACT
 from app.job_extract import report_from_job as extract_report_from_job
-from app.job_inventory import known_inventory
+from app.job_inventory import ensure_fresh, known_inventory
 from app.job_redact import REPORT_ARTIFACT, existing_redaction, report_from_job, report_rows
 from app.jobs import enqueue, get_job, has_active, list_jobs
 from app.log_categories import CATEGORIES, category_keys
@@ -79,6 +79,10 @@ def collect_page(
     data_dir = request.app.state.settings.data_dir
 
     connection = get_connection(db)
+    # Catches a pool or host added or removed since the last time anything
+    # refreshed the inventory — see ``job_inventory.ensure_fresh``.
+    ensure_fresh(db)
+    wake_worker(request)
     inventory = known_inventory(db, data_dir)
     jobs = list_jobs(db, kind=COLLECT_KIND, limit=PAGE_LIMIT)
     plan = retention.plan(db, keep_days=keep_days, keep_count=keep_count)

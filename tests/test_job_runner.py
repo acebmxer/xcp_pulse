@@ -14,7 +14,7 @@ import pytest
 
 from app.artifacts import list_for_job
 from app.db import init_db
-from app.job_runner import JobWorker, register, registered_kinds
+from app.job_runner import JobWorker, register, register_periodic, registered_kinds
 from app.jobs import CANCELLED, FAILED, SUCCEEDED, JobCancelled, JobContext, enqueue, get_job
 
 
@@ -140,6 +140,20 @@ def test_a_body_can_store_artifacts_against_its_job(
 
     produced = list_for_job(conn, job.id)
     assert [item.name for item in produced] == ["out.json"]
+
+
+def test_an_idle_tick_runs_every_registered_periodic_check(
+    conn: sqlite3.Connection, worker: JobWorker
+) -> None:
+    """``register_periodic`` is how a job kind keeps its own stored result from
+    going stale without an operator asking — see ``job_inventory.ensure_fresh``
+    for the real one. The worker's idle loop must actually call it."""
+    seen: list[sqlite3.Connection] = []
+    register_periodic(seen.append)
+
+    worker.run_periodic_checks(conn)
+
+    assert seen == [conn]
 
 
 def test_the_inventory_kind_is_registered() -> None:

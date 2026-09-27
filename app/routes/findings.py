@@ -7,9 +7,12 @@ The runs themselves are still in the job history, and their artifacts are still
 downloadable, because a report attached to a support ticket has to stay
 retrievable after the pool has moved on.
 
-Nothing here calls Xen Orchestra. The page renders the stored artifact, so it
-loads with XO unreachable and shows the last thing known rather than an error
-where the findings were — the same rule the dashboard follows.
+Nothing here calls Xen Orchestra directly — the page renders stored artifacts,
+so it loads with XO unreachable and shows the last thing known rather than an
+error where the findings were, the same rule the dashboard follows. It does
+queue a background inventory refresh when that has gone stale (see
+``job_inventory.ensure_fresh``), which is a job the worker runs later, not a
+call made from this request.
 """
 
 from __future__ import annotations
@@ -33,7 +36,7 @@ from app.findings import DEFAULT_WINDOW_DAYS, SEVERITIES, correlate_reports
 from app.job_collect import KIND as COLLECT_KIND
 from app.job_findings import FINDINGS_ARTIFACT, FINDINGS_MARKDOWN, report_from_job
 from app.job_findings import KIND as FINDINGS_KIND
-from app.job_inventory import known_inventory
+from app.job_inventory import ensure_fresh, known_inventory
 from app.job_log_findings import KIND as LOG_FINDINGS_KIND
 from app.job_log_findings import LOG_FINDINGS_ARTIFACT
 from app.job_log_findings import report_from_job as log_report_from_job
@@ -59,6 +62,11 @@ def findings_page(request: Request, username: str = Depends(login_required)) -> 
     """The latest stored findings report."""
     db = request.app.state.db
     data_dir = request.app.state.settings.data_dir
+
+    # Catches a host added or removed since the last refresh, before building
+    # the NIC statistics host picker below — see ``job_inventory.ensure_fresh``.
+    ensure_fresh(db)
+    wake_worker(request)
 
     job = latest_successful(db, FINDINGS_KIND)
     report = report_from_job(db, data_dir, job.id) if job is not None else None

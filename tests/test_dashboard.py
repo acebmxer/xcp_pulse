@@ -23,6 +23,7 @@ from app.findings import CRITICAL, Finding, SourceResult
 from app.findings import Report as FindingsReport
 from app.job_findings import KIND as FINDINGS_KIND
 from app.job_inventory import KIND as INVENTORY_KIND
+from app.job_inventory import STALE_AFTER_SECONDS
 from app.jobs import enqueue, list_jobs
 from app.redact import RULES, set_enabled_rules
 from app.routes.dashboard import RECENT_JOBS
@@ -193,10 +194,11 @@ def test_the_first_load_queues_a_refresh_by_itself(connected: TestClient) -> Non
     assert "Reading the inventory" in body
 
 
-def test_the_dashboard_does_not_queue_a_second_refresh_on_every_load(
+def test_the_dashboard_does_not_queue_a_second_refresh_while_the_result_is_fresh(
     connected: TestClient,
 ) -> None:
-    """Auto-queueing is for the first load only, not a refresh per page view."""
+    """Not a refresh per page view — see ``job_inventory.ensure_fresh``, which
+    only queues another once the stored result has actually gone stale."""
     app = connected.app  # type: ignore[attr-defined]
     connected.get("/")
     run_pending_jobs(app)
@@ -206,6 +208,27 @@ def test_the_dashboard_does_not_queue_a_second_refresh_on_every_load(
     from app.jobs import list_jobs
 
     assert len(list_jobs(app.state.db, kind=INVENTORY_KIND)) == 1
+
+
+def test_a_stale_result_queues_a_fresh_refresh_on_the_next_load(
+    connected: TestClient,
+) -> None:
+    """A pool or host added or removed in Xen Orchestra must not sit unseen
+    here forever just because someone happened to load the dashboard once."""
+    app = connected.app  # type: ignore[attr-defined]
+    connected.get("/")
+    run_pending_jobs(app)
+
+    (job,) = list_jobs(app.state.db, kind=INVENTORY_KIND)
+    app.state.db.execute(
+        "UPDATE jobs SET created_at = created_at - ? WHERE id = ?",
+        (STALE_AFTER_SECONDS + 1, job.id),
+    )
+    app.state.db.commit()
+
+    connected.get("/")
+
+    assert len(list_jobs(app.state.db, kind=INVENTORY_KIND)) == 2
 
 
 def test_dashboard_requires_login(client: TestClient) -> None:

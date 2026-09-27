@@ -17,8 +17,9 @@ from app.artifacts import store_json
 from app.findings import CRITICAL, INFO, WARNING, Finding, Report, SourceResult
 from app.job_collect import KIND as COLLECT_KIND
 from app.job_findings import KIND
+from app.job_inventory import KIND as INVENTORY_KIND
 from app.job_log_findings import KIND as LOG_KIND
-from app.jobs import enqueue
+from app.jobs import enqueue, list_jobs
 from app.xo_connection import save_connection
 from tests.conftest import TEST_PASSWORD, TEST_USER
 from tests.helpers import run_pending_jobs
@@ -102,6 +103,16 @@ def test_starting_a_run_requires_a_login(client: TestClient) -> None:
 
     assert response.status_code == 303
     assert "/login" in response.headers["location"]
+
+
+def test_loading_the_page_queues_a_refresh_when_none_has_ever_run(
+    logged_in: TestClient,
+) -> None:
+    """A host added or removed since the last visit should not sit unseen in
+    the NIC statistics host picker — see ``job_inventory.ensure_fresh``."""
+    _connect(logged_in)
+    logged_in.get("/findings")
+    assert len(list_jobs(logged_in.app.state.db, kind=INVENTORY_KIND)) == 1
 
 
 def test_the_nav_links_to_findings(logged_in: TestClient) -> None:

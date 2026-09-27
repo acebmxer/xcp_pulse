@@ -77,6 +77,11 @@ def _render(
     current_cert = (
         current_certificate_info(settings.data_dir / "tls") if settings.enable_https else None
     )
+    inventory_hosts = known_inventory(request.app.state.db, settings.data_dir).hosts
+    ssh_hosts = sorted(
+        (host for host in inventory_hosts if host.address),
+        key=lambda host: host.name.lower(),
+    )
     return templates.TemplateResponse(
         request,
         "settings.html",
@@ -93,6 +98,7 @@ def _render(
             "ssh_connection": get_ssh_connection(request.app.state.db),
             "ssh_error": ssh_error,
             "ssh_test": ssh_test,
+            "ssh_hosts": ssh_hosts,
         },
         status_code=status_code,
     )
@@ -220,8 +226,12 @@ def settings_ssh_save(
 
 
 @router.post("/settings/ssh/test", response_class=HTMLResponse)
-def settings_ssh_test(request: Request, username: str = Depends(admin_required)) -> Response:
-    """Connect to one known host and confirm the dispatcher script answers.
+def settings_ssh_test(
+    request: Request,
+    username: str = Depends(admin_required),
+    host_id: str = Form(""),
+) -> Response:
+    """Connect to one chosen host and confirm the dispatcher script answers.
 
     Sends the dispatcher script's own ``ping`` probe (``app.ssh_client.
     PING_CHECK``) — allowlisted on every host regardless of which checks are
@@ -229,8 +239,9 @@ def settings_ssh_test(request: Request, username: str = Depends(admin_required))
     installed and enforcing the allowlist) independent of any one check like
     NIC statistics being set up. Xen Orchestra has no route to test against
     here — this has to reach an actual host, unlike ``settings_test`` above
-    — so it picks the alphabetically first host with an address from the
-    stored inventory rather than asking the operator to name one.
+    — so the form lets the operator pick which host from the stored
+    inventory to try; the alphabetically first one with an address is only
+    the default when nothing was picked.
     """
     conn = request.app.state.db
     data_dir = request.app.state.settings.data_dir
@@ -265,14 +276,29 @@ def settings_ssh_test(request: Request, username: str = Depends(admin_required))
             ),
             status_code=400,
         )
-    host = hosts[0]
+    if host_id:
+        try:
+            host = next(host for host in hosts if host.id == host_id)
+        except StopIteration:
+            return _render(
+                request,
+                username,
+                ssh_error=(
+                    "That host is no longer in the stored inventory. Refresh it and try again."
+                ),
+                status_code=400,
+            )
+    else:
+        host = hosts[0]
 
     try:
         private_key = load_private_key(credentials.private_key, credentials.passphrase)
     except SshError as exc:
         record_ssh_test_result(conn, ok=False, message=str(exc))
         return _render(
-            request, username, ssh_test={"ok": False, "message": str(exc), "host": host.name}
+            request,
+            username,
+            ssh_test={"ok": False, "message": str(exc), "host": host.name, "host_id": host.id},
         )
 
     recorded = known_host_key(conn, host.address)
@@ -294,7 +320,9 @@ def settings_ssh_test(request: Request, username: str = Depends(admin_required))
     except SshError as exc:
         record_ssh_test_result(conn, ok=False, message=str(exc))
         return _render(
-            request, username, ssh_test={"ok": False, "message": str(exc), "host": host.name}
+            request,
+            username,
+            ssh_test={"ok": False, "message": str(exc), "host": host.name, "host_id": host.id},
         )
 
     if output.strip() != PING_REPLY:
@@ -304,14 +332,20 @@ def settings_ssh_test(request: Request, username: str = Depends(admin_required))
         )
         record_ssh_test_result(conn, ok=False, message=message)
         return _render(
-            request, username, ssh_test={"ok": False, "message": message, "host": host.name}
+            request,
+            username,
+            ssh_test={"ok": False, "message": message, "host": host.name, "host_id": host.id},
         )
 
     message = f"Connected to {host.name}."
     if trusted:
         message += " Its SSH host key was recorded for the first time."
     record_ssh_test_result(conn, ok=True, message=message)
-    return _render(request, username, ssh_test={"ok": True, "message": message, "host": host.name})
+    return _render(
+        request,
+        username,
+        ssh_test={"ok": True, "message": message, "host": host.name, "host_id": host.id},
+    )
 
 
 @router.post("/settings/ssh/delete")

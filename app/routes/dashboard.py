@@ -7,9 +7,11 @@ stored result with a time attached: the page says how old it is, and an XO that
 is unreachable leaves the last known inventory on screen instead of an error
 where the hosts were.
 
-The first load after configuring a connection has no stored result yet, so one
-refresh is queued automatically. Only the first: after that, refreshing is
-something the operator asks for on the jobs page.
+A refresh is queued automatically here too — the first one right after a
+connection is configured, and again whenever the stored inventory has gone
+stale (``job_inventory.ensure_fresh``, also called on login and from Collect
+and Findings, and run periodically by the job worker). An operator can still
+ask for one sooner from the jobs page.
 
 The panels beneath the inventory follow the same rule: each reads a stored
 result and links to the page that owns it, so the dashboard answers "is
@@ -37,8 +39,8 @@ from app.findings import SEVERITIES
 from app.job_findings import KIND as FINDINGS_KIND
 from app.job_findings import report_from_job
 from app.job_inventory import KIND as INVENTORY_KIND
-from app.job_inventory import inventory_from_job
-from app.jobs import enqueue, has_active, latest_job, latest_successful, list_jobs
+from app.job_inventory import ensure_fresh, inventory_from_job
+from app.jobs import has_active, latest_job, latest_successful, list_jobs
 from app.redact import RULES, enabled_rules
 from app.update import current_state
 from app.xo_client import Inventory
@@ -94,13 +96,12 @@ def dashboard(request: Request, username: str = Depends(login_required)) -> Resp
         if newest is not None and newest.error:
             error = newest.error
 
-        if newest is None and not has_active(db, INVENTORY_KIND):
-            # A connection is configured but nothing has ever read it — the
-            # first load after saving one. Queue the refresh rather than making
-            # the operator find the button to see anything at all.
-            enqueue(db, INVENTORY_KIND)
-            wake_worker(request)
-            log.info("queued the first %s job", INVENTORY_KIND)
+        # Covers both the first load after saving a connection (nothing has
+        # ever read it) and a stored inventory old enough to re-read — see
+        # ``ensure_fresh``'s own docstring for why this check lives there
+        # instead of here.
+        ensure_fresh(db)
+        wake_worker(request)
 
     # The latest findings report, for the severity summary. Read from the
     # stored artifact the Findings page renders, so the two cannot disagree.
