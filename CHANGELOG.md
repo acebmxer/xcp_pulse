@@ -182,7 +182,15 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
   now takes `other_label`/`api_label` and appends to `confirmed_by` instead of
   overwriting it, so the one API report can be correlated against both the
   log report and this new one without the second call erasing the first —
-  a finding genuinely confirmed by both now says so.
+  a finding genuinely confirmed by both now says so. The per-host setup in
+  `docs/configuration.md` had the operator run `ssh-keygen` to get a bare
+  key pair, then separately hand-edit `authorized_keys` to prepend the
+  `command="..."` restriction onto the pasted public key text — an editing
+  step with nothing to check it against, on the one line that is this
+  feature's entire security boundary. `ssh-keygen` now writes the key
+  directly into `/root/.ssh`, and a `printf` right after it appends the
+  fully-formed, already-restricted line straight to `authorized_keys` — no
+  bare key, no line left to hand-edit.
 
 - **A seventh log-finding rule detects NFS server timeouts** — the dom0
   kernel's own `nfs: server <ip> not responding, timed out` line, written to

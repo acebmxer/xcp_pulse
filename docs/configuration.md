@@ -260,22 +260,20 @@ sent to it.
 
 **Setup, once per host:**
 
-1. Generate a dedicated key pair (do not reuse one you already use to log in
-   as yourself):
-   ```
-   ssh-keygen -t ed25519 -f xcp-pulse-diag -C xcp-pulse-diag
-   ```
-2. Copy `host-scripts/xcp-pulse-diag.sh` from this repository onto the host
+1. Copy `host-scripts/xcp-pulse-diag.sh` from this repository onto the host
    (e.g. to `/root/xcp-pulse-diag.sh`) and make it executable:
    ```
    chmod 700 /root/xcp-pulse-diag.sh
    ```
    Open it first and check the `/usr/sbin/ethtool` path it calls actually
    exists on this host (`command -v ethtool`) — adjust the script if not.
-3. Add the **public** key to `/root/.ssh/authorized_keys`, with a forced
-   command pointing at that script:
+2. Generate a dedicated key pair (do not reuse one you already use to log in
+   as yourself) directly into `/root/.ssh`, and append it to
+   `authorized_keys` with the forced command already attached — one command
+   each, nothing to come back and hand-edit:
    ```
-   command="/root/xcp-pulse-diag.sh",no-pty,no-agent-forwarding,no-X11-forwarding,no-port-forwarding,no-user-rc ssh-ed25519 AAAA...your-public-key... xcp-pulse-diag
+   ssh-keygen -t ed25519 -f /root/.ssh/xcp-pulse-diag -N "" -C xcp-pulse-diag
+   printf 'command="/root/xcp-pulse-diag.sh",no-pty,no-agent-forwarding,no-X11-forwarding,no-port-forwarding,no-user-rc %s\n' "$(cat /root/.ssh/xcp-pulse-diag.pub)" >> /root/.ssh/authorized_keys
    ```
    The `command="..."` part is what makes this safe: OpenSSH runs *that*
    script for any connection using this key and hands it whatever command the
@@ -284,11 +282,12 @@ sent to it.
    so a key set up this way can never open a shell or run anything the script
    does not already explicitly allow, even if the private key were later
    copied off this machine.
-4. Paste the **private** key into **Settings → Host SSH connection** and
-   save. Use **Test connection** to confirm it reaches a host from the stored
-   inventory — this sends the dispatcher script's own `ping` probe
-   (allowlisted alongside every check, always present), so it works right
-   away and does not depend on any specific check being configured yet.
+3. Paste the **private** key (`cat /root/.ssh/xcp-pulse-diag`) into
+   **Settings → Host SSH connection** and save. Use **Test connection** to
+   confirm it reaches a host from the stored inventory — this sends the
+   dispatcher script's own `ping` probe (allowlisted alongside every check,
+   always present), so it works right away and does not depend on any
+   specific check being configured yet.
 
 **The host's SSH key is trusted the first time XCP Pulse connects to it**,
 and remembered — every later connection must present the same one, or it is
