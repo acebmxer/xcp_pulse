@@ -11,7 +11,7 @@
 [![Python](https://img.shields.io/badge/python-3.12%2B-3776AB?logo=python&logoColor=white)](pyproject.toml)
 [![Docker](https://img.shields.io/badge/docker-compose-2496ED?logo=docker&logoColor=white)](docker-compose.yml.example)
 [![Platform: Linux](https://img.shields.io/badge/platform-linux-333333?logo=linux&logoColor=white)](#requirements)
-[![Tests](https://img.shields.io/badge/tests-675%20unit-informational)](https://github.com/acebmxer/xcp_pulse/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-853%20unit-informational)](https://github.com/acebmxer/xcp_pulse/actions/workflows/ci.yml)
 [![Ruff](https://img.shields.io/badge/ruff-clean-brightgreen)](https://github.com/acebmxer/xcp_pulse/actions/workflows/ci.yml)
 [![Trivy](https://img.shields.io/badge/trivy-scanned-brightgreen)](https://github.com/acebmxer/xcp_pulse/actions/workflows/ci.yml)
 
@@ -103,12 +103,25 @@ rather than estimated:
   answers in seconds rather than two minutes.
 - **Report findings from collected logs** — select a stored `*-logs.tgz` bundle
   and analyze it locally for storage failures, multipath path failures, XAPI
-  exceptions, HA fencing or heartbeat failures, out-of-memory events and clock
-  sync failures. The run downloads nothing, groups repeated matches by
-  condition, redacts evidence, and stores JSON and Markdown reports beside the
-  job. A finding seen in both the API report and a log report — matched by
-  condition and, when timed, within an hour of each other — is marked as
-  confirmed by the other, so one incident doesn't read as two.
+  exceptions, HA fencing or heartbeat failures, out-of-memory events, clock
+  sync failures and NFS server timeouts. The run downloads nothing, groups
+  repeated matches by condition, redacts evidence, and stores JSON and
+  Markdown reports beside the job. A finding seen in both the API report and
+  a log report — matched by condition and, when timed, within an hour of
+  each other — is marked as confirmed by the other, so one incident doesn't
+  read as two.
+- **Report NIC statistics** — a third card on the Findings page connects to
+  ticked hosts over SSH and reads `ethtool -S` driver error/drop counters,
+  the one thing this application reaches outside the Xen Orchestra API,
+  because XO has no route for it. It runs over one general-purpose host SSH
+  connection, shared with any future check rather than one key per function.
+  XCP-ng has no lesser dom0 account than root to create, so the key connects
+  as root, and the actual privilege limit is a forced-command dispatcher
+  script on `authorized_keys` allowlisting a fixed set of read-only checks by
+  name — see [Configuration](docs/configuration.md) for the exact setup. A
+  nonzero counter is flagged with what to check next (cable,
+  transceiver, switch port), and correlates with a matching finding from the
+  API or the logs the same way those two already correlate with each other.
 - **Collect XO diagnostics** — a second, independent card on the Collect page
   for the raw detail Findings' classification leaves out: the full
   per-VM/per-disk task tree behind every backup and restore run in the

@@ -229,11 +229,94 @@ plain `403` until one is added.
 > Enterprise.** Role-based access control is not available on the lower XOA
 > tiers. Installations from the sources are not restricted.
 
+## Host SSH connection: the one thing that connects to a host directly
+
+Everything above goes through the Xen Orchestra API. Some things simply are
+not in that API — NIC statistics (`ethtool -S` driver error/drop counters)
+is the first example, since Xen Orchestra's own RRD stats cover throughput,
+not per-driver error counts — and reading them means connecting to the host
+itself over SSH. This is opt-in: configure nothing under
+**Settings → Host SSH connection** and XCP Pulse never touches a host outside
+the XO API, exactly as before.
+
+**This is one SSH key, shared by every check that needs to reach a host
+directly — not one key per check.** Asking you to paste a second root-capable
+key into a second, identically shaped settings section every time a new check
+is added would double the risk (a second secret to protect, a second place it
+can leak from) for no real benefit. NIC statistics is the first check built on
+this connection; any future one reuses the same key and the same host-side
+setup below, gaining only a new entry in the dispatcher script.
+
+**XCP-ng has no lesser dom0 account than root to create.** Its own
+documentation states plainly that "the path of managing users via dom0 is
+deprecated and not recommended" and that "day to day, nobody should log into
+a host directly" — user management belongs in Xen Orchestra, not on the host.
+Root is the only account, and it is the same one Xen Orchestra itself uses to
+reach a host. So the privilege limit here is not a lesser account — there
+isn't one to have — it is a **forced-command dispatcher script**, set in
+root's own `authorized_keys`, that allowlists a fixed set of read-only checks
+by name and refuses anything else, never a shell, regardless of what is ever
+sent to it.
+
+**Setup, once per host:**
+
+1. Generate a dedicated key pair (do not reuse one you already use to log in
+   as yourself):
+   ```
+   ssh-keygen -t ed25519 -f xcp-pulse-diag -C xcp-pulse-diag
+   ```
+2. Copy `host-scripts/xcp-pulse-diag.sh` from this repository onto the host
+   (e.g. to `/root/xcp-pulse-diag.sh`) and make it executable:
+   ```
+   chmod 700 /root/xcp-pulse-diag.sh
+   ```
+   Open it first and check the `/usr/sbin/ethtool` path it calls actually
+   exists on this host (`command -v ethtool`) — adjust the script if not.
+3. Add the **public** key to `/root/.ssh/authorized_keys`, with a forced
+   command pointing at that script:
+   ```
+   command="/root/xcp-pulse-diag.sh",no-pty,no-agent-forwarding,no-X11-forwarding,no-port-forwarding,no-user-rc ssh-ed25519 AAAA...your-public-key... xcp-pulse-diag
+   ```
+   The `command="..."` part is what makes this safe: OpenSSH runs *that*
+   script for any connection using this key and hands it whatever command the
+   client actually asked for as `$SSH_ORIGINAL_COMMAND` — the script only
+   ever looks that value up in its own allowlist, it never runs it directly,
+   so a key set up this way can never open a shell or run anything the script
+   does not already explicitly allow, even if the private key were later
+   copied off this machine.
+4. Paste the **private** key into **Settings → Host SSH connection** and
+   save. Use **Test connection** to confirm it reaches a host from the stored
+   inventory — this sends the dispatcher script's own `ping` probe
+   (allowlisted alongside every check, always present), so it works right
+   away and does not depend on any specific check being configured yet.
+
+**The host's SSH key is trusted the first time XCP Pulse connects to it**,
+and remembered — every later connection must present the same one, or it is
+refused rather than silently trusted again. This is tracked in XCP Pulse's own
+database, not a `known_hosts` file, since the container has no meaningful one
+of its own. If a host is legitimately reinstalled or its key rotated, clearing
+the recorded key (Settings) is what lets it be trusted again.
+
+### NIC statistics
+
+The first check built on the connection above. It sends a bare `nic-stats`
+as the SSH command; the dispatcher script loops `ethtool -S` over every
+interface with a real device behind it — anything under
+`/sys/class/net/*/device` — and nothing else. There is nothing to configure:
+no interface list to type in and keep matched against what hardware is
+actually on each host, since the host answers that question about itself,
+every time it is asked.
+
 ## What XCP Pulse will not do
 
-- **Agents on hosts.** Everything goes through the Xen Orchestra API. No
-  software is installed on XCP-ng hosts.
+- **Agents on hosts.** No daemon and nothing persistent runs on any XCP-ng
+  host — everything above except the host SSH connection goes through the
+  Xen Orchestra API. The one exception is the small, static dispatcher script
+  described above: it does nothing on its own, runs only when invoked over
+  SSH by the one key you added, and is copied there and removed by you, never
+  written or updated by XCP Pulse itself.
 - **Writing to your pool.** XCP Pulse reads. It does not start, stop, patch or
-  reconfigure anything.
+  reconfigure anything, and the one command the host SSH connection can run
+  today (`ethtool -S`) reads driver counters and changes nothing.
 - **Sending data anywhere.** Bundles are downloaded by you and sent by you.
   XCP Pulse does not upload to Vates or anyone else.

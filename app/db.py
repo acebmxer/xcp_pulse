@@ -210,6 +210,90 @@ _MIGRATIONS: list[str] = [
     ALTER TABLE users ADD COLUMN totp_enabled INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE users ADD COLUMN totp_backup_codes TEXT NOT NULL DEFAULT '[]';
     """,
+    # 7 -> 8: the SSH connection used to read NIC statistics from a host.
+    #
+    # A single row, pinned by a CHECK to id = 1 — same reasoning as
+    # xo_connection: one credential to reach every host, not one per host.
+    # XCP-ng officially supports no host-level account but root (dom0 user
+    # management is deprecated; see docs/configuration.md), so this connects
+    # as root the same way Xen Orchestra itself does. The privilege limit is
+    # not a lesser account — XCP-ng has none to offer — it is that the key
+    # this table stores is only ever useful if the matching public key was
+    # added to root's authorized_keys with a forced command restricting it to
+    # one fixed check; that restriction lives on the host, not in this row.
+    #
+    # private_key_encrypted and passphrase_encrypted use the same AES-GCM-
+    # over-the-app-secret-key scheme as xo_connection's token and users'
+    # totp_secret_encrypted — this key is at least as sensitive as either,
+    # since it is a root credential.
+    #
+    # Superseded by migration 9: this table only ever served NIC statistics,
+    # and got in the way of reusing the same key for a second check. Left
+    # exactly as it ran here, per this file's append-only rule, rather than
+    # edited — a database that already applied this migration has these exact
+    # table names and migration 9 is what carries it forward, not this one.
+    """
+    CREATE TABLE nic_stats_connection (
+        id                      INTEGER PRIMARY KEY CHECK (id = 1),
+        private_key_encrypted   TEXT NOT NULL,
+        passphrase_encrypted    TEXT,
+        port                    INTEGER NOT NULL DEFAULT 22,
+        interfaces              TEXT NOT NULL,
+        created_at              REAL NOT NULL,
+        updated_at              REAL NOT NULL,
+        last_tested_at          REAL,
+        last_test_ok            INTEGER,
+        last_test_message       TEXT
+    );
+
+    -- Trust-on-first-use SSH host keys for the connection above. This
+    -- container has no meaningful `~/.ssh/known_hosts` of its own, so trust
+    -- is tracked here instead: the key a host presents the first time it is
+    -- connected to is recorded, and every later connection must present the
+    -- same one or the attempt is refused (see
+    -- app/nic_stats_client.TrustOnFirstUseHostKeyPolicy). Plain text: an SSH
+    -- host public key is not a secret, unlike the private key above.
+    CREATE TABLE nic_stats_known_hosts (
+        host        TEXT PRIMARY KEY,
+        key_type    TEXT NOT NULL,
+        key_base64  TEXT NOT NULL,
+        first_seen_at REAL NOT NULL
+    );
+    """,
+    # 8 -> 9: generalize the NIC-statistics-only SSH connection into one
+    # connection shared by every host-level check, with "which interfaces to
+    # read" split out as its own setting specific to the NIC statistics check.
+    #
+    # A second check reusing the same root-capable key would otherwise need
+    # either a second, identically-shaped key (doubling the risk for no
+    # reason) or this rename — done as migration 9 rather than by editing
+    # migration 8, which had already run against a real database by the time
+    # this was written; see that migration's own comment.
+    """
+    CREATE TABLE nic_stats_settings (
+        id          INTEGER PRIMARY KEY CHECK (id = 1),
+        interfaces  TEXT NOT NULL,
+        updated_at  REAL NOT NULL
+    );
+
+    INSERT INTO nic_stats_settings (id, interfaces, updated_at)
+    SELECT 1, interfaces, updated_at FROM nic_stats_connection;
+
+    ALTER TABLE nic_stats_connection RENAME TO ssh_connection;
+    ALTER TABLE ssh_connection DROP COLUMN interfaces;
+
+    ALTER TABLE nic_stats_known_hosts RENAME TO ssh_known_hosts;
+    """,
+    # 9 -> 10: drop nic_stats_settings. NIC statistics now checks every
+    # interface a host itself reports as having a real device behind it
+    # (discovered by the dispatcher script, host-scripts/xcp-pulse-diag.sh),
+    # not an operator-typed list — so there is nothing left for this table to
+    # hold. Dropped rather than the migration 9 that created it edited away,
+    # per this file's append-only rule; migration 9 already ran against a
+    # real database by the time this was written.
+    """
+    DROP TABLE nic_stats_settings;
+    """,
 ]
 
 

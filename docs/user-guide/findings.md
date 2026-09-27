@@ -1,20 +1,28 @@
 # Findings
 
-Two independent checks for problems, run on demand:
+Three independent checks for problems, run on demand:
 
 - **Read findings from Xen Orchestra** — asks the API about failed tasks,
   alarms, XAPI messages, missing patches, backup and restore results, and the
   pool dashboard. Downloads nothing and answers in a second or two.
 - **Findings from collected logs** — analyzes an already-stored log bundle
   locally for storage failures, multipath changes, XAPI exceptions, HA
-  fencing and heartbeat failures, out-of-memory events and clock sync
-  failures. Also downloads nothing — it reads the bundle already on disk.
+  fencing and heartbeat failures, out-of-memory events, clock sync failures
+  and NFS server timeouts. Also downloads nothing — it reads the bundle
+  already on disk.
+- **Read NIC statistics** — connects to ticked hosts over SSH and reads
+  `ethtool -S` driver error/drop counters for every interface with a real
+  device behind it, since Xen Orchestra has no route for this. Needs the
+  [host SSH connection](settings.md#host-ssh-connection) configured first —
+  nothing else. A nonzero counter is cumulative since the driver last
+  loaded, not a live rate, and the finding says so rather than reading as an
+  incident happening right now.
 
 Each finding shows its severity, the evidence behind it (redacted using the
 rules switched on in [Redaction](redaction.md)), and what to do about it. A
-finding spotted by both checks — matched by condition and, when both are
-timed, within an hour of each other — is marked as confirmed by the other,
-so one real incident doesn't read as two unrelated findings.
+finding spotted by more than one check — matched by condition and, when
+timed, within an hour of each other — is marked as confirmed by the others,
+so one real incident doesn't read as several unrelated findings.
 
 Results can be downloaded as JSON or Markdown; the Markdown copy is the one
 to paste into a support ticket. If any rules were switched off when a report

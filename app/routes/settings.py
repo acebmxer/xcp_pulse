@@ -9,7 +9,25 @@ from fastapi.responses import HTMLResponse, Response
 
 from app.activity import log_activity
 from app.dependencies import admin_required, redirect, templates
+from app.job_inventory import known_inventory
 from app.security import client_ip
+from app.ssh_client import PING_CHECK, PING_REPLY, SshError, load_private_key, run_check
+from app.ssh_connection import (
+    DecryptionError as SshDecryptionError,
+)
+from app.ssh_connection import (
+    delete_connection as delete_ssh_connection,
+)
+from app.ssh_connection import (
+    get_connection as get_ssh_connection,
+)
+from app.ssh_connection import known_host_key, load_credentials, remember_host_key
+from app.ssh_connection import (
+    record_test_result as record_ssh_test_result,
+)
+from app.ssh_connection import (
+    save_connection as save_ssh_connection,
+)
 from app.tls import (
     CertificateError,
     current_certificate_info,
@@ -51,6 +69,8 @@ def _render(
     notice: str | None = None,
     test: object | None = None,
     tls_error: str | None = None,
+    ssh_error: str | None = None,
+    ssh_test: dict | None = None,
     status_code: int = 200,
 ) -> Response:
     settings = request.app.state.settings
@@ -70,6 +90,9 @@ def _render(
             "enable_https": settings.enable_https,
             "current_cert": current_cert,
             "tls_error": tls_error,
+            "ssh_connection": get_ssh_connection(request.app.state.db),
+            "ssh_error": ssh_error,
+            "ssh_test": ssh_test,
         },
         status_code=status_code,
     )
@@ -160,6 +183,145 @@ def settings_delete(request: Request, username: str = Depends(admin_required)) -
     log.info("Xen Orchestra connection deleted")
     log_activity(conn, username, "settings.connection_deleted", ip=client_ip(request))
     return redirect("/settings?deleted=1")
+
+
+@router.post("/settings/ssh", response_class=HTMLResponse)
+def settings_ssh_save(
+    request: Request,
+    username: str = Depends(admin_required),
+    private_key: str = Form(...),
+    passphrase: str = Form(""),
+    port: int = Form(22),
+) -> Response:
+    """Store the SSH key used to reach a host directly, for any check that needs it.
+
+    ``private_key`` is pasted, never a file path — see
+    ``docs/configuration.md`` for why this project stores it encrypted rather
+    than reading it off the data volume. It never comes back once saved; the
+    page shows only whether a key is stored. This is one connection, reused
+    by every host-level check XCP Pulse offers (today, NIC statistics), not a
+    separate key per check.
+    """
+    conn = request.app.state.db
+    try:
+        save_ssh_connection(
+            conn,
+            private_key=private_key,
+            passphrase=passphrase,
+            port=port,
+            secret_key=request.app.state.settings.secret_key,
+        )
+    except ValueError as exc:
+        return _render(request, username, ssh_error=str(exc), status_code=400)
+
+    log.info("SSH connection saved")
+    log_activity(conn, username, "settings.ssh_connection", ip=client_ip(request))
+    return redirect("/settings?ssh_saved=1")
+
+
+@router.post("/settings/ssh/test", response_class=HTMLResponse)
+def settings_ssh_test(request: Request, username: str = Depends(admin_required)) -> Response:
+    """Connect to one known host and confirm the dispatcher script answers.
+
+    Sends the dispatcher script's own ``ping`` probe (``app.ssh_client.
+    PING_CHECK``) — allowlisted on every host regardless of which checks are
+    configured — so this proves the connection itself (key accepted, script
+    installed and enforcing the allowlist) independent of any one check like
+    NIC statistics being set up. Xen Orchestra has no route to test against
+    here — this has to reach an actual host, unlike ``settings_test`` above
+    — so it picks the alphabetically first host with an address from the
+    stored inventory rather than asking the operator to name one.
+    """
+    conn = request.app.state.db
+    data_dir = request.app.state.settings.data_dir
+
+    try:
+        credentials = load_credentials(conn, request.app.state.settings.secret_key)
+    except LookupError:
+        return _render(
+            request, username, ssh_error="Save an SSH key before testing it.", status_code=400
+        )
+    except SshDecryptionError:
+        return _render(
+            request,
+            username,
+            ssh_error=(
+                "The stored key cannot be decrypted — the secret key has "
+                "changed since it was saved. Enter the key again."
+            ),
+            status_code=400,
+        )
+
+    hosts = sorted(
+        (host for host in known_inventory(conn, data_dir).hosts if host.address),
+        key=lambda host: host.name.lower(),
+    )
+    if not hosts:
+        return _render(
+            request,
+            username,
+            ssh_error=(
+                "No host with an address is in the stored inventory. Run Refresh inventory first."
+            ),
+            status_code=400,
+        )
+    host = hosts[0]
+
+    try:
+        private_key = load_private_key(credentials.private_key, credentials.passphrase)
+    except SshError as exc:
+        record_ssh_test_result(conn, ok=False, message=str(exc))
+        return _render(
+            request, username, ssh_test={"ok": False, "message": str(exc), "host": host.name}
+        )
+
+    recorded = known_host_key(conn, host.address)
+    trusted: list[bool] = []
+
+    def _on_trust(key_type: str, key_bytes: bytes) -> None:
+        remember_host_key(conn, host.address, key_type, key_bytes)
+        trusted.append(True)
+
+    try:
+        output, _ = run_check(
+            host=host.address,
+            port=credentials.port,
+            private_key=private_key,
+            known_host_key=recorded,
+            on_trust_new_host_key=_on_trust,
+            check=PING_CHECK,
+        )
+    except SshError as exc:
+        record_ssh_test_result(conn, ok=False, message=str(exc))
+        return _render(
+            request, username, ssh_test={"ok": False, "message": str(exc), "host": host.name}
+        )
+
+    if output.strip() != PING_REPLY:
+        message = (
+            f"Connected to {host.name}, but its dispatcher script did not answer as "
+            "expected — check it matches host-scripts/xcp-pulse-diag.sh."
+        )
+        record_ssh_test_result(conn, ok=False, message=message)
+        return _render(
+            request, username, ssh_test={"ok": False, "message": message, "host": host.name}
+        )
+
+    message = f"Connected to {host.name}."
+    if trusted:
+        message += " Its SSH host key was recorded for the first time."
+    record_ssh_test_result(conn, ok=True, message=message)
+    return _render(request, username, ssh_test={"ok": True, "message": message, "host": host.name})
+
+
+@router.post("/settings/ssh/delete")
+def settings_ssh_delete(request: Request, username: str = Depends(admin_required)) -> Response:
+    """Forget the SSH connection, including the stored key."""
+    conn = request.app.state.db
+    delete_ssh_connection(conn)
+    log.info("SSH connection deleted")
+    log_activity(conn, username, "settings.ssh_connection_deleted", ip=client_ip(request))
+    return redirect("/settings?ssh_deleted=1")
 
 
 @router.post("/settings/tls", response_class=HTMLResponse)

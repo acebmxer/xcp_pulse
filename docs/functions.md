@@ -273,6 +273,81 @@ seconds value matches everything, which looks exactly like a working filter.
 `get_connection` deliberately does not return the token: the settings template
 renders this object, and shows only that a token is stored.
 
+## `app/ssh_connection.py` — the shared SSH connection used to reach a host directly
+
+Stores the single SSH key used to reach a host directly — shared by every
+check that needs one, not one connection per check (NIC statistics is the
+first; it has nothing of its own to configure, since it discovers which
+interfaces to read on the host itself). XCP-ng has no lesser dom0 account
+than root to create — dom0 user management is
+deprecated — so this connects as root, the same account Xen Orchestra itself
+uses; the privilege limit is a forced-command dispatcher script on the host's
+`authorized_keys`, not a lesser account (see `docs/configuration.md`).
+
+| Function | Signature | Does | Used by | Since |
+| --- | --- | --- | --- | --- |
+| `delete_connection` | `(conn) -> bool` | Removes the connection and its key | `routes.settings` | unreleased |
+| `forget_host_key` | `(conn, host: str) -> bool` | Clears a recorded SSH host key, so the next connection trusts whatever key is presented as if for the first time | `routes.settings`, after an operator verifies a changed key | unreleased |
+| `get_connection` | `(conn) -> SshConnection \| None` | Reads the connection, never the key or passphrase | `routes.settings` | unreleased |
+| `known_host_key` | `(conn, host: str) -> tuple[str, bytes] \| None` | The SSH host key recorded for a host on an earlier connection | `job_nic_stats.run` | unreleased |
+| `load_credentials` | `(conn, secret_key: str) -> SshCredentials` | Decrypts the stored key and passphrase for immediate use | `job_nic_stats.run` | unreleased |
+| `record_test_result` | `(conn, *, ok: bool, message: str) -> None` | Remembers the last test outcome | `routes.settings` | unreleased |
+| `remember_host_key` | `(conn, host: str, key_type: str, key_bytes: bytes) -> None` | Records a host's SSH key the first time it is trusted | `ssh_client.TrustOnFirstUseHostKeyPolicy`, via `job_nic_stats.run` | unreleased |
+| `save_connection` | `(conn, *, private_key, passphrase, port, secret_key) -> None` | Stores the connection, encrypting the key and passphrase | `routes.settings` | unreleased |
+
+An empty passphrase is stored as `NULL`, not an encrypted empty string, so
+`get_connection` can tell "no passphrase" apart from "a passphrase that
+happens to be empty" without decrypting anything. Host key trust is
+trust-on-first-use, tracked in `ssh_known_hosts` rather than a system
+`known_hosts` file this container does not meaningfully have — see
+`app/ssh_client.py`.
+
+## `app/ssh_client.py` — generic SSH plumbing shared by every host-level check
+
+The one place this application connects to a host directly rather than going
+through the Xen Orchestra API or a downloaded bundle. The forced-command
+dispatcher script on the host's `authorized_keys` is the actual privilege
+boundary: it allowlists a fixed set of check names and runs only the matching
+one's fixed logic, ignoring anything else sent to it, so a leaked key still
+cannot do anything the script does not already permit.
+
+| Function | Signature | Does | Used by | Since |
+| --- | --- | --- | --- | --- |
+| `load_private_key` | `(pem_text: str, passphrase: str \| None) -> paramiko.PKey` | Parses a PEM private key of any common type (RSA, Ed25519, ECDSA) | `job_nic_stats.run` | unreleased |
+| `run_check` | `(*, host, port, private_key, known_host_key, on_trust_new_host_key, check, args="", username="root") -> tuple[str, bool]` | Sends `check`/`args` as the SSH command and returns the host's raw output | `nic_stats_client.fetch_stats`, `routes.settings.settings_ssh_test` | unreleased |
+
+`PING_CHECK` (`"ping"`) is the dispatcher script's own connectivity probe,
+allowlisted on every host alongside whichever real checks are configured —
+`routes.settings.settings_ssh_test` sends it so testing the connection never
+depends on a specific check (NIC statistics or otherwise) being set up first.
+`PING_REPLY` is the exact text a correctly configured host answers with.
+
+`TrustOnFirstUseHostKeyPolicy` (a `paramiko.MissingHostKeyPolicy`, so it
+carries no row above — the checker covers top-level functions) accepts a
+host's SSH key the first time it is seen and requires every later connection
+present the same one, tracked through `ssh_connection.known_host_key`/
+`remember_host_key` rather than a file.
+
+## `app/nic_stats_client.py` — the NIC statistics check, built on `ssh_client`
+
+Reads `ethtool -S` driver error/drop counters over the shared connection
+above — Xen Orchestra's RRD stats cover throughput, not per-driver error
+counts, and the collected log bundle does not carry this either. Sends a bare
+`CHECK_NAME` ("nic-stats") as the SSH command, no arguments — a correctly
+configured host's dispatcher script matches that against its own allowlist,
+discovers every interface with a real device behind it itself, and returns
+marked `ethtool -S` blocks for each.
+
+| Function | Signature | Does | Used by | Since |
+| --- | --- | --- | --- | --- |
+| `fetch_stats` | `(*, host, port, private_key, known_host_key, on_trust_new_host_key, username="root") -> tuple[str, bool]` | Runs the NIC statistics check over SSH and returns its raw output | `job_nic_stats._read_host` | unreleased |
+| `parse_ethtool_stats` | `(output: str) -> dict[str, dict[str, int]]` | Splits marked `ethtool -S` blocks into `{interface: {counter: value}}` | `job_nic_stats.run` | unreleased |
+
+`IFACE_MARKER` is the exact text the documented dispatcher script must print
+ahead of each interface's block; it and `parse_ethtool_stats` must stay in
+lock-step, since the marker is the only thing separating one interface's
+counters from the next in a concatenated multi-interface run.
+
 ## `app/jobs.py` — the job queue
 
 The queue is a database table, not an in-memory structure. That is what lets a
@@ -508,12 +583,13 @@ constructor and redacts the evidence on the way in.
 | --- | --- | --- | --- | --- |
 | `backup_failure_message` | `(detail: object) -> str \| None` | The specific reason one backup/restore run failed (`result.message`), or None if that shape isn't there | `_failed_runs`, `job_diagnostics._failure_summaries` | unreleased |
 | `collect_findings` | `(client, pools, *, enabled=None, window_days=30, now=None, progress=None) -> Report` | Reads every source and builds the report | `job_findings.run` | v0.7.0 |
-| `collect_log_findings` | `(bundle_path, *, enabled=None, progress=None) -> Report` | Reads a stored tar bundle, groups storage, multipath, XAPI, HA, out-of-memory and clock-skew matches, and builds the report; a bundle that ends early is salvaged rather than failed | `job_log_findings.run` | v0.7.0 |
+| `collect_log_findings` | `(bundle_path, *, enabled=None, progress=None) -> Report` | Reads a stored tar bundle, groups storage, multipath, XAPI, HA, out-of-memory, clock-skew and NFS-timeout matches, and builds the report; a bundle that ends early is salvaged rather than failed | `job_log_findings.run` | v0.7.0 |
+| `collect_nic_stat_findings` | `(host_stats, *, unreachable=None, enabled=None) -> Report` | Flags real `ethtool -S` error/drop counters in already-fetched per-host, per-interface data; does no SSH itself | `job_nic_stats.run` | unreleased |
 | `disabled_rule_titles` | `(enabled) -> list[str]` | The titles of the redaction rules switched off, for the report | `collect_findings`, `job_diagnostics.run` | v0.7.0 |
 | `millis_to_seconds` | `(value: object) -> float \| None` | An XO timestamp (milliseconds) as seconds — task-shaped records (tasks, backup/restore logs) | internal to this module, `job_diagnostics._within` | unreleased |
 | `seconds_value` | `(value: object) -> float \| None` | A XAPI timestamp (already seconds) as a float — message-shaped records (messages, alarms) | internal to this module, `job_diagnostics._within` | unreleased |
 | `sort_findings` | `(findings: list[Finding]) -> list[Finding]` | Worst first, then most recent, then by title | `collect_findings`, `job_findings.report_from_job` | v0.7.0 |
-| `correlate_reports` | `(api_report: Report \| None, log_report: Report \| None) -> None` | Marks findings that appear in both the API report and the log report — same condition family, within an hour of each other — by setting `confirmed_by` on each side; a log finding with no timestamp of its own is timed by when its report was scanned | `routes/findings.findings_page` | v0.7.0 |
+| `correlate_reports` | `(api_report, other_report, *, other_label="logs", api_label="API") -> None` | Marks findings that appear in both reports — same condition family, within an hour of each other — by appending to `confirmed_by` on each side (never overwriting a match from an earlier call against the same `api_report`); a finding with no timestamp of its own is timed by when its report was scanned | `routes/findings.findings_page`, called once against the log report and once against the NIC statistics report | v0.7.0 |
 
 `Finding`, `SourceInfo`, `SourceResult` and `Report` are dataclasses. `SOURCES`
 holds each source's title, origin, what it holds and the unit it is counted in
@@ -619,11 +695,12 @@ Message classification is two tables: `MESSAGE_RULES` matched exactly, then
 neither is routine and is dropped — measured, VM lifecycle events alone were
 3,381 of 3,472 messages on one pool.
 
-Log classification uses six source rules: storage, multipath, XAPI, HA,
-out-of-memory and clock skew. Matching lines are counted once per source and
-repeated matches become one finding with a count; the latest matching line is
-retained as representative evidence. The rules are narrower than a generic
-error search: an XAPI error is not automatically a storage failure.
+Log classification uses seven source rules: storage, multipath, XAPI, HA,
+out-of-memory, clock skew and NFS server timeouts. Matching lines are counted
+once per source and repeated matches become one finding with a count; the
+latest matching line is retained as representative evidence. The rules are
+narrower than a generic error search: an XAPI error is not automatically a
+storage failure.
 
 **Correlation is a separate pass, not part of either read.** The API report and
 the log report are two independent runs, often hours apart, so `Finding` has no
@@ -725,6 +802,29 @@ failure only means usernames go unmasked by name; it does not fail the job.
 `report_from_job` returns a plain dict, not a dataclass — the page only reads
 it back, so a key an older stored report lacks is simply absent rather than a
 reason to reject the whole artifact.
+
+## `app/job_nic_stats.py` — the NIC statistics job
+
+Reads `ethtool -S` counters from every ticked host over SSH and builds one
+report across all of them — deliberately not one job per host, because the
+real incident this feature was built from was two hosts logging the same NFS
+server's timeouts over the same window, and the counters worth checking
+belong to both at once. A host that cannot be reached is recorded and does
+not fail the run for the others.
+
+| Function | Signature | Does | Used by | Since |
+| --- | --- | --- | --- | --- |
+| `report_from_job` | `(conn, data_dir, job_id: str) -> Report \| None` | Rebuilds the stored NIC statistics report | `routes.collect` | unreleased |
+| `run` | `(context: JobContext) -> None` | Reads every ticked host, parses its counters, and stores the report | `job_runner`, via `register` | unreleased |
+| `to_markdown` | `(report: Report, *, newly_trusted=None) -> str` | Formats a NIC statistics report for a support ticket | `job_nic_stats.run` | unreleased |
+| `to_payload` | `(report: Report) -> dict` | Serializes a NIC statistics report as JSON | `job_nic_stats.run` | unreleased |
+
+Credentials come from the stored `ssh_connection`, never from job params —
+there is exactly one such connection, shared with any other host-level check,
+the same way there is exactly one XO connection. Which interfaces to read is
+decided by the host itself at read time, not a stored setting. `newly_trusted`
+names any host whose SSH key was recorded for the first time this run, so
+that is visible in the Markdown copy rather than passing silently.
 
 ## `app/retention.py` — what to delete, previewed first
 
@@ -900,6 +1000,9 @@ for why this does not use `app/jobs.py`.
 | `settings_delete` | `(request, username) -> Response` | `POST /settings/delete` — forgets the connection | router | v0.2.0 |
 | `settings_page` | `(request, username) -> Response` | `GET /settings` — the XO connection page | router | v0.2.0 |
 | `settings_save` | `(request, username, url, token, account_type, verify_tls) -> Response` | `POST /settings` — stores the connection | router | v0.2.0 |
+| `settings_ssh_delete` | `(request, username) -> Response` | `POST /settings/ssh/delete` — forgets the host SSH connection | router | unreleased |
+| `settings_ssh_save` | `(request, username, private_key, passphrase, port) -> Response` | `POST /settings/ssh` — stores the SSH key, encrypting it | router | unreleased |
+| `settings_ssh_test` | `(request, username) -> Response` | `POST /settings/ssh/test` — connects to the first inventoried host with an address and reports what came back | router | unreleased |
 | `settings_test` | `(request, username) -> Response` | `POST /settings/test` — tests and reports reach | router | v0.2.0 |
 | `settings_tls_upload` | `(request, username, cert_file, key_file) -> Response` | `POST /settings/tls` — validates and installs an uploaded certificate (built-in HTTPS only) | router | 0.9.0 |
 | `start_inventory_refresh` | `(request, username) -> Response` | `POST /jobs/refresh-inventory` — queues a refresh | router | v0.4.0 |
@@ -918,6 +1021,7 @@ for why this does not use `app/jobs.py`.
 | `findings_page` | `(request, username) -> Response` | `GET /findings` — the latest stored findings report | router | v0.7.0 |
 | `start_findings` | `(request, username) -> Response` | `POST /findings` — queues a findings run | router | v0.7.0 |
 | `start_log_findings` | `(request, artifact_id, username) -> Response` | `POST /findings/from-logs` — queues findings from one stored log bundle | router | v0.7.0 |
+| `start_nic_stats` | `(request, username, host_ids) -> Response` | `POST /findings/nic-stats` — queues a NIC statistics read across every ticked host | router | unreleased |
 | `download_findings` | `(artifact_id, request, username) -> Response` | `GET /findings/download/{id}` — streams the stored JSON or Markdown | router | v0.7.0 |
 | `support_package_page` | `(request, username) -> Response` | `GET /support-package` — stored collections and built packages | router | v0.7.0 |
 | `package_collection` | `(job_id, request, username) -> Response` | `POST /support-package/{id}/package` — queues a package from an already-stored collection | router | v0.7.0 |

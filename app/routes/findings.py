@@ -33,15 +33,25 @@ from app.findings import DEFAULT_WINDOW_DAYS, SEVERITIES, correlate_reports
 from app.job_collect import KIND as COLLECT_KIND
 from app.job_findings import FINDINGS_ARTIFACT, FINDINGS_MARKDOWN, report_from_job
 from app.job_findings import KIND as FINDINGS_KIND
+from app.job_inventory import known_inventory
 from app.job_log_findings import KIND as LOG_FINDINGS_KIND
 from app.job_log_findings import LOG_FINDINGS_ARTIFACT
 from app.job_log_findings import report_from_job as log_report_from_job
+from app.job_nic_stats import KIND as NIC_STATS_KIND
+from app.job_nic_stats import NIC_STATS_ARTIFACT
+from app.job_nic_stats import report_from_job as nic_report_from_job
 from app.jobs import enqueue, has_active, latest_job, latest_successful, list_jobs
 from app.security import client_ip
+from app.ssh_connection import get_connection as get_ssh_connection
 from app.xo_connection import get_connection
 
 router = APIRouter()
 log = logging.getLogger("xcp_pulse.findings")
+
+# A checked-box list arrives as zero or more repeated form fields — module-
+# level because a call in an argument default would be a mutable shared
+# between requests, the same reason routes/collect.py's checkbox fields are.
+_HOST_IDS_FIELD = Form(default_factory=list)
 
 
 @router.get("/findings", response_class=HTMLResponse)
@@ -69,11 +79,18 @@ def findings_page(request: Request, username: str = Depends(login_required)) -> 
         if artifact.name.endswith("-logs.tgz")
     ]
 
+    nic_job = latest_successful(db, NIC_STATS_KIND)
+    nic_report = nic_report_from_job(db, data_dir, nic_job.id) if nic_job is not None else None
+    nic_artifacts = list_for_job(db, nic_job.id) if nic_job is not None else []
+    active_nic_job = latest_job(db, NIC_STATS_KIND)
+    nic_failed = active_nic_job is not None and active_nic_job.state == "failed"
+
     # Both reports are independent runs, possibly hours apart, describing the
     # same pool from different evidence. Correlating them here, once, means
     # every finding on the page already carries its cross-reference rather
     # than the operator comparing two lists by eye.
     correlate_reports(report, log_report)
+    correlate_reports(report, nic_report, other_label="NIC statistics")
 
     return templates.TemplateResponse(
         request,
@@ -97,10 +114,47 @@ def findings_page(request: Request, username: str = Depends(login_required)) -> 
             "active_log_job": newest_log_job,
             "log_error": newest_log_job.error if log_failed else None,
             "log_findings_artifact": LOG_FINDINGS_ARTIFACT,
+            "nic_ready": get_ssh_connection(db) is not None,
+            "nic_hosts": known_inventory(db, data_dir).hosts,
+            "nic_job": nic_job,
+            "nic_report": nic_report,
+            "nic_artifacts": nic_artifacts,
+            "nic_running": has_active(db, NIC_STATS_KIND),
+            "active_nic_job": active_nic_job,
+            "nic_error": active_nic_job.error if nic_failed else None,
+            "nic_stats_artifact": NIC_STATS_ARTIFACT,
             "notice": request.query_params.get("notice"),
             "error": request.query_params.get("error"),
         },
     )
+
+
+@router.post("/findings/nic-stats")
+def start_nic_stats(
+    request: Request,
+    username: str = Depends(operator_required),
+    host_ids: list[str] = _HOST_IDS_FIELD,
+) -> Response:
+    """Queue a NIC statistics read across every ticked host."""
+    db = request.app.state.db
+    data_dir = request.app.state.settings.data_dir
+
+    if get_ssh_connection(db) is None:
+        return redirect("/findings?error=Configure+the+SSH+connection+in+Settings+first.")
+
+    known_ids = {host.id for host in known_inventory(db, data_dir).hosts}
+    picked = [host_id for host_id in host_ids if host_id in known_ids]
+    if not picked:
+        return redirect("/findings?error=Pick+at+least+one+host.")
+
+    if has_active(db, NIC_STATS_KIND):
+        return redirect("/findings?notice=A+NIC+statistics+run+is+already+going.")
+
+    job = enqueue(db, NIC_STATS_KIND, {"host_ids": picked})
+    wake_worker(request)
+    log.info("queued %s job %s for %s", NIC_STATS_KIND, job.id, username)
+    log_activity(db, username, "findings.nic_stats", detail=",".join(picked), ip=client_ip(request))
+    return redirect("/findings?notice=Reading+NIC+statistics.")
 
 
 @router.post("/findings/from-logs")

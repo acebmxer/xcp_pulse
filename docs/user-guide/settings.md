@@ -25,3 +25,36 @@ and its unencrypted private key (`.pem` or `.key`). XCP Pulse checks they're
 a valid, matching, unexpired pair before saving them; nginx starts serving
 the new certificate immediately, no restart needed, and this section updates
 to describe it.
+
+## Host SSH connection
+
+A single SSH connection XCP Pulse uses to reach a host directly, for
+whatever Xen Orchestra has no API route for — NIC statistics today, more may
+follow. One key, reused by every such check; not a separate key per check.
+Configuring it is entirely optional; leave it empty and this application
+never connects to a host outside the Xen Orchestra API.
+
+Setting it up needs a change on the host itself first — see
+[Configuration](configuration.md) for the dispatcher script to install and
+the exact line to add to root's `authorized_keys`, and why XCP-ng leaves root
+as the only account this can use. Once that is done:
+
+- Paste the **private** key here (RSA, Ed25519 or ECDSA). It is encrypted
+  before storage and never shown again — the page only shows whether one is
+  stored.
+- Give it a passphrase only if the key itself has one.
+- **Test connection** connects to the alphabetically first host with an
+  address in the stored inventory and sends a bare connectivity probe to
+  confirm the key is accepted and the host's dispatcher script is enforcing
+  its allowlist — this works whether or not any specific check (NIC
+  statistics or otherwise) has anything further to configure. The first time
+  it reaches any given host, that host's SSH key is recorded; every later
+  connection to it must present the same key, or the connection is refused
+  rather than silently trusted again.
+- **Delete connection** removes the stored key. It does not touch anything on
+  the hosts themselves — the dispatcher script you installed stays until you
+  remove it yourself.
+
+NIC statistics itself has nothing to configure: it reads every network
+interface the host reports as having a real device behind it, discovered on
+the host at read time, not a list typed in here.

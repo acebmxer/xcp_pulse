@@ -129,6 +129,75 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ### Added
 
+- **A single, general-purpose SSH connection, kept separate from the Xen
+  Orchestra one, lets XCP Pulse reach a host directly for whatever the XO API
+  has no route for — NIC statistics (`ethtool -S` driver counters) is the
+  first check built on it.** Xen Orchestra's RRD stats cover throughput, not
+  per-driver error counts, and the collected `logs.tgz` bundle does not carry
+  this either, so this is the one thing in the application that connects to a
+  host at all rather than going through the XO API. XCP-ng's own
+  documentation is explicit that dom0 user management is deprecated and
+  nobody should log in to a host directly day to day, and that there is no
+  lesser account than root to create — so this connects as root, the same
+  account Xen Orchestra itself uses. The actual privilege limit is a
+  forced-command **dispatcher script** installed on the host
+  (`host-scripts/xcp-pulse-diag.sh`, documented in `docs/configuration.md`
+  with the exact `authorized_keys` line to add): OpenSSH runs that script for
+  any connection using the key, the script allowlists a fixed set of
+  read-only check names and refuses anything else, never a shell — so adding
+  a second check later means a new allowlist entry on the host, not a second
+  root-capable key. This is deliberate: the key is pasted once, into a new
+  **Settings → Host SSH connection** section, and reused by every check
+  rather than one key per function. Stored encrypted
+  (`app/ssh_connection.py`, the same AES-GCM-over-the-secret-key scheme as
+  the Xen Orchestra token), never as a file path — this was a deliberate
+  choice over reading a key off the data volume, to keep private key material
+  out of the container's filesystem as well as out of the database in
+  plaintext. A host's SSH key is trusted the first time it is connected to
+  and then required to match on every later connection (`ssh_known_hosts`,
+  trust-on-first-use, tracked in the database since this container has no
+  meaningful `known_hosts` of its own) rather than either trusting blindly or
+  needing host keys configured up front. Which interfaces NIC statistics
+  reads is not configured anywhere — the dispatcher script discovers every
+  interface with a real device behind it (`/sys/class/net/*/device`) on the
+  host itself at read time, so there is no operator-typed list to keep in
+  sync with whatever hardware is actually on a given host. **Test connection**
+  sends the dispatcher script's own `ping` probe (`app.ssh_client.PING_CHECK`)
+  rather than running NIC statistics itself, so testing the connection never
+  depends on any specific check having anything configured. The schema picked
+  up two follow-on migrations (7 → 8 → 9 → 10, never 7 → 8 edited in place)
+  as this connection was generalized after a database had already applied the
+  original NIC-statistics-only table names, so an existing install carries
+  its saved key and known hosts forward rather than losing them.
+  `findings.collect_nic_stat_findings` flags real error/drop counters —
+  deliberately not `fdir_miss` or the `fcoe_*` counters, which are
+  informational and were over 700,000 on a perfectly healthy interface in
+  the real support case this was built from — at warning, with evidence that
+  says plainly these are cumulative counts, not a live rate, so a nonzero
+  value may already be resolved rather than reading as an active incident.
+  A third card on the **Findings** page, **Read NIC statistics**, ticks which
+  inventoried hosts to read and runs the job — the same `Report`/`Finding`
+  shape as the other two findings sources, so it renders on the same page
+  with the same severity summary, evidence and action text. `correlate_reports`
+  now takes `other_label`/`api_label` and appends to `confirmed_by` instead of
+  overwriting it, so the one API report can be correlated against both the
+  log report and this new one without the second call erasing the first —
+  a finding genuinely confirmed by both now says so.
+
+- **A seventh log-finding rule detects NFS server timeouts** — the dom0
+  kernel's own `nfs: server <ip> not responding, timed out` line, written to
+  `messages`/`kern.log` whenever an NFS storage repository stops answering.
+  Reported from a real production incident where two hosts in the same pool
+  logged this against the same NFS server over an overlapping window;
+  nothing in `LOG_FINDING_RULES` matched it, so a bundle already holding the
+  evidence scanned clean. `findings.py` gains `SOURCE_LOGS_NFS`, correlated
+  under the existing `storage` family so it lines up with a matching
+  `SR_BACKEND_FAILURE` API finding rather than reading as unrelated. Reported
+  at critical, with an action that tells the operator to check the NFS
+  server itself first, then — since this tool cannot see below the host's
+  own network stack — the path to it: switch port error/drop counters, a bad
+  cable or transceiver, and the host's own NIC error counters.
+
 - **A "Collect XO diagnostics" card on the Collect page** puts the previous
   entry's foundation to use: three checkboxes let an operator pull backup and
   restore run detail, XAPI tasks, and messages/alarms straight from the Xen

@@ -70,6 +70,8 @@ SOURCE_LOGS_XAPI = "logs_xapi"
 SOURCE_LOGS_HA = "logs_ha"
 SOURCE_LOGS_OOM = "logs_oom"
 SOURCE_LOGS_CLOCKSKEW = "logs_clockskew"
+SOURCE_LOGS_NFS = "logs_nfs"
+SOURCE_NIC_STATS = "nic_stats"
 
 # Where a source's data physically comes from. Xen Orchestra serves all seven
 # routes, but it *originates* only three of them — the rest it relays from the
@@ -189,6 +191,18 @@ SOURCES = {
         origin=ORIGIN_HOSTS,
         holds="NTP/chrony time sync failures and large clock steps",
         unit="log lines",
+    ),
+    SOURCE_LOGS_NFS: SourceInfo(
+        title="NFS logs",
+        origin=ORIGIN_HOSTS,
+        holds="the dom0 kernel's own NFS client timeout and recovery events",
+        unit="log lines",
+    ),
+    SOURCE_NIC_STATS: SourceInfo(
+        title="NIC statistics",
+        origin=ORIGIN_HOSTS,
+        holds="ethtool driver counters read directly from each host over SSH",
+        unit="interfaces",
     ),
 }
 
@@ -677,15 +691,24 @@ def _finding_family(finding: Finding) -> str | None:
     return None
 
 
-def correlate_reports(api_report: Report | None, log_report: Report | None) -> None:
+def correlate_reports(
+    api_report: Report | None,
+    log_report: Report | None,
+    *,
+    other_label: str = "logs",
+    api_label: str = "API",
+) -> None:
     """Mark findings in each report that are echoed in the other.
 
     Findings are matched by condition family (see above) and by falling
     within ``CORRELATION_WINDOW_SECONDS`` of each other. A match sets
-    ``confirmed_by`` on *both* findings to the other report's finding title,
+    ``confirmed_by`` on *both* findings to name the other report's finding,
     so either page shows the operator that this is not a one-off — an XAPI
     exception in the logs next to a failed XO task is a single incident, not
-    two.
+    two. ``other_label``/``api_label`` name the two sides in that text —
+    the parameter names say "log_report" because that was the first caller,
+    but any second ``Report`` works the same way; NIC statistics correlates
+    against the same API report with ``other_label="NIC statistics"``.
 
     A log finding's evidence line rarely carries a timestamp the collector can
     parse, so it has none of its own (``Finding.at is None``); a scanned log
@@ -696,6 +719,12 @@ def correlate_reports(api_report: Report | None, log_report: Report | None) -> N
     which is what a findings run and the log bundle it was run against being
     "possibly hours apart" (see ``findings_page``) is meant to catch, not wave
     through.
+
+    **Calling this more than once against the same ``api_report`` appends
+    rather than overwrites.** The Findings page correlates the one API report
+    against both the log report and the NIC statistics report in two separate
+    calls; a finding genuinely confirmed by both must say so, not have the
+    second call silently erase the first one's ``confirmed_by``.
 
     Mutates the findings in place via ``dataclasses.replace`` semantics
     (``Finding`` is frozen) and reassigns each report's ``findings`` list. Safe
@@ -709,6 +738,9 @@ def correlate_reports(api_report: Report | None, log_report: Report | None) -> N
     new_api_findings = list(api_report.findings)
     new_log_findings = list(log_report.findings)
     matched_log_indices: set[int] = set()
+
+    def _append(existing: str, addition: str) -> str:
+        return f"{existing}, {addition}" if existing else addition
 
     for i, api_finding in enumerate(new_api_findings):
         api_family = _finding_family(api_finding)
@@ -726,8 +758,16 @@ def correlate_reports(api_report: Report | None, log_report: Report | None) -> N
             ):
                 continue
             matched_log_indices.add(j)
-            new_api_findings[i] = replace(api_finding, confirmed_by=f"logs: {log_finding.title}")
-            new_log_findings[j] = replace(log_finding, confirmed_by=f"API: {api_finding.title}")
+            new_api_findings[i] = replace(
+                api_finding,
+                confirmed_by=_append(
+                    api_finding.confirmed_by, f"{other_label}: {log_finding.title}"
+                ),
+            )
+            new_log_findings[j] = replace(
+                log_finding,
+                confirmed_by=_append(log_finding.confirmed_by, f"{api_label}: {api_finding.title}"),
+            )
             break
 
     api_report.findings = new_api_findings
@@ -788,6 +828,18 @@ LOG_FINDING_RULES: tuple[tuple[str, str, str, str, re.Pattern[str]], ...] = (
             re.IGNORECASE,
         ),
     ),
+    (
+        SOURCE_LOGS_NFS,
+        CRITICAL,
+        "The dom0 kernel reported an NFS server timeout",
+        "Check the NFS server itself first — its load, its own storage backend, "
+        "and whether it answered other hosts at the same time. If the server "
+        "looks fine, this tool cannot see below the host's own network stack, so "
+        "check the path between the host and it next: switch port error/drop "
+        "counters, a bad cable or transceiver, and NIC-level error counters "
+        "(rx/tx errors, CRC errors) on the host's storage interface.",
+        re.compile(r"\bnfs:\s*server\s+\S+\s+not responding", re.IGNORECASE),
+    ),
 )
 
 # Each log rule's own condition family, for cross-source correlation. Keyed by
@@ -803,6 +855,7 @@ _LOG_SOURCE_FAMILIES: dict[str, str] = {
     SOURCE_LOGS_STORAGE: "storage",
     SOURCE_LOGS_XAPI: "xapi",
     SOURCE_LOGS_CLOCKSKEW: "clockskew",
+    SOURCE_LOGS_NFS: "storage",
 }
 
 
@@ -919,6 +972,122 @@ def collect_log_findings(
         truncated=truncated,
         date_start=date_range.start if date_range is not None else None,
         date_end=date_range.end if date_range is not None else None,
+    )
+
+
+# Real error/drop signals from an `ethtool -S` counter dump. Not every counter
+# is a fault: `fdir_miss` (Flow Director filter misses) and the `fcoe_*`
+# counters are informational and can run into the hundreds of thousands on a
+# perfectly healthy NIC — confirmed against the real support case this rule
+# was built from, where both hosts' `fdir_miss` was over 700,000 and Vates
+# support did not treat it as a fault, only the counters below being at zero.
+# Only counters that unambiguously mean a packet was lost, corrupted, or a
+# transmit failed are checked; `tx_restart_queue` is left out for the same
+# reason — it can be legitimately nonzero under normal load.
+NIC_ERROR_COUNTERS: tuple[str, ...] = (
+    "rx_errors",
+    "tx_errors",
+    "rx_dropped",
+    "tx_dropped",
+    "rx_over_errors",
+    "rx_crc_errors",
+    "rx_frame_errors",
+    "rx_fifo_errors",
+    "rx_missed_errors",
+    "tx_aborted_errors",
+    "tx_carrier_errors",
+    "tx_fifo_errors",
+    "tx_heartbeat_errors",
+    "rx_no_buffer_count",
+    "tx_timeout_count",
+    "rx_length_errors",
+    "rx_long_length_errors",
+    "rx_short_length_errors",
+    "rx_csum_offload_errors",
+    "tx_hwtstamp_timeouts",
+)
+
+
+def collect_nic_stat_findings(
+    host_stats: dict[str, dict[str, dict[str, int]]],
+    *,
+    unreachable: dict[str, str] | None = None,
+    enabled=None,
+) -> Report:
+    """Findings from `ethtool -S` counters read straight off each host.
+
+    ``host_stats`` is ``{host_label: {interface: {counter: value}}}``, already
+    fetched and parsed by ``app.nic_stats_client`` — this function does no SSH
+    of its own, the same separation ``collect_log_findings`` keeps from the
+    download that fills the bundle it reads.
+
+    These counters are cumulative since the driver last loaded (confirmed
+    live: a real host's `fdir_miss` was over 700,000 with a perfectly healthy
+    link), not a rate — a nonzero value says a fault happened at some point,
+    not that one is still happening. The evidence and action text say this
+    plainly rather than reading as an active incident.
+
+    ``unreachable``, when given, is ``{host_label: reason}`` for a host that
+    could not be read at all (an SSH failure, a refused key) — folded into the
+    source's own detail text the same way ``_from_patches`` records a refused
+    pool, rather than that host silently vanishing from the report.
+    """
+    findings: list[Finding] = []
+    examined = 0
+    checked_hosts: list[str] = []
+
+    for host, interfaces in host_stats.items():
+        checked_hosts.append(host)
+        for interface, counters in interfaces.items():
+            examined += 1
+            hit = {name: counters[name] for name in NIC_ERROR_COUNTERS if counters.get(name)}
+            if not hit:
+                continue
+            evidence = ", ".join(f"{name}: {value:,}" for name, value in hit.items())
+            findings.append(
+                _finding(
+                    severity=WARNING,
+                    title=f"{interface} on {host} has recorded packet errors",
+                    evidence=(
+                        f"{evidence} (cumulative since the driver last loaded, not a "
+                        "rate — this may be old and already resolved)."
+                    ),
+                    action=(
+                        "Check the cable, transceiver and switch port serving this "
+                        "interface, and the switch's own port counters for errors or "
+                        "drops on its side. If the count keeps climbing on a re-check, "
+                        "the fault is active; if it is unchanged, it may already be "
+                        "resolved."
+                    ),
+                    source=SOURCE_NIC_STATS,
+                    enabled=enabled,
+                    object_id=f"{host}/{interface}",
+                    family="storage",
+                )
+            )
+
+    detail_bits = []
+    if checked_hosts:
+        detail_bits.append(f"checked {', '.join(sorted(checked_hosts))}")
+    if unreachable:
+        detail_bits.append(
+            "refused: " + ", ".join(f"{host} ({reason})" for host, reason in unreachable.items())
+        )
+
+    return Report(
+        findings=sort_findings(findings),
+        sources=[
+            SourceResult(
+                SOURCE_NIC_STATS,
+                read=bool(checked_hosts),
+                reason="" if checked_hosts else next(iter((unreachable or {}).values()), ""),
+                examined=examined,
+                detail="; ".join(detail_bits),
+            )
+        ],
+        window_days=0,
+        created_at=time.time(),
+        rules_disabled=disabled_rule_titles(enabled),
     )
 
 

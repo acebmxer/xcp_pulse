@@ -29,6 +29,7 @@ from app.findings import (
     SourceResult,
     collect_findings,
     collect_log_findings,
+    collect_nic_stat_findings,
     correlate_reports,
 )
 from app.xo_client import Pool, XoError
@@ -1057,6 +1058,7 @@ def test_log_findings_reads_a_bundle_and_groups_repeated_lines(tmp_path) -> None
         "logs_ha",
         "logs_oom",
         "logs_clockskew",
+        "logs_nfs",
     }
     assert len(report.findings) == 4
     assert sorted(finding.count for finding in report.findings) == [1, 1, 1, 2]
@@ -1208,6 +1210,88 @@ def test_oom_killer_is_reported_and_a_quiet_log_is_not(tmp_path) -> None:
         archive.add(quiet, arcname="var/log/quiet.log")
 
     assert collect_log_findings(quiet_bundle).is_clean
+
+
+def test_nfs_server_timeout_is_reported_and_a_quiet_log_is_not(tmp_path) -> None:
+    """Matches the real support case: a NFS SR going unresponsive under two
+    hosts, seen only as this kernel line in each host's own ``messages``."""
+    log = tmp_path / "messages"
+    log.write_text(
+        "Sep 20 02:36:30 xcp-ng-host kernel: nfs: server 10.199.199.2 not responding, timed out\n"
+    )
+    bundle = tmp_path / "logs.tar.gz"
+    with tarfile.open(bundle, "w:gz") as archive:
+        archive.add(log, arcname="var/log/messages")
+
+    report = collect_log_findings(bundle)
+
+    assert [finding.source for finding in report.findings] == ["logs_nfs"]
+    assert report.findings[0].severity == CRITICAL
+
+    quiet = tmp_path / "quiet.log"
+    quiet.write_text("nfs: server 10.199.199.2 OK\n")
+    quiet_bundle = tmp_path / "quiet.tar.gz"
+    with tarfile.open(quiet_bundle, "w:gz") as archive:
+        archive.add(quiet, arcname="var/log/quiet.log")
+
+    assert collect_log_findings(quiet_bundle).is_clean
+
+
+def test_nic_stats_flags_a_real_error_counter_and_ignores_fdir_miss() -> None:
+    """Matches the same real support case's ethtool -S output: fdir_miss over
+    700,000 on a perfectly healthy interface, correctly not treated as a
+    fault by Vates support — only a genuine error/drop counter should be."""
+    host_stats = {
+        "xcp-ng-host1": {
+            "eth4": {
+                "rx_errors": 0,
+                "tx_errors": 0,
+                "rx_dropped": 0,
+                "fdir_miss": 714125,
+                "fcoe_bad_fccrc": 0,
+            }
+        }
+    }
+
+    report = collect_nic_stat_findings(host_stats)
+
+    assert report.is_clean
+
+
+def test_nic_stats_flags_a_real_error_counter() -> None:
+    host_stats = {"xcp-ng-host2": {"eth4": {"rx_errors": 0, "rx_crc_errors": 3, "fdir_miss": 500}}}
+
+    report = collect_nic_stat_findings(host_stats)
+
+    assert len(report.findings) == 1
+    finding = report.findings[0]
+    assert finding.source == "nic_stats"
+    assert finding.severity == WARNING
+    assert "rx_crc_errors: 3" in finding.evidence
+    assert "fdir_miss" not in finding.evidence
+    assert finding.object_id == "xcp-ng-host2/eth4"
+    assert finding.family == "storage"
+
+
+def test_nic_stats_records_an_unreachable_host_without_failing_the_others() -> None:
+    host_stats = {"host-ok": {"eth4": {"rx_errors": 0}}}
+    unreachable = {"host-down": "could not reach host-down:22 — timed out"}
+
+    report = collect_nic_stat_findings(host_stats, unreachable=unreachable)
+
+    assert report.is_clean
+    source = report.sources[0]
+    assert source.read is True
+    assert "host-down" in source.detail
+    assert "host-ok" in source.detail
+
+
+def test_nic_stats_every_host_unreachable() -> None:
+    report = collect_nic_stat_findings({}, unreachable={"host-down": "connection refused"})
+
+    source = report.sources[0]
+    assert source.read is False
+    assert source.reason == "connection refused"
 
 
 def test_clock_skew_is_reported_and_a_healthy_sync_is_not(tmp_path) -> None:
@@ -1523,6 +1607,63 @@ def test_correlate_reports_confirms_findings_in_the_same_family_and_time_window(
         == "logs: High availability reported a fencing or heartbeat failure"
     )
     assert log_report.findings[0].confirmed_by == "API: A host was fenced by high availability"
+
+
+def test_correlate_reports_appends_rather_than_overwrites_a_second_call() -> None:
+    """The Findings page correlates one API report against both the log
+    report and the NIC statistics report, in two separate calls. A finding
+    genuinely confirmed by both must say so — the second call must not erase
+    what the first one already recorded."""
+    api_report = Report(
+        findings=[
+            Finding(
+                severity=CRITICAL,
+                title="A storage repository backend failed",
+                evidence="SR_BACKEND_FAILURE",
+                action="Check the SR.",
+                source="messages",
+                at=NOW,
+                family="storage",
+            ),
+        ],
+    )
+    log_report = Report(
+        findings=[
+            Finding(
+                severity=CRITICAL,
+                title="The dom0 kernel reported an NFS server timeout",
+                evidence="nfs: server 10.0.0.1 not responding, timed out",
+                action="Check the NFS server.",
+                source="logs_nfs",
+                at=NOW + 60,
+                family="storage",
+            ),
+        ],
+    )
+    nic_report = Report(
+        findings=[
+            Finding(
+                severity=WARNING,
+                title="eth4 on host1 has recorded packet errors",
+                evidence="rx_crc_errors: 3",
+                action="Check the cable and switch port.",
+                source="nic_stats",
+                at=NOW + 90,
+                family="storage",
+            ),
+        ],
+    )
+
+    correlate_reports(api_report, log_report)
+    correlate_reports(api_report, nic_report, other_label="NIC statistics")
+
+    assert api_report.findings[0].confirmed_by == (
+        "logs: The dom0 kernel reported an NFS server timeout, "
+        "NIC statistics: eth4 on host1 has recorded packet errors"
+    )
+    # The second report's own finding is confirmed too — this is not one-sided.
+    assert nic_report.findings[0].confirmed_by == "API: A storage repository backend failed"
+    assert log_report.findings[0].confirmed_by == "API: A storage repository backend failed"
 
 
 def test_correlate_reports_does_not_confirm_across_families_or_outside_the_window() -> None:

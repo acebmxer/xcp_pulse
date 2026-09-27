@@ -125,6 +125,89 @@
   </form>
 </div>
 
+{% if ssh_error %}
+<p class="alert alert-error" role="alert">{{ ssh_error }}</p>
+{% endif %}
+
+{% if request.query_params.get('ssh_saved') %}
+<p class="alert" role="status">SSH key saved. Test it to check it reaches a host.</p>
+{% endif %}
+
+{% if request.query_params.get('ssh_deleted') %}
+<p class="alert" role="status">SSH connection deleted, including the stored key.</p>
+{% endif %}
+
+{% if ssh_test %}
+<div class="card">
+  <h2>{% if ssh_test.ok %}Connection working{% else %}Connection failed{% endif %}</h2>
+  <p class="note">Tested against {{ ssh_test.host }}, the first host with an address in the stored inventory.</p>
+  <p>{{ ssh_test.message }}</p>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>Host SSH connection</h2>
+  <p class="note">
+    A single SSH key XCP Pulse uses to connect directly to a host, for any
+    check that Xen Orchestra has no API route for — NIC statistics today,
+    more may follow. One key, reused by every such check, not a separate one
+    per function. XCP-ng has no lesser dom0 account than root to create (dom0
+    user management is deprecated), so this key connects as
+    <strong>root</strong>, the same account Xen Orchestra itself uses. Its
+    actual privilege limit is a forced-command dispatcher script added to
+    root's <code>authorized_keys</code> on every host — it allowlists a fixed
+    set of read-only checks by name and refuses anything else, never a shell,
+    regardless of what is sent to it. See <strong>Configuration</strong> in
+    the user manual for the exact script and line to add.
+  </p>
+
+  {% if ssh_connection %}
+  <dl class="kv">
+    <dt>Port</dt>
+    <dd>{{ ssh_connection.port }}</dd>
+    <dt>Passphrase</dt>
+    <dd>{{ "set" if ssh_connection.has_passphrase else "none" }}</dd>
+    <dt>Key</dt>
+    <dd>stored, encrypted</dd>
+    {% if ssh_connection.tested %}
+    <dt>Last test</dt>
+    <dd>{{ "passed" if ssh_connection.last_test_ok else "failed" }} — {{ ssh_connection.last_test_message }}</dd>
+    {% endif %}
+  </dl>
+
+  <div class="row-actions">
+    <form method="post" action="/settings/ssh/test" class="inline">
+      <button type="submit" class="btn btn-primary">Test connection</button>
+    </form>
+    <form method="post" action="/settings/ssh/delete" class="inline">
+      <button type="submit" class="btn btn-quiet">Delete connection</button>
+    </form>
+  </div>
+  {% else %}
+  <p class="note">No SSH connection is configured yet.</p>
+  {% endif %}
+
+  <form method="post" action="/settings/ssh" class="stack">
+    <label for="ssh_private_key">Private key</label>
+    <textarea id="ssh_private_key" name="private_key" rows="6" required spellcheck="false"
+              autocomplete="off"
+              placeholder="{% if ssh_connection %}paste the key again to replace it{% else %}-----BEGIN OPENSSH PRIVATE KEY-----{% endif %}"></textarea>
+    <p class="note">
+      RSA, Ed25519 or ECDSA, in PEM/OpenSSH format. Encrypted before storage
+      and never shown again.
+    </p>
+
+    <label for="ssh_passphrase">Passphrase (only if the key has one)</label>
+    <input id="ssh_passphrase" name="passphrase" type="password" spellcheck="false" autocomplete="off">
+
+    <label for="ssh_port">SSH port</label>
+    <input id="ssh_port" name="port" type="number" min="1" max="65535"
+           value="{{ ssh_connection.port if ssh_connection else 22 }}">
+
+    <button type="submit" class="btn btn-primary">Save SSH key</button>
+  </form>
+</div>
+
 {% if tls_error %}
 <p class="alert alert-error" role="alert">{{ tls_error }}</p>
 {% endif %}
