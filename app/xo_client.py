@@ -85,6 +85,13 @@ RESTORE_LOG_DETAIL_PATH = "/restore-logs/{id}"
 
 MISSING_PATCHES_PATH = "/pools/{pool_id}/missing_patches"
 
+# A physical NIC's link state, straight from XAPI via XO — the same
+# up/down/carrier/speed a PIF's own status column in the XO UI shows. This is
+# the one thing about a NIC ``nic_stats_client`` does not need SSH for; only
+# the driver-level ``ethtool -S`` error/drop counters have no XO route.
+PIFS_PATH = "/pifs"
+PIF_FIELDS = "device,physical,attached,carrier,speed,$host"
+
 # Every account this instance knows. Feeds redact.build_username_rule, since a
 # username has no fixed shape to match against, unlike every other redaction
 # rule — it can only be masked by knowing the real ones.
@@ -145,6 +152,15 @@ class Pool:
     id: str
     name: str
     master_id: str = ""
+
+
+@dataclass(frozen=True)
+class PifStatus:
+    """One physical interface's link state, from its XO PIF record."""
+
+    attached: bool
+    carrier: bool
+    speed: int
 
 
 @dataclass(frozen=True)
@@ -326,6 +342,31 @@ class XoClient:
         ]
 
         return Inventory(pools=pools, hosts=hosts)
+
+    def pifs(self) -> dict[str, dict[str, PifStatus]]:
+        """Every host's physical NICs' link state, keyed by host id then device.
+
+        Only ``physical`` PIFs are kept — a VLAN or bond built on top of a
+        physical NIC gets its own PIF record with the same ``device`` name but
+        no link state of its own, and would otherwise collide with the real
+        one in this per-device mapping. This is also what lets a caller tell a
+        real physical NIC apart from a VM's virtual interface, which has no
+        PIF at all.
+        """
+        result: dict[str, dict[str, PifStatus]] = {}
+        for record in _record_list(self._get(PIFS_PATH, fields=PIF_FIELDS)):
+            if not record.get("physical"):
+                continue
+            host_id = str(record.get("$host") or "")
+            device = str(record.get("device") or "")
+            if not host_id or not device:
+                continue
+            result.setdefault(host_id, {})[device] = PifStatus(
+                attached=bool(record.get("attached")),
+                carrier=bool(record.get("carrier")),
+                speed=int(record.get("speed") or 0),
+            )
+        return result
 
     # -- findings sources ------------------------------------------------
     #

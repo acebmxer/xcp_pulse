@@ -16,6 +16,8 @@ from fastapi.templating import Jinja2Templates
 
 from app import __version__
 from app.artifacts import artifact_path, get_artifact
+from app.job_nic_stats import errors_summary as nic_errors
+from app.job_nic_stats import link_summary as nic_link
 from app.security import current_user
 from app.users import get_user
 
@@ -131,6 +133,8 @@ templates.env.filters["age"] = age
 templates.env.filters["count"] = count
 templates.env.filters["counts_in"] = counts_in
 templates.env.filters["date_coverage"] = date_coverage
+templates.env.filters["nic_link"] = nic_link
+templates.env.filters["nic_errors"] = nic_errors
 
 
 class RedirectToLogin(Exception):

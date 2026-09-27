@@ -1,9 +1,19 @@
-"""The "NIC statistics" job: read ethtool driver counters straight off hosts.
+"""The "NIC statistics" job: driver error counters over SSH, link state from XO.
 
-Xen Orchestra has no route for this and the collected log bundle does not
-carry it either — see ``app/nic_stats_client.py``'s module docstring for why
-this is the one job in the application that connects to a host directly
-instead of going through the XO API or a downloaded bundle.
+A physical NIC's up/down/carrier/speed is already in Xen Orchestra — the same
+data its own PIF status column shows — read here through the same REST API
+client every other findings source uses. The one thing XO has no route for,
+and the collected log bundle does not carry either, is the driver-level
+``ethtool -S`` error/drop/CRC counters; that is the only reason this job
+connects to a host directly over SSH at all. See
+``app/nic_stats_client.py``'s module docstring for the SSH side.
+
+Xen Orchestra's own PIF list is also what tells a physical NIC apart from one
+of a host's many per-VM virtual interfaces (``vifN.M``) — both pass the
+``/sys/class/net/*/device`` test the host-side dispatcher script uses to find
+real hardware, since Xen's backend vif devices carry that symlink too. A vif
+is filtered out of both the findings and the stored report rather than
+producing a "check the cable" finding that makes no sense for one.
 
 One job, covering every host the operator ticks, because the report is more
 useful compared side by side than read one host at a time — the real incident
@@ -11,10 +21,13 @@ this feature was built from was exactly that: two hosts logging the same NFS
 server's timeouts over the same window, and the NIC counters worth checking
 belong to both at once.
 
-A host that cannot be reached does not fail the run; it is recorded as
-unreachable and every other host still gets read, the same "one source
+A host that cannot be reached over SSH does not fail the run; it is recorded
+as unreachable and every other host still gets read, the same "one source
 failing never fails the run" rule every other findings source already
-follows.
+follows. The same tolerance applies to the Xen Orchestra side: if its PIF
+list cannot be read, every interface just reports as "unknown" link state
+rather than the whole run failing — the SSH-read counters are still real and
+still worth having even without that cross-reference.
 """
 
 from __future__ import annotations
@@ -24,7 +37,15 @@ from dataclasses import asdict
 from typing import Any
 
 from app.artifacts import artifact_path, list_for_job, read_json, store_file, store_json
-from app.findings import Finding, Report, SourceResult, collect_nic_stat_findings, sort_findings
+from app.crypto import DecryptionError
+from app.findings import (
+    NIC_ERROR_COUNTERS,
+    Finding,
+    Report,
+    SourceResult,
+    collect_nic_stat_findings,
+    sort_findings,
+)
 from app.job_inventory import known_inventory
 from app.job_runner import register
 from app.jobs import JobContext, get_job
@@ -33,6 +54,8 @@ from app.redact import enabled_rules
 from app.ssh_client import SshError, load_private_key
 from app.ssh_connection import DecryptionError as SshDecryptionError
 from app.ssh_connection import known_host_key, load_credentials, remember_host_key
+from app.xo_client import PifStatus, XoError
+from app.xo_connection import build_client
 
 KIND = "nic_stats"
 
@@ -49,7 +72,8 @@ def run(context: JobContext) -> None:
     it is recorded as unreachable rather than failing the whole run, the same
     as a host with no address. Which interfaces to read is decided by the
     host itself, at read time (every interface with a real device behind it)
-    — nothing to configure here.
+    — nothing to configure here; Xen Orchestra's own PIF list is what later
+    narrows that down to physical NICs.
     """
     job = get_job(context.conn, context.job_id)
     params = job.params if job else {}
@@ -63,13 +87,24 @@ def run(context: JobContext) -> None:
     if not hosts:
         raise ValueError("None of the selected hosts are in the stored inventory.")
 
+    context.progress(2, "Reading network status from Xen Orchestra")
+    try:
+        pif_lookup = build_client(context.conn, context.settings.secret_key).pifs()
+    except (LookupError, DecryptionError, XoError):
+        # Unlike the API findings job, Xen Orchestra is not this job's reason
+        # to exist — the SSH-read counters below are the whole point, and are
+        # still real and worth having without this cross-reference. Every
+        # interface just reports as "unknown" link state instead.
+        pif_lookup = {}
+    pif_by_host = {host.name: pif_lookup.get(host.id) for host in hosts}
+
     host_stats: dict[str, dict[str, dict[str, int]]] = {}
     unreachable: dict[str, str] = {}
     newly_trusted: list[str] = []
 
     for index, host in enumerate(hosts):
         context.progress(
-            5 + int(85 * index / len(hosts)), f"Reading NIC statistics from {host.name}"
+            5 + int(80 * index / len(hosts)), f"Reading NIC statistics from {host.name}"
         )
         if not host.address:
             unreachable[host.name] = "no address recorded for this host in the inventory"
@@ -103,10 +138,13 @@ def run(context: JobContext) -> None:
             newly_trusted.append(host.name)
         host_stats[host.name] = parse_ethtool_stats(output)
 
+    host_stats = _physical_only(host_stats, pif_by_host)
+
     context.progress(92, "Building the report")
     report = collect_nic_stat_findings(
         host_stats, unreachable=unreachable, enabled=enabled_rules(context.conn)
     )
+    report.interfaces = _interface_records(host_stats, pif_by_host)
     store_json(
         context.conn,
         context.data_dir,
@@ -151,6 +189,62 @@ def _read_host(context: JobContext, address: str, port: int, private_key) -> tup
     return output, bool(trusted)
 
 
+def _physical_only(
+    host_stats: dict[str, dict[str, dict[str, int]]],
+    pif_by_host: dict[str, dict[str, PifStatus] | None],
+) -> dict[str, dict[str, dict[str, int]]]:
+    """Keep only interfaces Xen Orchestra itself reports as a physical NIC.
+
+    A host's virtual interfaces (``vifN.M``, one per VM) pass the same
+    ``/sys/class/net/*/device`` test the dispatcher script uses to find real
+    hardware, since Xen's backend vif devices carry that symlink too — this is
+    what actually tells them apart, using data the host script has no way to
+    know about itself. A host with no PIF lookup at all (Xen Orchestra's PIF
+    list could not be read, or this host was not in it) keeps every interface
+    it read rather than dropping it, since "no cross-reference" is not the
+    same as "not physical."
+    """
+    filtered: dict[str, dict[str, dict[str, int]]] = {}
+    for host, interfaces in host_stats.items():
+        known = pif_by_host.get(host)
+        if known is None:
+            filtered[host] = interfaces
+            continue
+        filtered[host] = {name: counters for name, counters in interfaces.items() if name in known}
+    return filtered
+
+
+def _interface_records(
+    host_stats: dict[str, dict[str, dict[str, int]]],
+    pif_by_host: dict[str, dict[str, PifStatus] | None],
+) -> list[dict[str, Any]]:
+    """Every interface actually read, with its link state and error counters.
+
+    Kept even when a run finds nothing to flag — a clean result still read
+    real interfaces, and "what did this check" has to be answerable from the
+    stored report itself, not only from a finding that never fires.
+    """
+    records: list[dict[str, Any]] = []
+    for host in sorted(host_stats):
+        known = pif_by_host.get(host)
+        for interface in sorted(host_stats[host]):
+            pif = known.get(interface) if known else None
+            counters = host_stats[host][interface]
+            records.append(
+                {
+                    "host": host,
+                    "interface": interface,
+                    "attached": pif.attached if pif else None,
+                    "carrier": pif.carrier if pif else None,
+                    "speed": pif.speed if pif else None,
+                    "counters": {
+                        name: counters[name] for name in NIC_ERROR_COUNTERS if name in counters
+                    },
+                }
+            )
+    return records
+
+
 def to_payload(report: Report) -> dict[str, Any]:
     return {
         "created_at": report.created_at or time.time(),
@@ -158,6 +252,7 @@ def to_payload(report: Report) -> dict[str, Any]:
         "findings": [asdict(finding) for finding in report.findings],
         "sources": [asdict(source) for source in report.sources],
         "rules_disabled": report.rules_disabled,
+        "interfaces": report.interfaces,
     }
 
 
@@ -184,7 +279,35 @@ def report_from_job(conn, data_dir, job_id: str) -> Report | None:
         rules_disabled=[
             item for item in payload.get("rules_disabled") or [] if isinstance(item, str)
         ],
+        interfaces=_records(payload.get("interfaces")),
     )
+
+
+def link_summary(record: dict[str, Any]) -> str:
+    """One interface's link state as a short phrase, for the page and Markdown.
+
+    ``attached`` is XAPI's own term for administratively up (plugged into the
+    host's networking stack); ``carrier`` is the physical signal. A NIC can be
+    attached with no carrier — cable out, switch port down — which is worth
+    telling apart from either extreme.
+    """
+    attached = record.get("attached")
+    if attached is None:
+        return "unknown"
+    if not attached:
+        return "unplugged"
+    if record.get("carrier"):
+        speed = record.get("speed")
+        return f"up, connected, {speed} Mb/s" if speed else "up, connected"
+    return "up, no carrier"
+
+
+def errors_summary(record: dict[str, Any]) -> str:
+    """One interface's checked error counters as a short phrase."""
+    hit = {name: value for name, value in record["counters"].items() if value}
+    if not hit:
+        return "none"
+    return ", ".join(f"{name}: {value:,}" for name, value in hit.items())
 
 
 def to_markdown(report: Report, *, newly_trusted: list[str] | None = None) -> str:
@@ -205,6 +328,7 @@ def to_markdown(report: Report, *, newly_trusted: list[str] | None = None) -> st
         ]
     if report.is_clean:
         lines.append("No findings. Every host read reported no packet errors.")
+        lines.append("")
     for finding in report.findings:
         lines += [
             f"## {finding.severity.title()}: {finding.title}",
@@ -214,6 +338,19 @@ def to_markdown(report: Report, *, newly_trusted: list[str] | None = None) -> st
             f"Action: {finding.action}",
             "",
         ]
+    if report.interfaces:
+        lines += [
+            "## Interfaces read",
+            "",
+            "| Host | Interface | Link | Errors |",
+            "| --- | --- | --- | --- |",
+        ]
+        for record in report.interfaces:
+            lines.append(
+                f"| {record['host']} | {record['interface']} | {link_summary(record)} "
+                f"| {errors_summary(record)} |"
+            )
+        lines.append("")
     for source in report.sources:
         if source.detail:
             lines.append(f"_{source.title}: {source.detail}_")

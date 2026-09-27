@@ -110,10 +110,15 @@ rather than estimated:
   a log report — matched by condition and, when timed, within an hour of
   each other — is marked as confirmed by the other, so one incident doesn't
   read as two.
-- **Report NIC statistics** — a third card on the Findings page connects to
-  ticked hosts over SSH and reads `ethtool -S` driver error/drop counters,
-  the one thing this application reaches outside the Xen Orchestra API,
-  because XO has no route for it. Each host has its own SSH key, saved
+- **Report NIC statistics** — a third card on the Findings page reads each
+  physical NIC's link state (up/down, carrier, speed) from Xen Orchestra's own
+  PIF data, and connects to ticked hosts over SSH for `ethtool -S` driver
+  error/drop counters — the one thing this application reaches outside the
+  Xen Orchestra API, because XO has no route for those. The report lists
+  every physical interface read, not just the ones with a problem, so a
+  clean run still shows what was checked; a host's virtual interfaces are
+  told apart from real hardware using Xen Orchestra's own PIF list and left
+  out. Each host has its own SSH key, saved
   separately — never one key shared across hosts — reused by any future check
   on that host rather than one key per function. XCP-ng has no lesser dom0
   account than root to create, so the key connects as root, and the actual

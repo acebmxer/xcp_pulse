@@ -471,6 +471,13 @@ class Report:
     # bundle was not read in full so a clean report is not mistaken for one.
     truncated: bool = False
 
+    # Per-interface link state and error counters — set by the NIC
+    # statistics source only, every other source leaves this empty. A run
+    # with no findings still read every interface, and an operator looking
+    # at "no findings" needs to see what was actually checked (which
+    # interfaces, up or down, connected or not) rather than an empty page.
+    interfaces: list[dict[str, Any]] = field(default_factory=list)
+
     @property
     def counts(self) -> dict[str, int]:
         """How many findings at each severity, including the zeros.

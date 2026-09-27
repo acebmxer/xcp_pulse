@@ -264,6 +264,21 @@
     {% endfor %}
   </ul>
   {% endif %}
+  {% if nic_report.interfaces %}
+  <table class="report">
+    <thead><tr><th>Host</th><th>Interface</th><th>Link</th><th>Errors</th></tr></thead>
+    <tbody>
+      {% for iface in nic_report.interfaces %}
+      <tr>
+        <th>{{ iface.host }}</th>
+        <td>{{ iface.interface }}</td>
+        <td>{{ iface | nic_link }}</td>
+        <td>{{ iface | nic_errors }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
   <table class="report">
     <thead><tr><th>Source</th><th>Result</th></tr></thead>
     <tbody>

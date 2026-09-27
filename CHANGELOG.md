@@ -12,6 +12,42 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ### Fixed
 
+- **A NIC statistics run threw away every interface it read the moment it
+  confirmed nothing was wrong, so a clean report showed nothing but "No
+  findings" — no interface names, no link state, no counter values — making
+  it indistinguishable from a check that had done nothing at all.** Reported
+  directly, from a real clean run: the stored JSON showed only
+  `"examined": 11` with an empty `findings` list, and the report had no way
+  to answer "what are the NIC interfaces, are they up, are they connected, do
+  they have errors" even though the hosts had genuinely been read.
+  `job_nic_stats.run` now stores every physical interface actually read —
+  host, interface, link state, and its checked error counters — on the
+  report (`Report.interfaces`), rendered as a table on the Findings page and
+  in the downloaded Markdown, whether or not anything was found wrong.
+  Existing stored reports with no `interfaces` key still load, with an empty
+  list, rather than raising.
+
+  Link state (up/down, carrier, speed) was also simply never read at all —
+  only `ethtool -S` counters were. The first version of this fix added it by
+  extending the SSH-based host script, which turned out to be the wrong call:
+  Xen Orchestra already has this data (the same `attached`/`carrier`/`speed`
+  its own PIF status column shows), reachable right now through the REST API
+  token already configured, needing no host script change and no redeploying
+  anything. `xo_client.pifs` reads it from there instead; SSH stays only for
+  the driver-level counters Xen Orchestra genuinely has no route for. Reusing
+  Xen Orchestra's own PIF list this way also fixed a second, previously
+  unnoticed bug for free: the interface list included every one of a host's
+  per-VM virtual interfaces (`vifN.M`), because a vif passes the same
+  `/sys/class/net/*/device` test the host script uses to find real hardware
+  — the same test a physical NIC passes. Only Xen Orchestra's PIF list can
+  actually tell the two apart, since the host has no way to know that about
+  itself; `job_nic_stats._physical_only` now filters every vif out before
+  either the findings or the interface list are built, so a vif's counters
+  can no longer produce a "check the cable" finding that makes no sense for
+  one. If Xen Orchestra's PIF list cannot be read on a given run, every
+  interface just reports as "unknown" link state and nothing is filtered,
+  rather than the whole run failing — the SSH-read counters are still real
+  either way.
 - **A single SSH key was shared across every host, so saving a second host's
   key silently destroyed the first host's stored key, and any one host's key
   being compromised would have reached every other host too.** The `ssh_connection`

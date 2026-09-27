@@ -231,6 +231,7 @@ stored URL, token and TLS setting are applied in one place.
 | `XoClient.is_admin` | `() -> bool` | Whether the account has XO administrator permission | `test_connection` | v0.2.0 |
 | `XoClient.messages` | `(since: float) -> list[dict]` | XAPI messages since a Unix time | `findings.collect_findings`, `job_diagnostics.run` | v0.7.0 |
 | `XoClient.missing_patches` | `(pool_id: str) -> list[dict]` | Patches XO reports missing on one pool | `findings.collect_findings` | v0.7.0 |
+| `XoClient.pifs` | `() -> dict[str, dict[str, PifStatus]]` | Every host's physical NICs' link state (attached/carrier/speed), keyed by host id then device | `job_nic_stats.run` | unreleased |
 | `XoClient.pool_dashboard` | `() -> dict` | The dashboard totals: patches, backups, storage, host state | `findings.collect_findings` | v0.7.0 |
 | `XoClient.restore_log_detail` | `(log_id: str) -> dict` | Full nested detail for one restore run — see `backup_log_detail` | `job_diagnostics.run`, for every enumerated run | unreleased |
 | `XoClient.restore_logs` | `(since: float) -> list[dict]` | Restore runs since a Unix time | `findings.collect_findings`, `job_diagnostics.run` | v0.7.0 |
@@ -339,7 +340,9 @@ counts, and the collected log bundle does not carry this either. Sends a bare
 `CHECK_NAME` ("nic-stats") as the SSH command, no arguments — a correctly
 configured host's dispatcher script matches that against its own allowlist,
 discovers every interface with a real device behind it itself, and returns
-marked `ethtool -S` blocks for each.
+marked `ethtool -S` blocks for each. Link state (up/down, carrier, speed) is
+not part of this: `job_nic_stats.run` reads that from Xen Orchestra's own PIF
+data instead, since XO already has it — see `xo_client.pifs`.
 
 | Function | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
@@ -816,17 +819,33 @@ reason to reject the whole artifact.
 
 ## `app/job_nic_stats.py` — the NIC statistics job
 
-Reads `ethtool -S` counters from every ticked host over SSH and builds one
-report across all of them — deliberately not one job per host, because the
-real incident this feature was built from was two hosts logging the same NFS
-server's timeouts over the same window, and the counters worth checking
-belong to both at once. A host that cannot be reached is recorded and does
-not fail the run for the others.
+Reads `ethtool -S` driver error counters from every ticked host over SSH, and
+each physical NIC's link state from Xen Orchestra's own PIF data, and builds
+one report across all of them — deliberately not one job per host, because
+the real incident this feature was built from was two hosts logging the same
+NFS server's timeouts over the same window, and the counters worth checking
+belong to both at once. A host that cannot be reached over SSH is recorded
+and does not fail the run for the others; the same is true if Xen
+Orchestra's PIF list cannot be read — every interface just reports as
+"unknown" link state rather than the run failing, since the SSH-read
+counters are the reason this job exists and are still worth having without
+that cross-reference.
+
+Every physical interface actually read is stored on the report
+(`Report.interfaces`), not only the ones a finding fired on — a clean run
+still read real interfaces, and "what did this check" has to be answerable
+from the stored report itself. A host's virtual interfaces (`vifN.M`) are
+filtered out before either the findings or this list are built, using Xen
+Orchestra's PIF data to tell them apart from real hardware — both pass the
+same `/sys/class/net/*/device` test the host script uses, so the host has no
+way to make that distinction about itself.
 
 | Function | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
+| `errors_summary` | `(record: dict) -> str` | One interface's checked error counters as a short phrase, for the page and Markdown | `templates/findings.html` (as the `nic_errors` filter), `job_nic_stats.to_markdown` | unreleased |
+| `link_summary` | `(record: dict) -> str` | One interface's link state as a short phrase, for the page and Markdown | `templates/findings.html` (as the `nic_link` filter), `job_nic_stats.to_markdown` | unreleased |
 | `report_from_job` | `(conn, data_dir, job_id: str) -> Report \| None` | Rebuilds the stored NIC statistics report | `routes.collect` | unreleased |
-| `run` | `(context: JobContext) -> None` | Reads every ticked host, parses its counters, and stores the report | `job_runner`, via `register` | unreleased |
+| `run` | `(context: JobContext) -> None` | Reads every ticked host's counters over SSH and its link state from Xen Orchestra, and stores the report | `job_runner`, via `register` | unreleased |
 | `to_markdown` | `(report: Report, *, newly_trusted=None) -> str` | Formats a NIC statistics report for a support ticket | `job_nic_stats.run` | unreleased |
 | `to_payload` | `(report: Report) -> dict` | Serializes a NIC statistics report as JSON | `job_nic_stats.run` | unreleased |
 
@@ -835,9 +854,11 @@ by `host_id` inside the per-host loop — not one shared connection for every
 host, and not from job params. A host with no key saved for it is recorded as
 unreachable, the same as a host with no address, rather than failing the
 whole run. Which interfaces to read is decided by the host itself at read
-time, not a stored setting. `newly_trusted` names any host whose SSH key was
-recorded for the first time this run, so that is visible in the Markdown copy
-rather than passing silently.
+time (every one with a real device behind it), not a stored setting; Xen
+Orchestra's PIF list is what narrows that down to physical NICs afterward.
+`newly_trusted` names any host whose SSH key was recorded for the first time
+this run, so that is visible in the Markdown copy rather than passing
+silently.
 
 ## `app/retention.py` — what to delete, previewed first
 

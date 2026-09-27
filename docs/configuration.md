@@ -311,6 +311,19 @@ no interface list to type in and keep matched against what hardware is
 actually on each host, since the host answers that question about itself,
 every time it is asked.
 
+A physical NIC's link state (up/down, carrier, speed) is not read over SSH at
+all — Xen Orchestra already has it, the same data its own PIF status column
+shows, so the report reads it from there using the connection configured
+above. That is also how the report tells a physical NIC apart from one of a
+host's virtual interfaces (`vifN.M`): both pass the same
+`/sys/class/net/*/device` test the dispatcher script uses, but only a
+physical NIC has a matching entry in Xen Orchestra's PIF list, so a vif's
+`ethtool -S` counters are read but never reported.
+
+The report lists every physical interface it read, with its link state and
+error counters, whether or not anything is wrong — a clean run still shows
+what was checked, not just "no findings."
+
 ## What XCP Pulse will not do
 
 - **Agents on hosts.** No daemon and nothing persistent runs on any XCP-ng
