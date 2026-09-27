@@ -146,71 +146,89 @@
 {% endif %}
 
 <div class="card">
-  <h2>Host SSH connection</h2>
+  <h2>Host SSH connections</h2>
   <p class="note">
-    A single SSH key XCP Pulse uses to connect directly to a host, for any
-    check that Xen Orchestra has no API route for — NIC statistics today,
-    more may follow. One key, reused by every such check, not a separate one
-    per function. XCP-ng has no lesser dom0 account than root to create (dom0
-    user management is deprecated), so this key connects as
+    An SSH key XCP Pulse uses to connect directly to a host, for any check
+    that Xen Orchestra has no API route for — NIC statistics today, more may
+    follow. <strong>Each host has its own key</strong>, saved separately below
+    — never one key shared across hosts, so a compromised host's key cannot
+    be used to reach any other. XCP-ng has no lesser dom0 account than root to
+    create (dom0 user management is deprecated), so this key connects as
     <strong>root</strong>, the same account Xen Orchestra itself uses. Its
     actual privilege limit is a forced-command dispatcher script added to
-    root's <code>authorized_keys</code> on every host — it allowlists a fixed
+    root's <code>authorized_keys</code> on that host — it allowlists a fixed
     set of read-only checks by name and refuses anything else, never a shell,
     regardless of what is sent to it. See <strong>Configuration</strong> in
     the user manual for the exact script and line to add.
   </p>
 
-  {% if ssh_connection %}
-  <dl class="kv">
-    <dt>Port</dt>
-    <dd>{{ ssh_connection.port }}</dd>
-    <dt>Passphrase</dt>
-    <dd>{{ "set" if ssh_connection.has_passphrase else "none" }}</dd>
-    <dt>Key</dt>
-    <dd>stored, encrypted</dd>
-    {% if ssh_connection.tested %}
-    <dt>Last test</dt>
-    <dd>{{ "passed" if ssh_connection.last_test_ok else "failed" }} — {{ ssh_connection.last_test_message }}</dd>
-    {% endif %}
-  </dl>
+  {% set configured_hosts = ssh_hosts | selectattr("id", "in", ssh_connections) | list %}
+  {% if configured_hosts %}
+  <table class="report">
+    <thead><tr><th>Host</th><th>Port</th><th>Passphrase</th><th>Last test</th><th></th></tr></thead>
+    <tbody>
+      {% for host in configured_hosts %}
+      {% set connection = ssh_connections[host.id] %}
+      <tr>
+        <th>{{ host.name }}</th>
+        <td>{{ connection.port }}</td>
+        <td>{{ "set" if connection.has_passphrase else "none" }}</td>
+        <td>
+          {% if connection.tested %}
+          {{ "passed" if connection.last_test_ok else "failed" }} — {{ connection.last_test_message }}
+          {% else %}
+          not tested
+          {% endif %}
+        </td>
+        <td>
+          <form method="post" action="/settings/ssh/delete" class="inline">
+            <input type="hidden" name="host_id" value="{{ host.id }}">
+            <button type="submit" class="btn btn-quiet">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
 
   <div class="row-actions">
     <form method="post" action="/settings/ssh/test" class="inline">
-      {% if ssh_hosts %}
       <label for="ssh_test_host_id" class="visually-hidden">Host to test</label>
       <select id="ssh_test_host_id" name="host_id">
         {% for host in ssh_hosts %}
         <option value="{{ host.id }}" {% if ssh_test and ssh_test.host_id == host.id %}selected{% endif %}>{{ host.name }}</option>
         {% endfor %}
       </select>
-      {% endif %}
       <button type="submit" class="btn btn-primary">Test connection</button>
-    </form>
-    <form method="post" action="/settings/ssh/delete" class="inline">
-      <button type="submit" class="btn btn-quiet">Delete connection</button>
     </form>
   </div>
   {% else %}
-  <p class="note">No SSH connection is configured yet.</p>
+  <p class="note">No SSH keys are configured yet.</p>
   {% endif %}
 
   <form method="post" action="/settings/ssh" class="stack">
+    <label for="ssh_host_id">Host</label>
+    <select id="ssh_host_id" name="host_id" required>
+      {% for host in ssh_hosts %}
+      <option value="{{ host.id }}">{{ host.name }}{% if host.id in ssh_connections %} (replace stored key){% endif %}</option>
+      {% endfor %}
+    </select>
+
     <label for="ssh_private_key">Private key</label>
     <textarea id="ssh_private_key" name="private_key" rows="6" required spellcheck="false"
               autocomplete="off"
-              placeholder="{% if ssh_connection %}paste the key again to replace it{% else %}-----BEGIN OPENSSH PRIVATE KEY-----{% endif %}"></textarea>
+              placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
     <p class="note">
       RSA, Ed25519 or ECDSA, in PEM/OpenSSH format. Encrypted before storage
-      and never shown again.
+      and never shown again. Saving replaces the key already stored for
+      whichever host is selected above — it never affects any other host's key.
     </p>
 
     <label for="ssh_passphrase">Passphrase (only if the key has one)</label>
     <input id="ssh_passphrase" name="passphrase" type="password" spellcheck="false" autocomplete="off">
 
     <label for="ssh_port">SSH port</label>
-    <input id="ssh_port" name="port" type="number" min="1" max="65535"
-           value="{{ ssh_connection.port if ssh_connection else 22 }}">
+    <input id="ssh_port" name="port" type="number" min="1" max="65535" value="22">
 
     <button type="submit" class="btn btn-primary">Save SSH key</button>
   </form>

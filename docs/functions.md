@@ -273,27 +273,30 @@ seconds value matches everything, which looks exactly like a working filter.
 `get_connection` deliberately does not return the token: the settings template
 renders this object, and shows only that a token is stored.
 
-## `app/ssh_connection.py` — the shared SSH connection used to reach a host directly
+## `app/ssh_connection.py` — the per-host SSH connections used to reach hosts directly
 
-Stores the single SSH key used to reach a host directly — shared by every
-check that needs one, not one connection per check (NIC statistics is the
-first; it has nothing of its own to configure, since it discovers which
-interfaces to read on the host itself). XCP-ng has no lesser dom0 account
-than root to create — dom0 user management is
-deprecated — so this connects as root, the same account Xen Orchestra itself
-uses; the privilege limit is a forced-command dispatcher script on the host's
+Stores one SSH key per host, keyed by `host_id` — never one key shared across
+every host, since a key that worked everywhere would mean one compromised
+host's key also opens every other host it was ever added to. Every check that
+needs to reach a given host over SSH shares that host's stored key (NIC
+statistics is the first; it has nothing of its own to configure, since it
+discovers which interfaces to read on the host itself). XCP-ng has no lesser
+dom0 account than root to create — dom0 user management is deprecated — so
+this connects as root, the same account Xen Orchestra itself uses; the
+privilege limit is a forced-command dispatcher script on the host's
 `authorized_keys`, not a lesser account (see `docs/configuration.md`).
 
 | Function | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
-| `delete_connection` | `(conn) -> bool` | Removes the connection and its key | `routes.settings` | unreleased |
+| `delete_connection` | `(conn, host_id: str) -> bool` | Removes one host's connection and its key | `routes.settings` | unreleased |
 | `forget_host_key` | `(conn, host: str) -> bool` | Clears a recorded SSH host key, so the next connection trusts whatever key is presented as if for the first time | `routes.settings`, after an operator verifies a changed key | unreleased |
-| `get_connection` | `(conn) -> SshConnection \| None` | Reads the connection, never the key or passphrase | `routes.settings` | unreleased |
+| `get_connection` | `(conn, host_id: str) -> SshConnection \| None` | Reads one host's connection, never the key or passphrase | `routes.settings` | unreleased |
 | `known_host_key` | `(conn, host: str) -> tuple[str, bytes] \| None` | The SSH host key recorded for a host on an earlier connection | `job_nic_stats.run` | unreleased |
-| `load_credentials` | `(conn, secret_key: str) -> SshCredentials` | Decrypts the stored key and passphrase for immediate use | `job_nic_stats.run` | unreleased |
-| `record_test_result` | `(conn, *, ok: bool, message: str) -> None` | Remembers the last test outcome | `routes.settings` | unreleased |
+| `list_connections` | `(conn) -> list[SshConnection]` | Every stored connection, one per host that has a key configured | `routes.settings`, `routes.findings` | unreleased |
+| `load_credentials` | `(conn, host_id: str, secret_key: str) -> SshCredentials` | Decrypts one host's stored key and passphrase for immediate use | `job_nic_stats.run` | unreleased |
+| `record_test_result` | `(conn, host_id: str, *, ok: bool, message: str) -> None` | Remembers one host's last test outcome | `routes.settings` | unreleased |
 | `remember_host_key` | `(conn, host: str, key_type: str, key_bytes: bytes) -> None` | Records a host's SSH key the first time it is trusted | `ssh_client.TrustOnFirstUseHostKeyPolicy`, via `job_nic_stats.run` | unreleased |
-| `save_connection` | `(conn, *, private_key, passphrase, port, secret_key) -> None` | Stores the connection, encrypting the key and passphrase | `routes.settings` | unreleased |
+| `save_connection` | `(conn, *, host_id, private_key, passphrase, port, secret_key) -> None` | Stores one host's connection, encrypting the key and passphrase | `routes.settings` | unreleased |
 
 An empty passphrase is stored as `NULL`, not an encrypted empty string, so
 `get_connection` can tell "no passphrase" apart from "a passphrase that
@@ -827,12 +830,14 @@ not fail the run for the others.
 | `to_markdown` | `(report: Report, *, newly_trusted=None) -> str` | Formats a NIC statistics report for a support ticket | `job_nic_stats.run` | unreleased |
 | `to_payload` | `(report: Report) -> dict` | Serializes a NIC statistics report as JSON | `job_nic_stats.run` | unreleased |
 
-Credentials come from the stored `ssh_connection`, never from job params —
-there is exactly one such connection, shared with any other host-level check,
-the same way there is exactly one XO connection. Which interfaces to read is
-decided by the host itself at read time, not a stored setting. `newly_trusted`
-names any host whose SSH key was recorded for the first time this run, so
-that is visible in the Markdown copy rather than passing silently.
+Credentials come from each host's own stored `ssh_connection` row, looked up
+by `host_id` inside the per-host loop — not one shared connection for every
+host, and not from job params. A host with no key saved for it is recorded as
+unreachable, the same as a host with no address, rather than failing the
+whole run. Which interfaces to read is decided by the host itself at read
+time, not a stored setting. `newly_trusted` names any host whose SSH key was
+recorded for the first time this run, so that is visible in the Markdown copy
+rather than passing silently.
 
 ## `app/retention.py` — what to delete, previewed first
 
@@ -1008,8 +1013,8 @@ for why this does not use `app/jobs.py`.
 | `settings_delete` | `(request, username) -> Response` | `POST /settings/delete` — forgets the connection | router | v0.2.0 |
 | `settings_page` | `(request, username) -> Response` | `GET /settings` — the XO connection page | router | v0.2.0 |
 | `settings_save` | `(request, username, url, token, account_type, verify_tls) -> Response` | `POST /settings` — stores the connection | router | v0.2.0 |
-| `settings_ssh_delete` | `(request, username) -> Response` | `POST /settings/ssh/delete` — forgets the host SSH connection | router | unreleased |
-| `settings_ssh_save` | `(request, username, private_key, passphrase, port) -> Response` | `POST /settings/ssh` — stores the SSH key, encrypting it | router | unreleased |
+| `settings_ssh_delete` | `(request, username, host_id) -> Response` | `POST /settings/ssh/delete` — forgets one host's SSH connection | router | unreleased |
+| `settings_ssh_save` | `(request, username, host_id, private_key, passphrase, port) -> Response` | `POST /settings/ssh` — stores one host's SSH key, encrypting it | router | unreleased |
 | `settings_ssh_test` | `(request, username, host_id: str = "") -> Response` | `POST /settings/ssh/test` — connects to the chosen inventoried host (the alphabetically first one with an address, if none was picked) and reports what came back | router | unreleased |
 | `settings_test` | `(request, username) -> Response` | `POST /settings/test` — tests and reports reach | router | v0.2.0 |
 | `settings_tls_upload` | `(request, username, cert_file, key_file) -> Response` | `POST /settings/tls` — validates and installs an uploaded certificate (built-in HTTPS only) | router | 0.9.0 |

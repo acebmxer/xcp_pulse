@@ -18,10 +18,10 @@ from app.ssh_connection import (
 from app.ssh_connection import (
     delete_connection as delete_ssh_connection,
 )
-from app.ssh_connection import (
-    get_connection as get_ssh_connection,
-)
 from app.ssh_connection import known_host_key, load_credentials, remember_host_key
+from app.ssh_connection import (
+    list_connections as list_ssh_connections,
+)
 from app.ssh_connection import (
     record_test_result as record_ssh_test_result,
 )
@@ -82,6 +82,9 @@ def _render(
         (host for host in inventory_hosts if host.address),
         key=lambda host: host.name.lower(),
     )
+    ssh_connections = {
+        connection.host_id: connection for connection in list_ssh_connections(request.app.state.db)
+    }
     return templates.TemplateResponse(
         request,
         "settings.html",
@@ -95,7 +98,7 @@ def _render(
             "enable_https": settings.enable_https,
             "current_cert": current_cert,
             "tls_error": tls_error,
-            "ssh_connection": get_ssh_connection(request.app.state.db),
+            "ssh_connections": ssh_connections,
             "ssh_error": ssh_error,
             "ssh_test": ssh_test,
             "ssh_hosts": ssh_hosts,
@@ -195,23 +198,36 @@ def settings_delete(request: Request, username: str = Depends(admin_required)) -
 def settings_ssh_save(
     request: Request,
     username: str = Depends(admin_required),
+    host_id: str = Form(...),
     private_key: str = Form(...),
     passphrase: str = Form(""),
     port: int = Form(22),
 ) -> Response:
-    """Store the SSH key used to reach a host directly, for any check that needs it.
+    """Store the SSH key used to reach one host directly, for any check that needs it.
 
     ``private_key`` is pasted, never a file path — see
     ``docs/configuration.md`` for why this project stores it encrypted rather
     than reading it off the data volume. It never comes back once saved; the
-    page shows only whether a key is stored. This is one connection, reused
-    by every host-level check XCP Pulse offers (today, NIC statistics), not a
-    separate key per check.
+    page shows only whether a key is stored. This is one connection per host,
+    reused by every host-level check XCP Pulse offers against that host
+    (today, NIC statistics) — not a separate key per check, but also not one
+    key shared across hosts: a second host needs its own key saved here.
     """
     conn = request.app.state.db
+    data_dir = request.app.state.settings.data_dir
+    hosts = {host.id: host for host in known_inventory(conn, data_dir).hosts if host.address}
+    if host_id not in hosts:
+        return _render(
+            request,
+            username,
+            ssh_error="Pick a host from the stored inventory to save this key for.",
+            status_code=400,
+        )
+
     try:
         save_ssh_connection(
             conn,
+            host_id=host_id,
             private_key=private_key,
             passphrase=passphrase,
             port=port,
@@ -220,8 +236,10 @@ def settings_ssh_save(
     except ValueError as exc:
         return _render(request, username, ssh_error=str(exc), status_code=400)
 
-    log.info("SSH connection saved")
-    log_activity(conn, username, "settings.ssh_connection", ip=client_ip(request))
+    log.info("SSH connection saved for host %s", host_id)
+    log_activity(
+        conn, username, "settings.ssh_connection", detail=hosts[host_id].name, ip=client_ip(request)
+    )
     return redirect("/settings?ssh_saved=1")
 
 
@@ -245,23 +263,6 @@ def settings_ssh_test(
     """
     conn = request.app.state.db
     data_dir = request.app.state.settings.data_dir
-
-    try:
-        credentials = load_credentials(conn, request.app.state.settings.secret_key)
-    except LookupError:
-        return _render(
-            request, username, ssh_error="Save an SSH key before testing it.", status_code=400
-        )
-    except SshDecryptionError:
-        return _render(
-            request,
-            username,
-            ssh_error=(
-                "The stored key cannot be decrypted — the secret key has "
-                "changed since it was saved. Enter the key again."
-            ),
-            status_code=400,
-        )
 
     hosts = sorted(
         (host for host in known_inventory(conn, data_dir).hosts if host.address),
@@ -292,9 +293,29 @@ def settings_ssh_test(
         host = hosts[0]
 
     try:
+        credentials = load_credentials(conn, host.id, request.app.state.settings.secret_key)
+    except LookupError:
+        return _render(
+            request,
+            username,
+            ssh_error=f"Save an SSH key for {host.name} before testing it.",
+            status_code=400,
+        )
+    except SshDecryptionError:
+        return _render(
+            request,
+            username,
+            ssh_error=(
+                f"The stored key for {host.name} cannot be decrypted — the secret key has "
+                "changed since it was saved. Enter the key again."
+            ),
+            status_code=400,
+        )
+
+    try:
         private_key = load_private_key(credentials.private_key, credentials.passphrase)
     except SshError as exc:
-        record_ssh_test_result(conn, ok=False, message=str(exc))
+        record_ssh_test_result(conn, host.id, ok=False, message=str(exc))
         return _render(
             request,
             username,
@@ -318,7 +339,7 @@ def settings_ssh_test(
             check=PING_CHECK,
         )
     except SshError as exc:
-        record_ssh_test_result(conn, ok=False, message=str(exc))
+        record_ssh_test_result(conn, host.id, ok=False, message=str(exc))
         return _render(
             request,
             username,
@@ -330,7 +351,7 @@ def settings_ssh_test(
             f"Connected to {host.name}, but its dispatcher script did not answer as "
             "expected — check it matches host-scripts/xcp-pulse-diag.sh."
         )
-        record_ssh_test_result(conn, ok=False, message=message)
+        record_ssh_test_result(conn, host.id, ok=False, message=message)
         return _render(
             request,
             username,
@@ -340,7 +361,7 @@ def settings_ssh_test(
     message = f"Connected to {host.name}."
     if trusted:
         message += " Its SSH host key was recorded for the first time."
-    record_ssh_test_result(conn, ok=True, message=message)
+    record_ssh_test_result(conn, host.id, ok=True, message=message)
     return _render(
         request,
         username,
@@ -349,12 +370,18 @@ def settings_ssh_test(
 
 
 @router.post("/settings/ssh/delete")
-def settings_ssh_delete(request: Request, username: str = Depends(admin_required)) -> Response:
-    """Forget the SSH connection, including the stored key."""
+def settings_ssh_delete(
+    request: Request,
+    username: str = Depends(admin_required),
+    host_id: str = Form(...),
+) -> Response:
+    """Forget the SSH connection for one host, including its stored key."""
     conn = request.app.state.db
-    delete_ssh_connection(conn)
-    log.info("SSH connection deleted")
-    log_activity(conn, username, "settings.ssh_connection_deleted", ip=client_ip(request))
+    delete_ssh_connection(conn, host_id)
+    log.info("SSH connection deleted for host %s", host_id)
+    log_activity(
+        conn, username, "settings.ssh_connection_deleted", detail=host_id, ip=client_ip(request)
+    )
     return redirect("/settings?ssh_deleted=1")
 
 

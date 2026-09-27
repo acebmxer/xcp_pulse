@@ -45,7 +45,7 @@ from app.job_nic_stats import NIC_STATS_ARTIFACT
 from app.job_nic_stats import report_from_job as nic_report_from_job
 from app.jobs import enqueue, has_active, latest_job, latest_successful, list_jobs
 from app.security import client_ip
-from app.ssh_connection import get_connection as get_ssh_connection
+from app.ssh_connection import list_connections as list_ssh_connections
 from app.xo_connection import get_connection
 
 router = APIRouter()
@@ -87,6 +87,7 @@ def findings_page(request: Request, username: str = Depends(login_required)) -> 
         if artifact.name.endswith("-logs.tgz")
     ]
 
+    nic_ssh_hosts = {connection.host_id for connection in list_ssh_connections(db)}
     nic_job = latest_successful(db, NIC_STATS_KIND)
     nic_report = nic_report_from_job(db, data_dir, nic_job.id) if nic_job is not None else None
     nic_artifacts = list_for_job(db, nic_job.id) if nic_job is not None else []
@@ -122,8 +123,9 @@ def findings_page(request: Request, username: str = Depends(login_required)) -> 
             "active_log_job": newest_log_job,
             "log_error": newest_log_job.error if log_failed else None,
             "log_findings_artifact": LOG_FINDINGS_ARTIFACT,
-            "nic_ready": get_ssh_connection(db) is not None,
+            "nic_ready": bool(nic_ssh_hosts),
             "nic_hosts": known_inventory(db, data_dir).hosts,
+            "nic_ssh_hosts": nic_ssh_hosts,
             "nic_job": nic_job,
             "nic_report": nic_report,
             "nic_artifacts": nic_artifacts,
@@ -147,13 +149,17 @@ def start_nic_stats(
     db = request.app.state.db
     data_dir = request.app.state.settings.data_dir
 
-    if get_ssh_connection(db) is None:
-        return redirect("/findings?error=Configure+the+SSH+connection+in+Settings+first.")
-
     known_ids = {host.id for host in known_inventory(db, data_dir).hosts}
     picked = [host_id for host_id in host_ids if host_id in known_ids]
     if not picked:
         return redirect("/findings?error=Pick+at+least+one+host.")
+
+    configured_ids = {connection.host_id for connection in list_ssh_connections(db)}
+    if not any(host_id in configured_ids for host_id in picked):
+        return redirect(
+            "/findings?error=None+of+the+selected+hosts+have+an+SSH+key+configured."
+            "+Set+one+up+in+Settings."
+        )
 
     if has_active(db, NIC_STATS_KIND):
         return redirect("/findings?notice=A+NIC+statistics+run+is+already+going.")

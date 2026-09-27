@@ -51,9 +51,10 @@ def _unused_local_port() -> int:
         return sock.getsockname()[1]
 
 
-def _configure(client: TestClient, *, port: int | None = None) -> None:
+def _configure(client: TestClient, *, host_id: str = "host-1", port: int | None = None) -> None:
     save_connection(
         client.app.state.db,
+        host_id=host_id,
         private_key=PRIVATE_KEY,
         passphrase="",
         port=port or _unused_local_port(),
@@ -182,3 +183,35 @@ def test_a_clean_report_says_so(logged_in: TestClient) -> None:
     body = logged_in.get("/findings").text
 
     assert "No packet errors were found" in body
+
+
+def test_a_host_with_no_configured_key_is_recorded_unreachable(logged_in: TestClient) -> None:
+    """Two hosts, only one has a key saved for it — the run must not use
+    that key against the other host; the other is marked unreachable."""
+    db = logged_in.app.state.db
+    data_dir = logged_in.app.state.settings.data_dir
+    job = enqueue(db, INVENTORY_KIND, {})
+    store_json(
+        db,
+        data_dir,
+        job_id=job.id,
+        name=INVENTORY_ARTIFACT,
+        payload={
+            "pools": [],
+            "hosts": [
+                {"id": "host-1", "name": "xcp-ng-host1", "address": "127.0.0.1"},
+                {"id": "host-2", "name": "xcp-ng-host2", "address": "127.0.0.1"},
+            ],
+        },
+    )
+    mark_succeeded(db, job.id)
+    _configure(logged_in, host_id="host-1")
+
+    enqueue(db, NIC_KIND, {"host_ids": ["host-1", "host-2"]})
+    clean_report = Report(sources=[SourceResult("nic_stats", read=True)], window_days=0)
+    with patch("app.job_nic_stats.collect_nic_stat_findings", return_value=clean_report) as collect:
+        run_pending_jobs(logged_in.app)
+
+    unreachable = collect.call_args.kwargs["unreachable"]
+    assert "xcp-ng-host2" in unreachable
+    assert "no SSH key" in unreachable["xcp-ng-host2"]

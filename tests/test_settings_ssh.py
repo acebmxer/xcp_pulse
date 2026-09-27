@@ -1,4 +1,4 @@
-"""The Settings page's Host SSH connection form."""
+"""The Settings page's Host SSH connections form."""
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from app.job_inventory import INVENTORY_ARTIFACT
 from app.job_inventory import KIND as INVENTORY_KIND
 from app.jobs import enqueue, mark_succeeded
 from app.ssh_client import PING_REPLY
+from app.ssh_connection import get_connection
 
 PRIVATE_KEY = (
     ed25519.Ed25519PrivateKey.generate()
@@ -51,9 +52,11 @@ def _seed_hosts(client: TestClient, hosts: list[dict]) -> None:
 
 @pytest.fixture
 def saved_key(logged_in: TestClient) -> Iterator[TestClient]:
+    """A host in the stored inventory with a key already saved for it."""
+    _seed_host(logged_in)
     logged_in.post(
         "/settings/ssh",
-        data={"private_key": PRIVATE_KEY, "passphrase": "", "port": "22"},
+        data={"host_id": "host-1", "private_key": PRIVATE_KEY, "passphrase": "", "port": "22"},
     )
     yield logged_in
 
@@ -61,13 +64,14 @@ def saved_key(logged_in: TestClient) -> Iterator[TestClient]:
 def test_ssh_section_renders(logged_in: TestClient) -> None:
     response = logged_in.get("/settings")
     assert response.status_code == 200
-    assert "Host SSH connection" in response.text
+    assert "Host SSH connections" in response.text
 
 
 def test_saving_a_key_redirects_and_stores_it(logged_in: TestClient) -> None:
+    _seed_host(logged_in)
     response = logged_in.post(
         "/settings/ssh",
-        data={"private_key": PRIVATE_KEY, "passphrase": "", "port": "2222"},
+        data={"host_id": "host-1", "private_key": PRIVATE_KEY, "passphrase": "", "port": "2222"},
     )
     assert response.status_code == 303
     assert response.headers["location"] == "/settings?ssh_saved=1"
@@ -78,30 +82,88 @@ def test_saving_a_key_redirects_and_stores_it(logged_in: TestClient) -> None:
 
 
 def test_saving_with_an_empty_key_is_rejected(logged_in: TestClient) -> None:
+    _seed_host(logged_in)
     response = logged_in.post(
-        "/settings/ssh", data={"private_key": "   ", "passphrase": "", "port": "22"}
+        "/settings/ssh",
+        data={"host_id": "host-1", "private_key": "   ", "passphrase": "", "port": "22"},
     )
     assert response.status_code == 400
 
 
+def test_saving_without_a_known_host_is_rejected(logged_in: TestClient) -> None:
+    response = logged_in.post(
+        "/settings/ssh",
+        data={
+            "host_id": "no-such-host",
+            "private_key": PRIVATE_KEY,
+            "passphrase": "",
+            "port": "22",
+        },
+    )
+    assert response.status_code == 400
+    assert "Pick a host" in response.text
+
+
+def test_saving_a_second_host_does_not_overwrite_the_first(saved_key: TestClient) -> None:
+    """The bug per-host keying fixes: with one shared key, saving a second
+    host's key used to silently destroy the first host's stored key."""
+    _seed_hosts(
+        saved_key,
+        [
+            {"id": "host-1", "name": "xcp-ng-host1", "address": "203.0.113.5"},
+            {"id": "host-2", "name": "xcp-ng-host2", "address": "203.0.113.6"},
+        ],
+    )
+    saved_key.post(
+        "/settings/ssh",
+        data={"host_id": "host-2", "private_key": PRIVATE_KEY, "passphrase": "", "port": "2200"},
+    )
+
+    conn = saved_key.app.state.db
+    assert get_connection(conn, "host-1").port == 22
+    assert get_connection(conn, "host-2").port == 2200
+
+
 def test_deleting_the_connection(saved_key: TestClient) -> None:
-    response = saved_key.post("/settings/ssh/delete")
+    response = saved_key.post("/settings/ssh/delete", data={"host_id": "host-1"})
     assert response.status_code == 303
     assert response.headers["location"] == "/settings?ssh_deleted=1"
 
     page = saved_key.get("/settings")
-    assert "No SSH connection is configured yet." in page.text
+    assert "No SSH keys are configured yet." in page.text
+
+
+def test_deleting_one_hosts_key_leaves_another_configured(saved_key: TestClient) -> None:
+    _seed_hosts(
+        saved_key,
+        [
+            {"id": "host-1", "name": "xcp-ng-host1", "address": "203.0.113.5"},
+            {"id": "host-2", "name": "xcp-ng-host2", "address": "203.0.113.6"},
+        ],
+    )
+    saved_key.post(
+        "/settings/ssh",
+        data={"host_id": "host-2", "private_key": PRIVATE_KEY, "passphrase": "", "port": "22"},
+    )
+
+    saved_key.post("/settings/ssh/delete", data={"host_id": "host-1"})
+
+    conn = saved_key.app.state.db
+    assert get_connection(conn, "host-1") is None
+    assert get_connection(conn, "host-2") is not None
 
 
 def test_testing_without_a_saved_key(logged_in: TestClient) -> None:
+    _seed_host(logged_in)
     response = logged_in.post("/settings/ssh/test")
     assert response.status_code == 400
     assert "Save an SSH key" in response.text
 
 
 def test_testing_without_an_inventory(saved_key: TestClient) -> None:
-    """No NIC statistics interfaces configured either — testing the
-    connection must not depend on any specific check being set up."""
+    """A key exists for a host, but nothing is in the inventory any more —
+    testing must not depend on any specific check being set up."""
+    _seed_hosts(saved_key, [])
     response = saved_key.post("/settings/ssh/test")
     assert response.status_code == 400
     assert "Refresh inventory" in response.text
@@ -119,11 +181,11 @@ def test_testing_reaches_for_a_real_host_and_fails_cleanly(logged_in: TestClient
     """No SSH server is listening in a test — this proves the route gets as
     far as attempting a real connection rather than a fixed error."""
     port = _unused_local_port()
+    _seed_host(logged_in, address="127.0.0.1")
     logged_in.post(
         "/settings/ssh",
-        data={"private_key": PRIVATE_KEY, "passphrase": "", "port": str(port)},
+        data={"host_id": "host-1", "private_key": PRIVATE_KEY, "passphrase": "", "port": str(port)},
     )
-    _seed_host(logged_in, address="127.0.0.1")
 
     response = logged_in.post("/settings/ssh/test")
 
@@ -135,8 +197,6 @@ def test_testing_reaches_for_a_real_host_and_fails_cleanly(logged_in: TestClient
 def test_testing_succeeds_with_no_check_configured(saved_key: TestClient) -> None:
     """Test connection uses the dispatcher script's own ping probe, so it
     works with no NIC statistics interfaces (or any other check) set up."""
-    _seed_host(saved_key)
-
     with patch("app.routes.settings.run_check", return_value=(PING_REPLY, False)):
         response = saved_key.post("/settings/ssh/test")
 
@@ -156,6 +216,10 @@ def test_testing_can_target_a_chosen_host_instead_of_the_alphabetically_first(
             {"id": "host-1", "name": "aaa-host", "address": "203.0.113.5"},
             {"id": "host-2", "name": "zzz-host", "address": "203.0.113.6"},
         ],
+    )
+    saved_key.post(
+        "/settings/ssh",
+        data={"host_id": "host-2", "private_key": PRIVATE_KEY, "passphrase": "", "port": "22"},
     )
 
     with patch("app.routes.settings.run_check", return_value=(PING_REPLY, False)) as run_check:
@@ -186,8 +250,6 @@ def test_testing_defaults_to_the_alphabetically_first_host_with_no_choice(
 def test_testing_a_host_id_no_longer_in_the_inventory_is_refused(
     saved_key: TestClient,
 ) -> None:
-    _seed_host(saved_key)
-
     response = saved_key.post("/settings/ssh/test", data={"host_id": "gone"})
 
     assert response.status_code == 400

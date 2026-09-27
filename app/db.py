@@ -294,6 +294,37 @@ _MIGRATIONS: list[str] = [
     """
     DROP TABLE nic_stats_settings;
     """,
+    # 10 -> 11: key the SSH connection per host instead of one shared row.
+    #
+    # A single root-capable key reused across every host meant one compromised
+    # host's key also unlocks every other host it was ever pasted for, and
+    # generating a fresh keypair per host (as docs/configuration.md's own
+    # setup steps always told the operator to do) silently overwrote whatever
+    # the previous host had stored, since it was one row pinned to id = 1.
+    # Rekeying by host_id fixes both: a compromised host's key stops at that
+    # host, and saving a second host's key no longer destroys the first's.
+    #
+    # The one row this table could hold before this migration is dropped
+    # rather than carried forward: nothing in the database says which host it
+    # was for, so there is no safe automatic mapping to a host_id. An operator
+    # upgrading past this migration re-pastes each host's key under
+    # Settings — the same one-time step docs/configuration.md already walks
+    # through per host.
+    """
+    DROP TABLE ssh_connection;
+
+    CREATE TABLE ssh_connection (
+        host_id                 TEXT PRIMARY KEY,
+        private_key_encrypted   TEXT NOT NULL,
+        passphrase_encrypted    TEXT,
+        port                    INTEGER NOT NULL DEFAULT 22,
+        created_at              REAL NOT NULL,
+        updated_at              REAL NOT NULL,
+        last_tested_at          REAL,
+        last_test_ok            INTEGER,
+        last_test_message       TEXT
+    );
+    """,
 ]
 
 

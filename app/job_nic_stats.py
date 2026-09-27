@@ -31,6 +31,7 @@ from app.jobs import JobContext, get_job
 from app.nic_stats_client import fetch_stats, parse_ethtool_stats
 from app.redact import enabled_rules
 from app.ssh_client import SshError, load_private_key
+from app.ssh_connection import DecryptionError as SshDecryptionError
 from app.ssh_connection import known_host_key, load_credentials, remember_host_key
 
 KIND = "nic_stats"
@@ -42,12 +43,13 @@ NIC_STATS_MARKDOWN = "nic-stats.md"
 def run(context: JobContext) -> None:
     """Read NIC statistics from every ticked host and store the report.
 
-    Params: ``host_ids`` (a list of ids from the stored inventory). The
-    credentials used come from the stored SSH connection, shared with any
-    other host-level check, not from job params — there is exactly one such
-    connection, the same way there is exactly one XO connection. Which
-    interfaces to read is decided by the host itself, at read time (every
-    interface with a real device behind it) — nothing to configure here.
+    Params: ``host_ids`` (a list of ids from the stored inventory). Each
+    host's credentials come from its own stored SSH connection — one key per
+    host, not one shared across all of them — so a host with no key saved for
+    it is recorded as unreachable rather than failing the whole run, the same
+    as a host with no address. Which interfaces to read is decided by the
+    host itself, at read time (every interface with a real device behind it)
+    — nothing to configure here.
     """
     job = get_job(context.conn, context.job_id)
     params = job.params if job else {}
@@ -55,14 +57,6 @@ def run(context: JobContext) -> None:
     host_ids = params.get("host_ids")
     if not isinstance(host_ids, list) or not host_ids:
         raise ValueError("No host was selected.")
-
-    context.progress(5, "Reading the SSH connection")
-    credentials = load_credentials(context.conn, context.settings.secret_key)
-    # The decrypted key text is not kept past this point; the parsed PKey
-    # object is what every connection below actually uses.
-    private_key = load_private_key(credentials.private_key, credentials.passphrase)
-    port = credentials.port
-    del credentials
 
     inventory = known_inventory(context.conn, context.data_dir)
     hosts = [host for host in inventory.hosts if host.id in set(host_ids)]
@@ -75,13 +69,33 @@ def run(context: JobContext) -> None:
 
     for index, host in enumerate(hosts):
         context.progress(
-            10 + int(80 * index / len(hosts)), f"Reading NIC statistics from {host.name}"
+            5 + int(85 * index / len(hosts)), f"Reading NIC statistics from {host.name}"
         )
         if not host.address:
             unreachable[host.name] = "no address recorded for this host in the inventory"
             continue
         try:
-            output, trusted_new_key = _read_host(context, host.address, port, private_key)
+            credentials = load_credentials(context.conn, host.id, context.settings.secret_key)
+        except LookupError:
+            unreachable[host.name] = "no SSH key configured for this host"
+            continue
+        except SshDecryptionError:
+            unreachable[host.name] = (
+                "the stored SSH key cannot be decrypted — the secret key has changed "
+                "since it was saved"
+            )
+            continue
+        try:
+            # The decrypted key text is not kept past this point; the parsed
+            # PKey object is what the connection below actually uses.
+            private_key = load_private_key(credentials.private_key, credentials.passphrase)
+        except SshError as exc:
+            unreachable[host.name] = str(exc)
+            continue
+        try:
+            output, trusted_new_key = _read_host(
+                context, host.address, credentials.port, private_key
+            )
         except SshError as exc:
             unreachable[host.name] = str(exc)
             continue

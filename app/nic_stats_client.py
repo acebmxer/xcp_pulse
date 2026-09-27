@@ -1,12 +1,12 @@
-"""Reading ethtool driver counters over the shared SSH connection.
+"""Reading ethtool driver counters over a host's stored SSH connection.
 
 Xen Orchestra has no route for this: its RRD stats cover throughput, not the
 driver-level error, drop and CRC counters ``ethtool -S`` reports, and
 ``xen-bugtool``'s bundle is a snapshot of ``/var/log``, not live command
 output. Reaching them means connecting to the host directly, over the
-connection ``app.ssh_connection``/``app.ssh_client`` provide — this module is
-only the one check built on top of that shared plumbing, not a connection of
-its own.
+per-host connection ``app.ssh_connection``/``app.ssh_client`` provide — this
+module is only the one check built on top of that shared plumbing, not a
+connection of its own.
 
 The host-side allowlist entry for this check is named ``CHECK_NAME`` below,
 and the exact dispatcher script line is in ``docs/configuration.md``; this

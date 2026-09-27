@@ -175,7 +175,7 @@
 
   {% if not nic_ready %}
   <p class="note">
-    The SSH connection is not configured yet. Set it up in
+    SSH access is not configured yet for any host. Set one up in
     <a href="/settings">Settings</a>.
   </p>
   {% elif not nic_hosts %}
@@ -186,8 +186,13 @@
     <li>
       <label class="check">
         <input type="checkbox" name="host_ids" value="{{ host.id }}" form="nic-stats-form"
-          {% if not host.address %}disabled{% endif %}>
-        <span>{{ host.name }}{% if not host.address %} — no address recorded{% endif %}</span>
+          {% if not host.address or host.id not in nic_ssh_hosts %}disabled{% endif %}>
+        <span>
+          {{ host.name }}
+          {%- if not host.address %} — no address recorded
+          {%- elif host.id not in nic_ssh_hosts %} — no SSH key configured
+          {%- endif %}
+        </span>
       </label>
     </li>
     {% endfor %}

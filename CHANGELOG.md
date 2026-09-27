@@ -12,6 +12,28 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ### Fixed
 
+- **A single SSH key was shared across every host, so saving a second host's
+  key silently destroyed the first host's stored key, and any one host's key
+  being compromised would have reached every other host too.** The `ssh_connection`
+  table held one row (`id = 1`) for the whole application; `docs/configuration.md`'s
+  own setup steps told the operator to generate a *fresh* keypair on each
+  host and paste it into the same single settings field, which meant the
+  second host's save silently overwrote the first's row — reported directly:
+  a host that tested working came back "failed" on retest with nothing
+  changed, because a second host's key had since been saved over it. Migration
+  11 rekeys `ssh_connection` by `host_id` (the existing single row is dropped,
+  since nothing recorded which host it belonged to); `save_connection`,
+  `get_connection`, `delete_connection`, `record_test_result` and
+  `load_credentials` all now take a `host_id`, and a new `list_connections`
+  returns every host's stored connection. Settings gained a host picker on
+  the save form and a table listing every configured host instead of one
+  status block; `job_nic_stats.run` now loads each host's own key inside its
+  per-host loop, so a host with no key saved for it is recorded as
+  unreachable rather than the whole run using the wrong key; the Findings
+  page disables the checkbox for a host with no key configured, the same way
+  it already does for a host with no address. `docs/configuration.md` and
+  `docs/user-guide/settings.md` are corrected to say each host needs its own
+  key, generated and saved separately, instead of one key reused everywhere.
 - **Settings → Host SSH connection's "Test connection" could only ever reach
   the alphabetically first host in the stored inventory, with no way to point
   it at any other one.** Reported directly: adding a second host and testing

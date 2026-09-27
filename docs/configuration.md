@@ -229,23 +229,24 @@ plain `403` until one is added.
 > Enterprise.** Role-based access control is not available on the lower XOA
 > tiers. Installations from the sources are not restricted.
 
-## Host SSH connection: the one thing that connects to a host directly
+## Host SSH connections: the one thing that connects to a host directly
 
 Everything above goes through the Xen Orchestra API. Some things simply are
 not in that API — NIC statistics (`ethtool -S` driver error/drop counters)
 is the first example, since Xen Orchestra's own RRD stats cover throughput,
 not per-driver error counts — and reading them means connecting to the host
 itself over SSH. This is opt-in: configure nothing under
-**Settings → Host SSH connection** and XCP Pulse never touches a host outside
+**Settings → Host SSH connections** and XCP Pulse never touches a host outside
 the XO API, exactly as before.
 
-**This is one SSH key, shared by every check that needs to reach a host
-directly — not one key per check.** Asking you to paste a second root-capable
-key into a second, identically shaped settings section every time a new check
-is added would double the risk (a second secret to protect, a second place it
-can leak from) for no real benefit. NIC statistics is the first check built on
-this connection; any future one reuses the same key and the same host-side
-setup below, gaining only a new entry in the dispatcher script.
+**Each host gets its own key — never one key shared across every host.** A
+root-capable key that worked on every host would mean a single compromised
+host's key also opens every other host it was ever added to. Instead, the
+key pair generated in step 2 below is generated fresh on that one host and
+saved against that host specifically in Settings, so it can only ever reach
+the host it came from. It is still one key per host shared by every check
+that host runs (NIC statistics today, more may follow) — not a second key
+per check on the same host.
 
 **XCP-ng has no lesser dom0 account than root to create.** Its own
 documentation states plainly that "the path of managing users via dom0 is
@@ -283,8 +284,12 @@ sent to it.
    does not already explicitly allow, even if the private key were later
    copied off this machine.
 3. Paste the **private** key (`cat /root/.ssh/xcp-pulse-diag`) into
-   **Settings → Host SSH connection** and save. Use **Test connection** to
-   confirm it reaches a host from the stored inventory — this sends the
+   **Settings → Host SSH connections**, pick *this* host from the dropdown
+   above the key field, and save. Repeat this whole setup, including step 2's
+   `ssh-keygen`, for each additional host — every host needs its own key pair
+   generated on it and saved under its own name here; saving a key for one
+   host never touches another host's stored key. Use **Test connection** to
+   confirm a host from the stored inventory is reachable — this sends the
    dispatcher script's own `ping` probe (allowlisted alongside every check,
    always present), so it works right away and does not depend on any
    specific check being configured yet.

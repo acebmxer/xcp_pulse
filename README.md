@@ -113,13 +113,14 @@ rather than estimated:
 - **Report NIC statistics** — a third card on the Findings page connects to
   ticked hosts over SSH and reads `ethtool -S` driver error/drop counters,
   the one thing this application reaches outside the Xen Orchestra API,
-  because XO has no route for it. It runs over one general-purpose host SSH
-  connection, shared with any future check rather than one key per function.
-  XCP-ng has no lesser dom0 account than root to create, so the key connects
-  as root, and the actual privilege limit is a forced-command dispatcher
-  script on `authorized_keys` allowlisting a fixed set of read-only checks by
-  name — see [Configuration](docs/configuration.md) for the exact setup. A
-  nonzero counter is flagged with what to check next (cable,
+  because XO has no route for it. Each host has its own SSH key, saved
+  separately — never one key shared across hosts — reused by any future check
+  on that host rather than one key per function. XCP-ng has no lesser dom0
+  account than root to create, so the key connects as root, and the actual
+  privilege limit is a forced-command dispatcher script on `authorized_keys`
+  allowlisting a fixed set of read-only checks by name — see
+  [Configuration](docs/configuration.md) for the exact setup. A nonzero
+  counter is flagged with what to check next (cable,
   transceiver, switch port), and correlates with a matching finding from the
   API or the logs the same way those two already correlate with each other.
 - **Collect XO diagnostics** — a second, independent card on the Collect page
