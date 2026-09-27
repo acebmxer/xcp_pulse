@@ -478,6 +478,15 @@ class Report:
     # interfaces, up or down, connected or not) rather than an empty page.
     interfaces: list[dict[str, Any]] = field(default_factory=list)
 
+    # The pool's own network table — name, VLAN, MTU, NBD Connection, locked,
+    # automatic — set by the NIC statistics source only, same as ``interfaces``
+    # above. The two answer different halves of one question: interfaces show
+    # which physical NIC serves a host, this shows which of the logical
+    # networks riding on it have NBD enabled — the setting a backup job
+    # falling back from delta to full while naming NBD is telling the
+    # operator to come and check.
+    networks: list[dict[str, Any]] = field(default_factory=list)
+
     @property
     def counts(self) -> dict[str, int]:
         """How many findings at each severity, including the zeros.

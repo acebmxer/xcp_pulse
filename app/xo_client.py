@@ -89,8 +89,29 @@ MISSING_PATCHES_PATH = "/pools/{pool_id}/missing_patches"
 # up/down/carrier/speed a PIF's own status column in the XO UI shows. This is
 # the one thing about a NIC ``nic_stats_client`` does not need SSH for; only
 # the driver-level ``ethtool -S`` error/drop counters have no XO route.
+#
+# ``vlan`` and ``$network`` are read too even though a physical PIF's own vlan
+# is always -1 (XAPI's "no VLAN" value — VLANs are separate PIF records riding
+# on top of the physical one, sharing its ``device`` name): ``$network`` is
+# what lets a physical NIC be matched back to the network record that carries
+# its NBD Connection setting.
 PIFS_PATH = "/pifs"
-PIF_FIELDS = "device,physical,attached,carrier,speed,$host"
+PIF_FIELDS = "device,physical,attached,carrier,speed,vlan,$network,$host"
+
+# The pool network table XO's own Network tab shows. ``nbd`` is XO's own field
+# name for what that tab calls "NBD Connection" — whether NBD transfer is
+# enabled on this network, the setting a backup job silently falling back
+# from delta to full while naming NBD in its log (see
+# ``findings._degraded_backups``) is telling the operator to come and check.
+NETWORKS_PATH = "/networks"
+NETWORK_FIELDS = "id,name_label,MTU,nbd,defaultIsLocked,automatic,PIFs,$pool"
+
+# A network record itself carries no VLAN field — every PIF on one network
+# shares the same tag, which is what makes it that VLAN's network — so a
+# network's VLAN is read off the first matching PIF instead. This fields list
+# is deliberately smaller than PIF_FIELDS: this read exists only to build
+# that one lookup, not to describe a NIC.
+NETWORK_PIF_FIELDS = "vlan,$network"
 
 # Every account this instance knows. Feeds redact.build_username_rule, since a
 # username has no fixed shape to match against, unlike every other redaction
@@ -161,6 +182,29 @@ class PifStatus:
     attached: bool
     carrier: bool
     speed: int
+
+    # Which network this physical NIC's untagged traffic belongs to, and that
+    # PIF's own VLAN tag (always -1, XAPI's "no VLAN" value, for a physical
+    # PIF — a tagged VLAN is a separate PIF record on top of this one). Kept
+    # here so a NIC can be traced back to the network record that carries its
+    # NBD Connection setting.
+    network_id: str = ""
+    vlan: int = -1
+
+
+@dataclass(frozen=True)
+class Network:
+    """One pool network, the same record XO's own Network tab lists."""
+
+    id: str
+    name: str
+    pool_id: str
+    mtu: int
+    nbd: bool
+    locked: bool
+    automatic: bool
+    vlan: int = -1
+    pif_count: int = 0
 
 
 @dataclass(frozen=True)
@@ -365,6 +409,40 @@ class XoClient:
                 attached=bool(record.get("attached")),
                 carrier=bool(record.get("carrier")),
                 speed=int(record.get("speed") or 0),
+                network_id=str(record.get("$network") or ""),
+                vlan=_int_or(record.get("vlan"), -1),
+            )
+        return result
+
+    def networks(self) -> list[Network]:
+        """Every network XO knows about, the same table its own Network tab
+        shows — not scoped to a pool, the same way ``pifs()`` leaves host
+        filtering to its caller.
+        """
+        vlan_by_network: dict[str, int] = {}
+        for record in _record_list(self._get(PIFS_PATH, fields=NETWORK_PIF_FIELDS)):
+            network_id = str(record.get("$network") or "")
+            if not network_id or network_id in vlan_by_network:
+                continue
+            vlan_by_network[network_id] = _int_or(record.get("vlan"), -1)
+
+        result: list[Network] = []
+        for record in _record_list(self._get(NETWORKS_PATH, fields=NETWORK_FIELDS)):
+            network_id = str(record.get("id") or "")
+            if not network_id:
+                continue
+            result.append(
+                Network(
+                    id=network_id,
+                    name=_label(record, "network"),
+                    pool_id=str(record.get("$pool") or ""),
+                    mtu=int(record.get("MTU") or 0),
+                    nbd=bool(record.get("nbd")),
+                    locked=bool(record.get("defaultIsLocked")),
+                    automatic=bool(record.get("automatic")),
+                    vlan=vlan_by_network.get(network_id, -1),
+                    pif_count=len(record.get("PIFs") or []),
+                )
             )
         return result
 
@@ -948,6 +1026,13 @@ def _label(record: dict[str, object], kind: str) -> str:
         return name
     identifier = str(record.get("id") or "").strip()
     return identifier or f"unnamed {kind}"
+
+
+def _int_or(value: object, default: int) -> int:
+    """Read value as an int, or ``default`` when absent or malformed."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return default
+    return int(value)
 
 
 def _nested_int(record: dict[str, object], outer: str, inner: str) -> int:

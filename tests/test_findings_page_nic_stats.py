@@ -14,6 +14,8 @@ from app.findings import CRITICAL, Finding, Report, SourceResult
 from app.job_inventory import INVENTORY_ARTIFACT
 from app.job_inventory import KIND as INVENTORY_KIND
 from app.job_nic_stats import KIND as NIC_KIND
+from app.job_nic_stats import NIC_STATS_ARTIFACT as NIC_ARTIFACT
+from app.job_nic_stats import to_payload
 from app.jobs import enqueue, mark_succeeded
 from app.ssh_connection import save_connection
 from tests.helpers import run_pending_jobs
@@ -183,6 +185,69 @@ def test_a_clean_report_says_so(logged_in: TestClient) -> None:
     body = logged_in.get("/findings").text
 
     assert "No packet errors were found" in body
+
+
+def test_pool_networks_and_interface_nbd_status_render(logged_in: TestClient) -> None:
+    """Stored directly rather than through ``_store_nic``: a real run
+    computes ``interfaces``/``networks`` itself from live XO reads and would
+    overwrite whatever a stubbed ``collect_nic_stat_findings`` returned for
+    them — this is testing what the page does with that data once stored,
+    not the run itself."""
+    report = Report(sources=[SourceResult("nic_stats", read=True)], window_days=0)
+    report.networks = [
+        {
+            "id": "net-1",
+            "name": "Storage_Vlan",
+            "pool": "xcp-ng-Pool1",
+            "vlan": 2,
+            "mtu": 1500,
+            "nbd": True,
+            "locked": False,
+            "automatic": False,
+            "pif_count": 3,
+        },
+        {
+            "id": "net-2",
+            "name": "Work",
+            "pool": "xcp-ng-Pool1",
+            "vlan": 79,
+            "mtu": 1500,
+            "nbd": False,
+            "locked": False,
+            "automatic": False,
+            "pif_count": 3,
+        },
+    ]
+    report.interfaces = [
+        {
+            "host": "xcp-ng-host1",
+            "interface": "eth1",
+            "attached": True,
+            "carrier": True,
+            "speed": 10000,
+            "network": "Work",
+            "nbd": False,
+            "counters": {},
+        }
+    ]
+    _seed_host(logged_in)
+    db = logged_in.app.state.db
+    job = enqueue(db, NIC_KIND, {"host_ids": ["host-1"]})
+    store_json(
+        db,
+        logged_in.app.state.settings.data_dir,
+        job_id=job.id,
+        name=NIC_ARTIFACT,
+        payload=to_payload(report),
+    )
+    mark_succeeded(db, job.id)
+
+    body = logged_in.get("/findings").text
+
+    assert "Pool networks" in body
+    assert "Storage_Vlan" in body
+    assert "no NBD Connection" in body
+    assert "Work (no NBD)" in body
 
 
 def test_a_host_with_no_configured_key_is_recorded_unreachable(logged_in: TestClient) -> None:

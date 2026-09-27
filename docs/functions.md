@@ -231,7 +231,8 @@ stored URL, token and TLS setting are applied in one place.
 | `XoClient.is_admin` | `() -> bool` | Whether the account has XO administrator permission | `test_connection` | v0.2.0 |
 | `XoClient.messages` | `(since: float) -> list[dict]` | XAPI messages since a Unix time | `findings.collect_findings`, `job_diagnostics.run` | v0.7.0 |
 | `XoClient.missing_patches` | `(pool_id: str) -> list[dict]` | Patches XO reports missing on one pool | `findings.collect_findings` | v0.7.0 |
-| `XoClient.pifs` | `() -> dict[str, dict[str, PifStatus]]` | Every host's physical NICs' link state (attached/carrier/speed), keyed by host id then device | `job_nic_stats.run` | unreleased |
+| `XoClient.networks` | `() -> list[Network]` | Every pool network XO knows about — name, VLAN, MTU, NBD Connection, locked, automatic | `job_nic_stats.run` | unreleased |
+| `XoClient.pifs` | `() -> dict[str, dict[str, PifStatus]]` | Every host's physical NICs' link state (attached/carrier/speed/vlan/network), keyed by host id then device | `job_nic_stats.run` | unreleased |
 | `XoClient.pool_dashboard` | `() -> dict` | The dashboard totals: patches, backups, storage, host state | `findings.collect_findings` | v0.7.0 |
 | `XoClient.restore_log_detail` | `(log_id: str) -> dict` | Full nested detail for one restore run — see `backup_log_detail` | `job_diagnostics.run`, for every enumerated run | unreleased |
 | `XoClient.restore_logs` | `(since: float) -> list[dict]` | Restore runs since a Unix time | `findings.collect_findings`, `job_diagnostics.run` | v0.7.0 |
@@ -844,6 +845,7 @@ way to make that distinction about itself.
 | --- | --- | --- | --- | --- |
 | `errors_summary` | `(record: dict) -> str` | One interface's checked error counters as a short phrase, for the page and Markdown | `templates/findings.html` (as the `nic_errors` filter), `job_nic_stats.to_markdown` | unreleased |
 | `link_summary` | `(record: dict) -> str` | One interface's link state as a short phrase, for the page and Markdown | `templates/findings.html` (as the `nic_link` filter), `job_nic_stats.to_markdown` | unreleased |
+| `nbd_summary` | `(record: dict) -> str` | One interface's network and NBD Connection status as a short phrase | `job_nic_stats.to_markdown` | unreleased |
 | `report_from_job` | `(conn, data_dir, job_id: str) -> Report \| None` | Rebuilds the stored NIC statistics report | `routes.collect` | unreleased |
 | `run` | `(context: JobContext) -> None` | Reads every ticked host's counters over SSH and its link state from Xen Orchestra, and stores the report | `job_runner`, via `register` | unreleased |
 | `to_markdown` | `(report: Report, *, newly_trusted=None) -> str` | Formats a NIC statistics report for a support ticket | `job_nic_stats.run` | unreleased |

@@ -54,7 +54,7 @@ from app.redact import enabled_rules
 from app.ssh_client import SshError, load_private_key
 from app.ssh_connection import DecryptionError as SshDecryptionError
 from app.ssh_connection import known_host_key, load_credentials, remember_host_key
-from app.xo_client import PifStatus, XoError
+from app.xo_client import Network, PifStatus, XoError
 from app.xo_connection import build_client
 
 KIND = "nic_stats"
@@ -88,15 +88,29 @@ def run(context: JobContext) -> None:
         raise ValueError("None of the selected hosts are in the stored inventory.")
 
     context.progress(2, "Reading network status from Xen Orchestra")
+    # Unlike the API findings job, Xen Orchestra is not this job's reason to
+    # exist — the SSH-read counters below are the whole point, and are still
+    # real and worth having without either of these. Each is tried on its own
+    # rather than sharing one try/except, so one failing (an older instance
+    # whose REST API has no /networks route, say) does not also discard a
+    # successful read of the other: every interface just reports as "unknown"
+    # link state, or the pool network table is simply left out, respectively.
     try:
-        pif_lookup = build_client(context.conn, context.settings.secret_key).pifs()
+        xo_client = build_client(context.conn, context.settings.secret_key)
     except (LookupError, DecryptionError, XoError):
-        # Unlike the API findings job, Xen Orchestra is not this job's reason
-        # to exist — the SSH-read counters below are the whole point, and are
-        # still real and worth having without this cross-reference. Every
-        # interface just reports as "unknown" link state instead.
+        xo_client = None
+    try:
+        pif_lookup = xo_client.pifs() if xo_client else {}
+    except XoError:
         pif_lookup = {}
+    try:
+        networks = xo_client.networks() if xo_client else []
+    except XoError:
+        networks = []
     pif_by_host = {host.name: pif_lookup.get(host.id) for host in hosts}
+    network_by_id = {network.id: network for network in networks}
+    relevant_pool_ids = {host.pool_id for host in hosts if host.pool_id}
+    pool_name_by_id = {pool.id: pool.name for pool in inventory.pools}
 
     host_stats: dict[str, dict[str, dict[str, int]]] = {}
     unreachable: dict[str, str] = {}
@@ -144,7 +158,11 @@ def run(context: JobContext) -> None:
     report = collect_nic_stat_findings(
         host_stats, unreachable=unreachable, enabled=enabled_rules(context.conn)
     )
-    report.interfaces = _interface_records(host_stats, pif_by_host)
+    report.interfaces = _interface_records(host_stats, pif_by_host, network_by_id)
+    report.networks = _network_records(
+        [n for n in networks if not relevant_pool_ids or n.pool_id in relevant_pool_ids],
+        pool_name_by_id,
+    )
     store_json(
         context.conn,
         context.data_dir,
@@ -217,18 +235,24 @@ def _physical_only(
 def _interface_records(
     host_stats: dict[str, dict[str, dict[str, int]]],
     pif_by_host: dict[str, dict[str, PifStatus] | None],
+    network_by_id: dict[str, Network] | None = None,
 ) -> list[dict[str, Any]]:
     """Every interface actually read, with its link state and error counters.
 
     Kept even when a run finds nothing to flag — a clean result still read
     real interfaces, and "what did this check" has to be answerable from the
     stored report itself, not only from a finding that never fires.
+
+    ``network`` and ``nbd`` name the network the NIC's untagged traffic
+    belongs to and whether NBD is enabled there — None when the PIF or the
+    network lookup itself is unavailable, same tolerance as link state above.
     """
     records: list[dict[str, Any]] = []
     for host in sorted(host_stats):
         known = pif_by_host.get(host)
         for interface in sorted(host_stats[host]):
             pif = known.get(interface) if known else None
+            network = network_by_id.get(pif.network_id) if pif and network_by_id else None
             counters = host_stats[host][interface]
             records.append(
                 {
@@ -237,12 +261,38 @@ def _interface_records(
                     "attached": pif.attached if pif else None,
                     "carrier": pif.carrier if pif else None,
                     "speed": pif.speed if pif else None,
+                    "network": network.name if network else None,
+                    "nbd": network.nbd if network else None,
                     "counters": {
                         name: counters[name] for name in NIC_ERROR_COUNTERS if name in counters
                     },
                 }
             )
     return records
+
+
+def _network_records(
+    networks: list[Network], pool_name_by_id: dict[str, str]
+) -> list[dict[str, Any]]:
+    """The pool's own network table, the same one XO's Network tab shows.
+
+    Sorted by name for a stable, readable order — nothing about a network's
+    importance is captured by the order XO's API happens to return it in.
+    """
+    return [
+        {
+            "id": network.id,
+            "name": network.name,
+            "pool": pool_name_by_id.get(network.pool_id, network.pool_id),
+            "vlan": network.vlan,
+            "mtu": network.mtu,
+            "nbd": network.nbd,
+            "locked": network.locked,
+            "automatic": network.automatic,
+            "pif_count": network.pif_count,
+        }
+        for network in sorted(networks, key=lambda network: network.name.lower())
+    ]
 
 
 def to_payload(report: Report) -> dict[str, Any]:
@@ -253,6 +303,7 @@ def to_payload(report: Report) -> dict[str, Any]:
         "sources": [asdict(source) for source in report.sources],
         "rules_disabled": report.rules_disabled,
         "interfaces": report.interfaces,
+        "networks": report.networks,
     }
 
 
@@ -280,6 +331,7 @@ def report_from_job(conn, data_dir, job_id: str) -> Report | None:
             item for item in payload.get("rules_disabled") or [] if isinstance(item, str)
         ],
         interfaces=_records(payload.get("interfaces")),
+        networks=_records(payload.get("networks")),
     )
 
 
@@ -310,6 +362,19 @@ def errors_summary(record: dict[str, Any]) -> str:
     return ", ".join(f"{name}: {value:,}" for name, value in hit.items())
 
 
+def nbd_summary(record: dict[str, Any]) -> str:
+    """One interface's network and NBD Connection status as a short phrase.
+
+    This is the field a backup job's own "fall back to full" log names when
+    it blames NBD — showing it here means an operator can see whether that is
+    actually the cause without opening Xen Orchestra's Network tab.
+    """
+    network = record.get("network")
+    if network is None:
+        return "unknown"
+    return f"{network} (NBD)" if record.get("nbd") else f"{network} (no NBD)"
+
+
 def to_markdown(report: Report, *, newly_trusted: list[str] | None = None) -> str:
     generated = time.strftime(
         "%Y-%m-%d %H:%M:%S UTC", time.gmtime(report.created_at or time.time())
@@ -338,17 +403,33 @@ def to_markdown(report: Report, *, newly_trusted: list[str] | None = None) -> st
             f"Action: {finding.action}",
             "",
         ]
+    if report.networks:
+        lines += [
+            "## Pool networks",
+            "",
+            "| Network | Pool | VLAN | MTU | NBD Connection | Locked | Automatic | PIFs |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        ]
+        for network in report.networks:
+            vlan = network["vlan"] if network["vlan"] not in (None, -1) else "none"
+            lines.append(
+                f"| {network['name']} | {network['pool']} | {vlan} | {network['mtu']} "
+                f"| {'yes' if network['nbd'] else 'no'} "
+                f"| {'yes' if network['locked'] else 'no'} "
+                f"| {'yes' if network['automatic'] else 'no'} | {network['pif_count']} |"
+            )
+        lines.append("")
     if report.interfaces:
         lines += [
             "## Interfaces read",
             "",
-            "| Host | Interface | Link | Errors |",
-            "| --- | --- | --- | --- |",
+            "| Host | Interface | Link | Network | Errors |",
+            "| --- | --- | --- | --- | --- |",
         ]
         for record in report.interfaces:
             lines.append(
                 f"| {record['host']} | {record['interface']} | {link_summary(record)} "
-                f"| {errors_summary(record)} |"
+                f"| {nbd_summary(record)} | {errors_summary(record)} |"
             )
         lines.append("")
     for source in report.sources:

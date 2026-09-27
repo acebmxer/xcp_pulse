@@ -264,15 +264,49 @@
     {% endfor %}
   </ul>
   {% endif %}
-  {% if nic_report.interfaces %}
+  {% if nic_report.networks %}
+  <h3>Pool networks</h3>
   <table class="report">
-    <thead><tr><th>Host</th><th>Interface</th><th>Link</th><th>Errors</th></tr></thead>
+    <thead>
+      <tr>
+        <th>Network</th><th>Pool</th><th>VLAN</th><th>MTU</th>
+        <th>NBD Connection</th><th>Locked</th><th>Automatic</th><th>PIFs</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for net in nic_report.networks %}
+      <tr>
+        <th>{{ net.name }}</th>
+        <td>{{ net.pool }}</td>
+        <td>{{ net.vlan if net.vlan not in (none, -1) else 'none' }}</td>
+        <td>{{ net.mtu }}</td>
+        <td>
+          {% if net.nbd %}<span class="tag">NBD Connection</span>
+          {% else %}<span class="tag tag-warn">no NBD Connection</span>{% endif %}
+        </td>
+        <td>{{ 'yes' if net.locked else 'no' }}</td>
+        <td>{{ 'yes' if net.automatic else 'no' }}</td>
+        <td>{{ net.pif_count }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  {% if nic_report.interfaces %}
+  <h3>Interfaces read</h3>
+  <table class="report">
+    <thead><tr><th>Host</th><th>Interface</th><th>Link</th><th>Network</th><th>Errors</th></tr></thead>
     <tbody>
       {% for iface in nic_report.interfaces %}
       <tr>
         <th>{{ iface.host }}</th>
         <td>{{ iface.interface }}</td>
         <td>{{ iface | nic_link }}</td>
+        <td>
+          {% if iface.network is none %}unknown
+          {% elif iface.nbd %}<span class="tag">{{ iface.network }} (NBD)</span>
+          {% else %}<span class="tag tag-warn">{{ iface.network }} (no NBD)</span>{% endif %}
+        </td>
         <td>{{ iface | nic_errors }}</td>
       </tr>
       {% endfor %}

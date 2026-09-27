@@ -324,6 +324,13 @@ The report lists every physical interface it read, with its link state and
 error counters, whether or not anything is wrong — a clean run still shows
 what was checked, not just "no findings."
 
+The same read also pulls the pool's own network table from Xen Orchestra —
+name, VLAN, MTU, and whether "NBD Connection" is enabled — the same table its
+own Network tab shows, and names which network each interface belongs to and
+its NBD status. This is worth checking directly: a backup job that silently
+falls back from delta to full while naming NBD in its own log is telling the
+operator that this setting, not the network hardware, is the cause.
+
 ## What XCP Pulse will not do
 
 - **Agents on hosts.** No daemon and nothing persistent runs on any XCP-ng

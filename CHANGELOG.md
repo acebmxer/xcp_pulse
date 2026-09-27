@@ -196,6 +196,23 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ### Added
 
+- **NIC statistics now also reports the pool's own network table — name,
+  VLAN, MTU, "NBD Connection", locked, automatic — and cross-references each
+  physical interface to the network it belongs to and whether NBD is enabled
+  there.** Raised directly: a backup job silently falling back from delta to
+  full while naming NBD in its log (`findings._degraded_backups`) already
+  told the operator to go check NBD in Xen Orchestra's Network tab by hand;
+  there was no way to see that setting inside XCP Pulse itself. `XoClient`
+  gained a `Network` record and a `networks()` method reading `/networks`
+  (`nbd` is XO's own field for what its UI calls "NBD Connection") — a
+  network carries no VLAN field of its own, since every PIF on one network
+  shares the same tag, so it is read off the first matching PIF found via a
+  second, lighter `/pifs` read. `PifStatus` (from the existing `pifs()` call)
+  gained `network_id` and `vlan`, letting `job_nic_stats._interface_records`
+  name each read interface's network and NBD status. Both the pool network
+  table (`Report.networks`) and the enriched interface table render on the
+  Findings page and in the downloaded Markdown; a report stored before this
+  feature existed still loads, with an empty network list.
 - **The stored inventory (pools and hosts) now keeps itself current instead of
   only changing when an operator remembers to click Refresh.** Reported
   directly: a host added to a pool in Xen Orchestra was not appearing here,

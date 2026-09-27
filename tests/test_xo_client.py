@@ -470,6 +470,89 @@ def test_list_hosts_raises_on_a_server_error() -> None:
         _client(handler).list_hosts()
 
 
+# ---- networks -------------------------------------------------------------
+#
+# Shapes below are lifted from a live XO CE instance: a network record has no
+# VLAN field of its own (every PIF on it shares one tag, which is what makes
+# it that VLAN's network), and "NBD Connection" in XO's own Network tab is
+# just the record's ``nbd`` boolean.
+
+
+def test_networks_reads_nbd_locked_automatic_mtu_and_pif_count() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/pifs"):
+            return httpx.Response(200, json=[])
+        if request.url.path.endswith("/networks"):
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "id": "net-1",
+                        "name_label": "Storage_Vlan",
+                        "MTU": 1500,
+                        "nbd": True,
+                        "defaultIsLocked": False,
+                        "automatic": False,
+                        "PIFs": ["pif-1", "pif-2", "pif-3"],
+                        "$pool": POOL_ID,
+                    }
+                ],
+            )
+        raise AssertionError(request.url.path)
+
+    networks = _client(handler).networks()
+
+    assert len(networks) == 1
+    network = networks[0]
+    assert network.id == "net-1"
+    assert network.name == "Storage_Vlan"
+    assert network.pool_id == POOL_ID
+    assert network.mtu == 1500
+    assert network.nbd is True
+    assert network.locked is False
+    assert network.automatic is False
+    assert network.pif_count == 3
+
+
+def test_networks_reads_vlan_from_the_first_matching_pif() -> None:
+    """A network carries no VLAN of its own — it is read off whichever PIF on
+    it is seen first, since every PIF on one network shares the same tag."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/pifs"):
+            return httpx.Response(
+                200,
+                json=[
+                    {"vlan": 2, "$network": "net-1"},
+                    {"vlan": -1, "$network": "net-2"},
+                ],
+            )
+        if request.url.path.endswith("/networks"):
+            return httpx.Response(
+                200,
+                json=[
+                    {"id": "net-1", "name_label": "Storage_Vlan", "PIFs": []},
+                    {"id": "net-2", "name_label": "Pool-wide network 0", "PIFs": []},
+                ],
+            )
+        raise AssertionError(request.url.path)
+
+    by_name = {network.name: network for network in _client(handler).networks()}
+
+    assert by_name["Storage_Vlan"].vlan == 2
+    assert by_name["Pool-wide network 0"].vlan == -1
+
+
+def test_networks_is_empty_for_an_account_without_privileges() -> None:
+    """Measured: a restricted account gets 200 and [], the same as every
+    other collection route, not a refusal."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[])
+
+    assert _client(handler).networks() == []
+
+
 # ---- streaming downloads -------------------------------------------------
 #
 # The log bundle is measured at 433 MB, so what matters here is that the body

@@ -128,6 +128,12 @@ rather than estimated:
   counter is flagged with what to check next (cable,
   transceiver, switch port), and correlates with a matching finding from the
   API or the logs the same way those two already correlate with each other.
+  The same report also lists the pool's own network table — VLAN, MTU, and
+  whether "NBD Connection" is enabled on each network, the same setting Xen
+  Orchestra's own Network tab shows — and names which network each read
+  interface belongs to and its NBD status, so a backup job that silently fell
+  back from delta to full while naming NBD can be checked against the actual
+  cause without leaving XCP Pulse.
 - **Collect XO diagnostics** — a second, independent card on the Collect page
   for the raw detail Findings' classification leaves out: the full
   per-VM/per-disk task tree behind every backup and restore run in the
