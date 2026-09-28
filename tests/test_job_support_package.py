@@ -22,6 +22,8 @@ from app.job_findings import FINDINGS_ARTIFACT, FINDINGS_MARKDOWN
 from app.job_findings import KIND as FINDINGS_KIND
 from app.job_inventory import INVENTORY_ARTIFACT
 from app.job_inventory import KIND as INVENTORY_KIND
+from app.job_nic_stats import KIND as NIC_STATS_KIND
+from app.job_nic_stats import NIC_STATS_ARTIFACT, NIC_STATS_MARKDOWN
 from app.job_redact import KIND as REDACT_KIND
 from app.job_redact import REPORT_ARTIFACT as REDACTION_REPORT_ARTIFACT
 from app.job_runner import JobWorker
@@ -51,9 +53,9 @@ def data_dir(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def _store_collection(conn, data_dir, host_name: str = HOST_NAME) -> str:
+def _store_collection(conn, data_dir, host_name: str = HOST_NAME, host_id: str = "host-1") -> str:
     """A finished collection with a redacted bundle and a redaction report."""
-    job = enqueue(conn, COLLECT_KIND, {"host_id": "host-1", "host_name": host_name})
+    job = enqueue(conn, COLLECT_KIND, {"host_id": host_id, "host_name": host_name})
     mark_succeeded(conn, job.id)
 
     working = data_dir / "artifacts" / job.id / "raw.tmp"
@@ -130,6 +132,25 @@ def _store_inventory(conn, data_dir) -> str:
     return job.id
 
 
+def _store_nic_stats(conn, data_dir, *, host_ids: list[str]) -> str:
+    job = enqueue(conn, NIC_STATS_KIND, {"host_ids": host_ids})
+    mark_succeeded(conn, job.id)
+    store_json(conn, data_dir, job_id=job.id, name=NIC_STATS_ARTIFACT, payload={"findings": []})
+
+    working = data_dir / "artifacts" / job.id / "nic-md.tmp"
+    working.parent.mkdir(parents=True, exist_ok=True)
+    working.write_text("# NIC statistics\n", encoding="utf-8")
+    store_file(
+        conn,
+        data_dir,
+        job_id=job.id,
+        name=NIC_STATS_MARKDOWN,
+        media_type="text/markdown",
+        source=working,
+    )
+    return job.id
+
+
 def _enqueue_package(conn, *, collect_job_id, findings_job_id, inventory_job_id):
     return enqueue(
         conn,
@@ -199,6 +220,83 @@ def test_package_bundles_every_file_with_a_manifest(
         INVENTORY_ARTIFACT,
         REDACTION_REPORT_ARTIFACT,
     }
+
+
+def test_package_includes_a_nic_stats_report_for_the_same_host(
+    conn: sqlite3.Connection, worker: JobWorker, data_dir: Path
+) -> None:
+    """A NIC statistics run covering this host's own id is packaged too.
+
+    Unlike findings and inventory, this job never queues NIC statistics
+    itself — it is found by matching the collection's ``host_id`` against a
+    prior successful run's own ``host_ids``.
+    """
+    collect_job_id = _store_collection(conn, data_dir)
+    findings_job_id = _store_findings(conn, data_dir)
+    inventory_job_id = _store_inventory(conn, data_dir)
+    nic_job_id = _store_nic_stats(conn, data_dir, host_ids=["host-1"])
+
+    job = _enqueue_package(
+        conn,
+        collect_job_id=collect_job_id,
+        findings_job_id=findings_job_id,
+        inventory_job_id=inventory_job_id,
+    )
+    worker.run_one(conn)
+
+    assert get_job(conn, job.id).state == SUCCEEDED
+    package = package_from_job(conn, job.id)
+    assert package is not None
+
+    archive_path = artifact_path(data_dir, job.id, package.id)
+    with tarfile.open(archive_path, "r:gz") as archive:
+        names = set(archive.getnames())
+        assert NIC_STATS_ARTIFACT in names
+        assert NIC_STATS_MARKDOWN in names
+
+        manifest_member = archive.extractfile(MANIFEST_NAME)
+        assert manifest_member is not None
+        manifest = json.loads(manifest_member.read())
+
+    assert manifest["nic_stats_job_id"] == nic_job_id
+    assert NIC_STATS_ARTIFACT in manifest["files"]
+    assert NIC_STATS_MARKDOWN in manifest["files"]
+
+
+def test_package_ignores_a_nic_stats_report_for_a_different_host(
+    conn: sqlite3.Connection, worker: JobWorker, data_dir: Path
+) -> None:
+    """A NIC statistics run that never covered this host is not shipped in its
+    ticket — reporting a different host's cabling as if it were this one's
+    would be misleading evidence, not merely unhelpful.
+    """
+    collect_job_id = _store_collection(conn, data_dir)
+    findings_job_id = _store_findings(conn, data_dir)
+    inventory_job_id = _store_inventory(conn, data_dir)
+    _store_nic_stats(conn, data_dir, host_ids=["some-other-host"])
+
+    job = _enqueue_package(
+        conn,
+        collect_job_id=collect_job_id,
+        findings_job_id=findings_job_id,
+        inventory_job_id=inventory_job_id,
+    )
+    worker.run_one(conn)
+
+    package = package_from_job(conn, job.id)
+    assert package is not None
+
+    archive_path = artifact_path(data_dir, job.id, package.id)
+    with tarfile.open(archive_path, "r:gz") as archive:
+        names = set(archive.getnames())
+        assert NIC_STATS_ARTIFACT not in names
+        assert NIC_STATS_MARKDOWN not in names
+
+        manifest_member = archive.extractfile(MANIFEST_NAME)
+        assert manifest_member is not None
+        manifest = json.loads(manifest_member.read())
+
+    assert manifest["nic_stats_job_id"] is None
 
 
 def test_a_raw_only_collection_is_packaged_via_a_chained_redaction(
@@ -487,3 +585,100 @@ def test_a_date_ranged_package_ships_the_extraction_instead_of_the_full_bundle(
         manifest = json.loads(manifest_member.read())
     assert manifest["date_start"] is not None
     assert manifest["date_end"] is None
+
+
+def _enqueue_pool_package(conn, *, collect_job_ids, findings_job_id, inventory_job_id):
+    return enqueue(
+        conn,
+        KIND,
+        {
+            "source_job_ids": collect_job_ids,
+            "findings_job_id": findings_job_id,
+            "inventory_job_id": inventory_job_id,
+        },
+    )
+
+
+def test_pool_package_bundles_every_host_with_a_manifest(
+    conn: sqlite3.Connection, worker: JobWorker, data_dir: Path
+) -> None:
+    """The "one combined package" path: two hosts, one archive.
+
+    Findings and inventory are shared (one copy each); everything else is
+    per host, named with that host's own name to keep the two apart inside
+    the same archive.
+    """
+    collect_job_id_1 = _store_collection(conn, data_dir, host_name="host-a", host_id="host-1")
+    collect_job_id_2 = _store_collection(conn, data_dir, host_name="host-b", host_id="host-2")
+    findings_job_id = _store_findings(conn, data_dir)
+    inventory_job_id = _store_inventory(conn, data_dir)
+
+    job = _enqueue_pool_package(
+        conn,
+        collect_job_ids=[collect_job_id_1, collect_job_id_2],
+        findings_job_id=findings_job_id,
+        inventory_job_id=inventory_job_id,
+    )
+    worker.run_one(conn)
+
+    assert get_job(conn, job.id).state == SUCCEEDED
+    package = package_from_job(conn, job.id)
+    assert package is not None
+    assert package.name == "2-host-support-package.tgz"
+
+    archive_path = artifact_path(data_dir, job.id, package.id)
+    with tarfile.open(archive_path, "r:gz") as archive:
+        names = set(archive.getnames())
+        assert "host-a-logs.redacted.tgz" in names
+        assert "host-b-logs.redacted.tgz" in names
+        assert "host-a-redaction-report.json" in names
+        assert "host-b-redaction-report.json" in names
+        # Findings and inventory are shared, not duplicated per host.
+        assert FINDINGS_ARTIFACT in names
+        assert INVENTORY_ARTIFACT in names
+        assert MANIFEST_NAME in names
+
+        manifest = json.loads(archive.extractfile(MANIFEST_NAME).read())
+
+    assert manifest["findings_job_id"] == findings_job_id
+    assert manifest["inventory_job_id"] == inventory_job_id
+    assert {host["host_name"] for host in manifest["hosts"]} == {"host-a", "host-b"}
+    for host in manifest["hosts"]:
+        assert host["rules_disabled"] == ["ipv4"]
+        assert host["nic_stats_job_id"] is None
+
+
+def test_pool_package_includes_each_hosts_own_nic_stats_report(
+    conn: sqlite3.Connection, worker: JobWorker, data_dir: Path
+) -> None:
+    """Each host's NIC statistics report, if it has one, is packaged under
+    that host's own name — never under the other host's."""
+    collect_job_id_1 = _store_collection(conn, data_dir, host_name="host-a", host_id="host-1")
+    collect_job_id_2 = _store_collection(conn, data_dir, host_name="host-b", host_id="host-2")
+    findings_job_id = _store_findings(conn, data_dir)
+    inventory_job_id = _store_inventory(conn, data_dir)
+    nic_job_id = _store_nic_stats(conn, data_dir, host_ids=["host-1"])
+
+    job = _enqueue_pool_package(
+        conn,
+        collect_job_ids=[collect_job_id_1, collect_job_id_2],
+        findings_job_id=findings_job_id,
+        inventory_job_id=inventory_job_id,
+    )
+    worker.run_one(conn)
+
+    assert get_job(conn, job.id).state == SUCCEEDED
+    package = package_from_job(conn, job.id)
+    archive_path = artifact_path(data_dir, job.id, package.id)
+    with tarfile.open(archive_path, "r:gz") as archive:
+        names = set(archive.getnames())
+        assert "host-a-nic-stats.json" in names
+        assert "host-a-nic-stats.md" in names
+        assert "host-b-nic-stats.json" not in names
+        assert "host-b-nic-stats.md" not in names
+
+        manifest = json.loads(archive.extractfile(MANIFEST_NAME).read())
+
+    by_name = {host["host_name"]: host for host in manifest["hosts"]}
+    assert by_name["host-a"]["nic_stats_job_id"] == nic_job_id
+    assert by_name["host-b"]["nic_stats_job_id"] is None

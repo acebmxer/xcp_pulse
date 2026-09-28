@@ -206,6 +206,31 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ### Added
 
+- **The Collect + Package card can now collect and package more than one
+  host at once, and choose between a separate archive per host or one
+  combined archive covering all of them.** Raised directly: a support ticket
+  is usually about a pool-wide incident, not one host in isolation, and the
+  card previously offered a single host dropdown — an operator diagnosing an
+  incident across a pool had to run it once per host and remember to attach
+  every resulting archive to the same ticket. The host picker is now a
+  checkbox list (`host_ids`, replacing the single `host_id` field), and a
+  new "one package per host" / "one combined package" choice
+  (`combine`) decides what happens when more than one is ticked.
+  Unticked, or with only one host ticked, behaves exactly as before.
+  Ticked, every collection feeds into a single `support_package` job
+  (`job_support_package._run_pool`, addressed by a new `source_job_ids`
+  list param alongside the existing single-collection `source_job_id`) that
+  bundles each host's own redacted bundle, redaction report, and NIC
+  statistics report (when it has one) under that host's own name, plus one
+  shared findings report and inventory — those already cover every host XCP
+  Pulse can see, so there is nothing pool-specific to resolve per host
+  there. The archive is named `<n>-host-support-package.tgz` and its
+  manifest lists every included host under a new `hosts` array
+  (`build_pool_manifest`), rather than the flat, single-host fields
+  `build_manifest` writes. A combined package is never nested under any
+  single collection's card (it was never built from just one) and appears
+  in its own "Multi-host packages" section instead.
+
 - **NIC statistics now also reports the pool's own network table — name,
   VLAN, MTU, "NBD Connection", locked, automatic — and cross-references each
   physical interface to the network it belongs to and whether NBD is enabled
@@ -354,6 +379,24 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
   ships as an inert placeholder (`pattern=None`, matching nothing) until
   `build_username_rule` compiles a real one from a live account list at
   collection time.
+
+### Changed
+
+- **A support package no longer leaves out a NIC statistics report it could
+  have shipped.** The Support package job (`job_support_package.run`)
+  assembles the redacted log bundle, findings, the redaction report and the
+  inventory, and states in its own module docstring that it "never ships a
+  gap it could have filled" — but a NIC statistics run for the packaged host
+  was never included even when one already existed, so an operator who ran
+  it to diagnose the same incident had to attach it to the ticket separately.
+  This job never queues a NIC statistics run itself (it needs a per-host SSH
+  key set up deliberately from the Findings page, so most collections will
+  have none), but now looks for the most recent successful run whose
+  `host_ids` includes the collection's own `host_id` and, when found, bundles
+  its JSON and Markdown into the archive and records the run's job id on the
+  manifest (`nic_stats_job_id`, `null` when none exists). A report for a
+  different host is never included, since that would misrepresent whose
+  hardware it describes.
 
 ## [0.9.1] - 2026-09-13
 

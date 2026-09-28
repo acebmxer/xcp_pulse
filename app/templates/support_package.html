@@ -68,7 +68,8 @@
     findings in Markdown and JSON, the redaction report, and the inventory —
     plus a manifest listing what's inside and what was masked. Building one
     always runs a fresh findings check and inventory refresh alongside it, so
-    the package is never missing a piece.
+    the package is never missing a piece. A NIC statistics report is included
+    too, when one has already been run for this host from the Findings page.
   </p>
 
   {% if not connection %}
@@ -84,19 +85,33 @@
 
   <h2>Collect from a host and package it</h2>
   <p class="note">
-    For a host with nothing collected yet. Downloads its log bundle, redacts
-    a copy, then builds the package. Expect roughly the same <strong>870
-    MB</strong> and <strong>two minutes</strong> a plain collection takes.
+    For hosts with nothing collected yet. Downloads each one's log bundle,
+    redacts a copy, then builds the package. Expect roughly the same
+    <strong>870 MB</strong> and <strong>two minutes</strong> a plain
+    collection takes, per host ticked.
   </p>
   <form method="post" action="/support-package/collect" class="inline" id="collect-package-form">
-    <label class="visually-hidden" for="host_id">Host to collect from</label>
-    <select id="host_id" name="host_id" {% if not hosts %}disabled{% endif %}>
+    <ul class="category-grid">
       {% for host in hosts %}
-      <option value="{{ host.id }}">
-        {{ host.name }}{% if host.address %} — {{ host.address }}{% endif %}
-      </option>
+      <li>
+        <label class="check">
+          <input type="checkbox" name="host_ids" value="{{ host.id }}">
+          <span>{{ host.name }}{% if host.address %} — {{ host.address }}{% endif %}</span>
+        </label>
+      </li>
       {% endfor %}
-    </select>
+    </ul>
+    <fieldset>
+      <legend>When more than one host is ticked</legend>
+      <label class="check">
+        <input type="radio" name="combine" value="" checked>
+        <span>One package per host</span>
+      </label>
+      <label class="check">
+        <input type="radio" name="combine" value="1">
+        <span>One combined package covering every ticked host</span>
+      </label>
+    </fieldset>
     <label class="check">
       <input type="checkbox" name="include_audit" value="1">
       <span>Also include the XAPI audit trail</span>
@@ -111,6 +126,23 @@
   </p>
   {{ date_range.date_range_picker("collect-package-form") }}
 </div>
+
+{% if pool_packages %}
+<h2 class="section-title">Multi-host packages</h2>
+<div class="card">
+  <p class="note">
+    Built from "one combined package" above — every ticked host's redacted
+    bundle, its own redaction report, and (when one exists) its own NIC
+    statistics report, in one archive, alongside a single shared findings
+    report and inventory.
+  </p>
+  <ul class="joblist extractions">
+    {% for package in pool_packages %}
+    {{ package_card(package) }}
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
 
 <h2 class="section-title">Package an existing collection</h2>
 

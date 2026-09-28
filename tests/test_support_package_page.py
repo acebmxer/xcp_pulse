@@ -38,6 +38,15 @@ HOST = Host(
     power_state="Running",
     pool_id="pool-1",
 )
+HOST2 = Host(
+    id="host-2",
+    name="xcp-ng-host2",
+    address="10.100.2.11",
+    version="8.3.0",
+    product="XCP-ng",
+    power_state="Running",
+    pool_id="pool-1",
+)
 POOL = Pool(id="pool-1", name="Pool1", master_id="host-1")
 
 
@@ -61,6 +70,22 @@ def with_inventory(connected: TestClient) -> Iterator[TestClient]:
     connected.post("/jobs/refresh-inventory")
     with patch("app.job_inventory.build_client") as build:
         build.return_value.inventory.return_value = Inventory(pools=[POOL], hosts=[HOST])
+        run_pending_jobs(app)
+    yield connected
+
+
+@pytest.fixture
+def with_two_hosts(connected: TestClient) -> Iterator[TestClient]:
+    """The same stored connection, but with a second host in the same pool.
+
+    Its own fixture rather than widening ``with_inventory``: every other test
+    in this file asserts against exactly one known host, and giving all of
+    them a second one to filter around would be scope they never asked for.
+    """
+    app = connected.app  # type: ignore[attr-defined]
+    connected.post("/jobs/refresh-inventory")
+    with patch("app.job_inventory.build_client") as build:
+        build.return_value.inventory.return_value = Inventory(pools=[POOL], hosts=[HOST, HOST2])
         run_pending_jobs(app)
     yield connected
 
@@ -107,7 +132,7 @@ def test_the_page_requires_login(client: TestClient) -> None:
 def test_collect_and_package_builds_a_downloadable_archive(with_inventory: TestClient) -> None:
     app = with_inventory.app  # type: ignore[attr-defined]
 
-    response = with_inventory.post("/support-package/collect", data={"host_id": HOST.id})
+    response = with_inventory.post("/support-package/collect", data={"host_ids": [HOST.id]})
     assert response.status_code == 303
 
     _run_chain(app)
@@ -136,7 +161,7 @@ def test_collect_and_package_shows_progress_before_any_job_has_run(
     """
     app = with_inventory.app  # type: ignore[attr-defined]
 
-    with_inventory.post("/support-package/collect", data={"host_id": HOST.id})
+    with_inventory.post("/support-package/collect", data={"host_ids": [HOST.id]})
 
     body = with_inventory.get("/support-package").text
     assert HOST.name in body
@@ -160,6 +185,60 @@ def test_collect_and_package_shows_progress_before_any_job_has_run(
     finished_body = with_inventory.get("/support-package").text
     collection_card = finished_body.split("Support package</span>")[0]
     assert "job-duration" in collection_card
+
+
+def test_collect_and_package_two_hosts_without_combine_builds_two_packages(
+    with_two_hosts: TestClient,
+) -> None:
+    """Ticking two hosts with "one package per host" queues two full chains.
+
+    The default when more than one host is ticked but combine isn't asked
+    for — unchanged in spirit from collecting one host, just run twice.
+    """
+    app = with_two_hosts.app  # type: ignore[attr-defined]
+
+    response = with_two_hosts.post(
+        "/support-package/collect", data={"host_ids": [HOST.id, HOST2.id]}
+    )
+    assert response.status_code == 303
+
+    _run_chain(app)
+
+    package_jobs = list_jobs(app.state.db, kind=SUPPORT_PACKAGE_KIND, limit=10)
+    assert len(package_jobs) == 2
+    assert all(job.state == "succeeded" for job in package_jobs)
+
+    body = with_two_hosts.get("/support-package").text
+    assert f"{HOST.name}-support-package.tgz" in body
+    assert f"{HOST2.name}-support-package.tgz" in body
+
+
+def test_collect_and_package_combine_builds_one_pool_package(
+    with_two_hosts: TestClient,
+) -> None:
+    """Ticking two hosts with "one combined package" queues a single chain
+    whose archive holds both hosts' redacted bundles."""
+    app = with_two_hosts.app  # type: ignore[attr-defined]
+
+    response = with_two_hosts.post(
+        "/support-package/collect",
+        data={"host_ids": [HOST.id, HOST2.id], "combine": "1"},
+    )
+    assert response.status_code == 303
+
+    _run_chain(app)
+
+    package_jobs = list_jobs(app.state.db, kind=SUPPORT_PACKAGE_KIND, limit=10)
+    assert len(package_jobs) == 1
+    assert package_jobs[0].state == "succeeded"
+    assert isinstance(package_jobs[0].params.get("source_job_ids"), list)
+    assert len(package_jobs[0].params["source_job_ids"]) == 2
+
+    body = with_two_hosts.get("/support-package").text
+    assert "2-host-support-package.tgz" in body
+    # Neither host's card should end up nested under it, and it must not be
+    # mistaken for an orphan of a deleted single-host collection.
+    assert "since-deleted collection" not in body
 
 
 def test_packaging_an_existing_collection_reuses_its_bundle(with_inventory: TestClient) -> None:
@@ -229,7 +308,7 @@ def test_a_package_stays_listed_after_its_source_collection_is_deleted(
     still say so.
     """
     app = with_inventory.app  # type: ignore[attr-defined]
-    with_inventory.post("/support-package/collect", data={"host_id": HOST.id})
+    with_inventory.post("/support-package/collect", data={"host_ids": [HOST.id]})
     _run_chain(app)
 
     collect_job = list_jobs(app.state.db, kind=COLLECT_KIND, limit=1)[0]
@@ -283,7 +362,7 @@ def test_packaging_an_unknown_collection_is_refused(with_inventory: TestClient) 
 
 def test_delete_removes_the_package_and_its_file(with_inventory: TestClient) -> None:
     app = with_inventory.app  # type: ignore[attr-defined]
-    with_inventory.post("/support-package/collect", data={"host_id": HOST.id})
+    with_inventory.post("/support-package/collect", data={"host_ids": [HOST.id]})
     _run_chain(app)
 
     package_job = list_jobs(app.state.db, kind=SUPPORT_PACKAGE_KIND, limit=1)[0]

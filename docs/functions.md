@@ -568,7 +568,19 @@ Assembles one `.tgz` from a collection and two sibling jobs it queues itself:
 the redacted log bundle, `findings.json` and `findings.md`, the redaction
 report, the inventory, and a manifest. Never packages a gap — if the target
 host has no findings run or no inventory refresh, this queues those first
-rather than shipping a package with a hole in it.
+rather than shipping a package with a hole in it. A NIC statistics report is
+included too, found by matching the collection's host against a prior
+successful `nic_stats` run's own `host_ids` — never queued itself, since that
+check needs a per-host SSH key set up deliberately from the Findings page, so
+its absence is simply nothing to package rather than a gap to fill.
+
+**One archive can also cover more than one host.** `run` dispatches on its
+params: `source_job_id` (a single collection) takes the path above via
+`_run_single`; `source_job_ids` (a list) takes `_run_pool` instead, built for
+the Collect + Package card's "one combined package" choice — every listed
+host's own redacted bundle, redaction report, and NIC statistics report (when
+one exists) go into the same archive, named with that host's own name to
+keep them apart, alongside one shared findings report and inventory.
 
 The worker is single-threaded and the queue is strict FIFO, so this job cannot
 enqueue a sub-job and wait on it from inside its own `run` — the chain is built
@@ -579,9 +591,10 @@ job is claimed, everything queued ahead of it has already finished.
 
 | Function | Signature | Does | Used by | Since |
 | --- | --- | --- | --- | --- |
-| `build_manifest` | `(*, host_name, collection, redacted_bundle, redaction_report, findings_job, inventory_job, entries) -> dict` | What the archive contains and what was masked, as plain JSON | `job_support_package.run` | v0.7.0 |
+| `build_manifest` | `(*, host_name, collection, redacted_bundle, redaction_report, findings_job, inventory_job, entries, nic_stats_job=None) -> dict` | What a single-host archive contains and what was masked, as plain JSON | `job_support_package._run_single` | v0.7.0 |
+| `build_pool_manifest` | `(*, hosts, findings_job, inventory_job, entries) -> dict` | What a combined, multi-host archive contains — per-host fields nested under `hosts` rather than flattened | `job_support_package._run_pool` | unreleased |
 | `package_from_job` | `(conn, job_id: str) -> Artifact \| None` | The archive a completed package job stored | `routes.support_package.delete_package` | v0.7.0 |
-| `run` | `(context: JobContext) -> None` | Resolves the collection and its two sibling jobs, builds the archive, stores it | `job_runner`, via `register` | v0.7.0 |
+| `run` | `(context: JobContext) -> None` | Dispatches to `_run_single` or `_run_pool` depending on whether `source_job_id` or `source_job_ids` was given | `job_runner`, via `register` | v0.7.0 |
 
 `build_manifest`'s `rules_disabled` is read straight from the redaction report
 packaged beside it rather than re-derived, so the manifest can never disagree
@@ -1061,7 +1074,7 @@ for why this does not use `app/jobs.py`.
 | `download_findings` | `(artifact_id, request, username) -> Response` | `GET /findings/download/{id}` — streams the stored JSON or Markdown | router | v0.7.0 |
 | `support_package_page` | `(request, username) -> Response` | `GET /support-package` — stored collections and built packages | router | v0.7.0 |
 | `package_collection` | `(job_id, request, username) -> Response` | `POST /support-package/{id}/package` — queues a package from an already-stored collection | router | v0.7.0 |
-| `collect_and_package` | `(request, username, host_id, include_audit) -> Response` | `POST /support-package/collect` — queues a collection, then a package from it | router | v0.7.0 |
+| `collect_and_package` | `(request, username, host_ids, combine, include_audit) -> Response` | `POST /support-package/collect` — queues a collection per ticked host, then either one package per host or (when `combine` is set and more than one host was ticked) one combined package covering all of them | router | v0.7.0 |
 | `download_package` | `(artifact_id, request, username) -> Response` | `GET /support-package/download/{id}` — streams a stored package | router | v0.7.0 |
 | `delete_package` | `(job_id, request, username) -> Response` | `POST /support-package/{id}/delete` — deletes one package and its file | router | v0.7.0 |
 | `docs_index` | `(request, username) -> Response` | `GET /help` — the User manual, opening on the user guide | router | 0.9.0 |

@@ -10,6 +10,7 @@ allowed to ship with a gap it could have filled: see ``job_support_package``.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, Response
@@ -47,6 +48,10 @@ log = logging.getLogger("xcp_pulse.support_package")
 # same reasoning as the Collect page's own PAGE_LIMIT.
 PAGE_LIMIT = 25
 
+# A ticked-host-checkbox list arrives as zero or more repeated form fields —
+# the same convention the Collect page's own category checkboxes use.
+_HOST_IDS_FIELD = Form(default_factory=list)
+
 
 @router.get("/support-package", response_class=HTMLResponse)
 def support_package_page(
@@ -66,7 +71,16 @@ def support_package_page(
     collections = [job for job in all_collections if job.state == SUCCEEDED or job.is_active]
     packages = list_jobs(db, kind=SUPPORT_PACKAGE_KIND, limit=PAGE_LIMIT)
     artifacts = {job.id: list_for_job(db, job.id) for job in packages}
-    packages_by_source = _packages_by_source(packages)
+
+    # A combined, multi-host package (built by ticking "one combined package"
+    # on the Collect + Package card) has no single collection to nest under —
+    # it is never grouped by ``_packages_by_source`` below and never counted
+    # as orphaned either, since it was never tied to one collection's card in
+    # the first place. It gets its own section on the page instead.
+    pool_packages = [job for job in packages if isinstance(job.params.get("source_job_ids"), list)]
+    pool_package_ids = {job.id for job in pool_packages}
+    single_host_packages = [job for job in packages if job.id not in pool_package_ids]
+    packages_by_source = _packages_by_source(single_host_packages)
 
     # A package outlives the collection it was built from — the archive is
     # self-contained and does not need the raw bundle to exist any more — but
@@ -77,7 +91,9 @@ def support_package_page(
     # here again: nested only under a collection card that no longer exists.
     known_collection_ids = {job.id for job in collections}
     orphaned_packages = [
-        job for job in packages if job.params.get("source_job_id") not in known_collection_ids
+        job
+        for job in single_host_packages
+        if job.params.get("source_job_id") not in known_collection_ids
     ]
 
     # Findings and inventory runs a package chain queued are invisible on this
@@ -103,6 +119,7 @@ def support_package_page(
             "packages": packages,
             "packages_by_source": packages_by_source,
             "orphaned_packages": orphaned_packages,
+            "pool_packages": pool_packages,
             "artifacts": artifacts,
             "human_bytes": human_bytes,
             "notice": request.query_params.get("notice"),
@@ -209,21 +226,32 @@ def package_collection(
 def collect_and_package(
     request: Request,
     username: str = Depends(operator_required),
-    host_id: str = Form(...),
+    host_ids: list[str] = _HOST_IDS_FIELD,
+    combine: str = Form(default=""),
     include_audit: str = Form(default=""),
     date_preset: str = Form(default=""),
     date_start: str = Form(default=""),
     date_end: str = Form(default=""),
 ) -> Response:
-    """Collect a host's logs, then package the result.
+    """Collect one or more hosts' logs, then package the result.
 
-    For a host with nothing stored yet. Chains a fresh ``collect_logs`` job
-    ahead of the same findings/inventory/package sequence ``package_collection``
-    queues, addressed by ``source_job_id`` the same way the Collect page
-    chains an extraction behind a fresh collection.
+    For hosts with nothing stored yet. Every ticked host gets its own fresh
+    ``collect_logs`` job, chained ahead of the same findings/inventory/package
+    sequence ``package_collection`` queues, addressed by ``source_job_id`` the
+    same way the Collect page chains an extraction behind a fresh collection.
 
-    A date range chains a date-filtered ``extract_categories`` job too,
-    addressed by ``source_job_id`` rather than an artifact id — the same
+    ``combine`` picks what a support ticket usually wants when more than one
+    host is ticked — a support ticket is normally about one pool-wide
+    incident, not one host in isolation, so shipping the operator N separate
+    archives means they have to remember to attach all of them. When ticked
+    (and more than one host is selected), every collection feeds into one
+    ``support_package`` job addressed by ``source_job_ids`` (see
+    ``job_support_package._run_pool``) instead of a separate chain per host.
+    Left off, or with only one host ticked, behaves exactly as before more
+    than one host could be selected: one chain, one archive, per host.
+
+    A date range chains a date-filtered ``extract_categories`` job per host
+    too, addressed by ``source_job_id`` rather than an artifact id — the same
     "collect, then extract" path the Collect page already uses, since the
     collection here has not produced its raw bundle yet at enqueue time.
     """
@@ -237,51 +265,78 @@ def collect_and_package(
         return redirect("/support-package?notice=A+collection+or+package+is+already+running.")
 
     inventory = known_inventory(db, data_dir)
-    host = next((item for item in inventory.hosts if item.id == host_id), None)
-    if host is None:
-        return redirect(
-            "/support-package?error=That+host+is+not+in+the+stored+inventory.+"
-            "Refresh+the+inventory+and+try+again."
-        )
+    by_id = {item.id: item for item in inventory.hosts}
+    # ``dict.fromkeys`` drops a host ticked twice (a resubmit, say) while
+    # keeping the order the page rendered them in.
+    picked = [by_id[host_id] for host_id in dict.fromkeys(host_ids) if host_id in by_id]
+    if not picked:
+        return redirect("/support-package?error=Pick+at+least+one+host+to+collect+from.")
 
-    collect_job = enqueue(
-        db,
-        COLLECT_KIND,
-        {
-            "host_id": host.id,
-            "host_name": host.name,
-            "include_audit": bool(include_audit),
-            # A support package always needs a redacted bundle, regardless of
-            # what the Collect page's own checkbox currently reads — this
-            # route is not that form and never should silently inherit its
-            # state.
-            "redact": True,
-        },
-    )
-    log.info(
-        "queued %s job %s for host %s by %s", COLLECT_KIND, collect_job.id, host.name, username
-    )
-
-    extract_job_id = None
-    if date_preset or date_start or date_end:
-        extract_job = enqueue(
+    has_date_range = bool(date_preset or date_start or date_end)
+    collect_jobs = []
+    for host in picked:
+        collect_job = enqueue(
             db,
-            EXTRACT_KIND,
+            COLLECT_KIND,
             {
-                "source_job_id": collect_job.id,
-                "categories": list(category_keys()),
-                "include_rotated": True,
-                "date_preset": date_preset,
-                "date_start": date_start,
-                "date_end": date_end,
+                "host_id": host.id,
+                "host_name": host.name,
+                "include_audit": bool(include_audit),
+                # A support package always needs a redacted bundle, regardless
+                # of what the Collect page's own checkbox currently reads —
+                # this route is not that form and never should silently
+                # inherit its state.
+                "redact": True,
             },
         )
-        extract_job_id = extract_job.id
+        log.info(
+            "queued %s job %s for host %s by %s", COLLECT_KIND, collect_job.id, host.name, username
+        )
+        collect_jobs.append(collect_job)
 
-    _enqueue_chain(request, source_job_id=collect_job.id, extract_job_id=extract_job_id)
-    log_activity(db, username, "collect_and_package.start", detail=host.name, ip=client_ip(request))
+    extract_job_ids: list[str | None] = []
+    for collect_job in collect_jobs:
+        extract_job_id = None
+        if has_date_range:
+            extract_job = enqueue(
+                db,
+                EXTRACT_KIND,
+                {
+                    "source_job_id": collect_job.id,
+                    "categories": list(category_keys()),
+                    "include_rotated": True,
+                    "date_preset": date_preset,
+                    "date_start": date_start,
+                    "date_end": date_end,
+                },
+            )
+            extract_job_id = extract_job.id
+        extract_job_ids.append(extract_job_id)
+
+    names = ", ".join(host.name for host in picked)
+    log_activity(db, username, "collect_and_package.start", detail=names, ip=client_ip(request))
+
+    if bool(combine) and len(picked) > 1:
+        _enqueue_chain(
+            request,
+            source_job_ids=[job.id for job in collect_jobs],
+            extract_job_ids=extract_job_ids if has_date_range else None,
+        )
+        return redirect(
+            f"/support-package?notice=Collecting+from+{len(picked)}+hosts+and+"
+            "building+one+combined+package."
+        )
+
+    for collect_job, extract_job_id in zip(collect_jobs, extract_job_ids, strict=True):
+        _enqueue_chain(request, source_job_id=collect_job.id, extract_job_id=extract_job_id)
+
+    if len(picked) == 1:
+        return redirect(
+            f"/support-package?notice=Collecting+from+{picked[0].name}+and+building+the+package."
+        )
     return redirect(
-        f"/support-package?notice=Collecting+from+{host.name}+and+building+the+package."
+        f"/support-package?notice=Collecting+from+{len(picked)}+hosts+and+"
+        f"building+{len(picked)}+packages."
     )
 
 
@@ -347,35 +402,47 @@ def _busy(db) -> bool:
 def _enqueue_chain(
     request: Request,
     *,
-    source_job_id: str,
+    source_job_id: str | None = None,
+    source_job_ids: list[str] | None = None,
     redact_source_job_id: str | None = None,
     extract_job_id: str | None = None,
+    extract_job_ids: list[str | None] | None = None,
 ) -> None:
     """Queue whichever of findings/inventory/redaction the package needs, then
     the package itself.
 
     A package never ships with a gap it could have filled — see
     ``job_support_package`` — so this always queues a fresh findings run and a
-    fresh inventory refresh alongside the collection, rather than reusing
+    fresh inventory refresh alongside the collection(s), rather than reusing
     whatever last happened to be stored. Each is addressed by
     ``source_job_id``/``findings_job_id``/``inventory_job_id`` rather than an
     artifact id, because none of their artifacts exist yet at enqueue time —
     the FIFO queue and single worker guarantee every job here has finished,
     successfully or not, by the time the package job is claimed.
 
+    Exactly one of ``source_job_id``/``source_job_ids`` is given. The plural
+    form queues one ``support_package`` job covering every collection listed —
+    the "one combined package" choice on the Collect + Package card — read by
+    ``job_support_package._run_pool`` instead of ``_run_single``; the caller
+    is responsible for only passing it when more than one host was actually
+    ticked, since a single-item list would otherwise take a different, less
+    exercised code path for no reason.
+
     ``redact_source_job_id``, when given, is a collection with no redaction
     report yet — collected with the Collect page's redaction checkbox off, or
     stored before that checkbox existed — so a ``redact_artifact`` job is
     queued against it too, addressed by ``source_job_id`` the same way
     ``job_extract`` reads a collection's raw bundle once that collection has
-    actually run.
+    actually run. Only meaningful with the singular form: every combined-
+    package collection is always collected with redaction on (see
+    ``collect_and_package``), so there is never a gap to fill this way.
 
-    ``extract_job_id``, when given, is a date-filtered ``extract_categories``
-    job the caller already enqueued (it needs a real raw bundle id up front,
-    unlike the jobs above, so it is queued by the caller rather than here) —
-    passed straight through as the package's own ``extract_job_id`` param. It
-    is never combined with ``redact_source_job_id``: a date range replaces the
-    redaction check entirely, per ``package_collection``.
+    ``extract_job_id``/``extract_job_ids``, when given, are date-filtered
+    ``extract_categories`` job(s) the caller already enqueued (each needs a
+    real raw bundle id up front, unlike the jobs above, so they are queued by
+    the caller rather than here) — passed straight through as the package's
+    own param. Never combined with ``redact_source_job_id``: a date range
+    replaces the redaction check entirely, per ``package_collection``.
     """
     db = request.app.state.db
 
@@ -386,17 +453,19 @@ def _enqueue_chain(
         redact_job = enqueue(db, REDACT_KIND, {"source_job_id": redact_source_job_id})
         redact_job_id = redact_job.id
 
-    enqueue(
-        db,
-        SUPPORT_PACKAGE_KIND,
-        {
-            "source_job_id": source_job_id,
-            "findings_job_id": findings_job.id,
-            "inventory_job_id": inventory_job.id,
-            "redact_job_id": redact_job_id,
-            "extract_job_id": extract_job_id,
-        },
-    )
+    params: dict[str, Any] = {
+        "findings_job_id": findings_job.id,
+        "inventory_job_id": inventory_job.id,
+        "redact_job_id": redact_job_id,
+    }
+    if source_job_ids is not None:
+        params["source_job_ids"] = source_job_ids
+        params["extract_job_ids"] = extract_job_ids
+    else:
+        params["source_job_id"] = source_job_id
+        params["extract_job_id"] = extract_job_id
+
+    enqueue(db, SUPPORT_PACKAGE_KIND, params)
     wake_worker(request)
 
 

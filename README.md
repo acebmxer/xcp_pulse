@@ -150,10 +150,14 @@ rather than estimated:
 - **Build a Vates support package** — one archive with the redacted log
   bundle, findings in Markdown and JSON, the redaction report, the inventory,
   and a manifest listing what's inside and what was masked, instead of
-  gathering those downloads by hand. Package an already-stored collection, or
-  collect a host and package it in one action. Building one always runs a
-  fresh findings check and inventory refresh alongside it, so it never ships
-  with a gap.
+  gathering those downloads by hand. A NIC statistics report is included too,
+  when one has already been run for this host. Package an already-stored
+  collection, or collect one or more hosts and package them in one action —
+  ticking more than one host offers a choice of one package per host or one
+  combined package covering all of them, since a support ticket is usually
+  about a pool-wide incident rather than a single host. Building one always
+  runs a fresh findings check and inventory refresh alongside it, so it never
+  ships with a gap.
 - **Narrow any of the above to a date range** — presets for the last 24 hours,
   7 days, 30 days, since the last reboot, or a custom start/end. Xen
   Orchestra's `logs.tgz` still has no date filter of its own, so the first
