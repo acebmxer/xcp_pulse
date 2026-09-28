@@ -16,6 +16,7 @@
 {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
 {% if notice %}<div class="alert alert-ok">{{ notice }}</div>{% endif %}
 
+<div class="action-cards">
 <div class="card">
   <div class="job-actions">
     <div>
@@ -92,67 +93,6 @@
   {% endif %}
 </div>
 
-{% if log_report %}
-<div class="card">
-  <div class="inventory-head">
-    <h2>Findings from logs</h2>
-    <p class="inventory-source">Read {{ log_report.created_at | age }}</p>
-  </div>
-  {% if log_report.truncated %}
-  <div class="alert alert-error">
-    <strong>The bundle ended early and was not read in full.</strong>
-    Findings below come only from the log files read before the break —
-    collect the bundle again to see the rest.
-  </div>
-  {% endif %}
-  <ul class="sev-summary">
-    {% for severity in severities %}
-    <li class="sev-count sev-{{ severity }}{{ ' is-zero' if not log_report.counts[severity] }}">
-      <span class="sev-number">{{ log_report.counts[severity] }}</span>
-      <span class="sev-label">{{ severity }}</span>
-    </li>
-    {% endfor %}
-  </ul>
-  {% if log_report.is_clean %}
-  <p class="note">No matching log findings were found.</p>
-  {% else %}
-  <ul class="findings">
-    {% for finding in log_report.findings %}
-    <li class="card finding finding-{{ finding.severity }}">
-      <div class="finding-head">
-        <span class="sev-tag sev-{{ finding.severity }}">{{ finding.severity }}</span>
-        <h2 class="finding-title">{{ finding.title }}</h2>
-        {% if finding.count > 1 %}<span class="finding-count">{{ finding.count }}×</span>{% endif %}
-      </div>
-      <p class="finding-meta">{{ finding.source_title }}</p>
-      {% if finding.confirmed_by %}
-      <p class="finding-confirmed">Also seen in the {{ finding.confirmed_by }}</p>
-      {% endif %}
-      <pre class="finding-evidence">{{ finding.evidence }}</pre>
-      <p class="finding-action"><strong>What to do:</strong> {{ finding.action }}</p>
-    </li>
-    {% endfor %}
-  </ul>
-  {% endif %}
-  <h3>Log sources</h3>
-  <table class="report">
-    <thead><tr><th>Source</th><th>Result</th></tr></thead>
-    <tbody>
-      {% for source in log_report.sources %}
-      <tr><th>{{ source.title }}</th><td>{{ source.examined_text }}</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</div>
-{% endif %}
-
-{% if log_error %}
-<div class="alert alert-error">
-  <strong>Log analysis failed.</strong> {{ log_error }}
-  The selected bundle may be incomplete; collect it again before retrying.
-</div>
-{% endif %}
-
 <div class="card">
   <div class="job-actions">
     <div>
@@ -210,6 +150,68 @@
   </form>
   {% endif %}
 </div>
+</div>
+
+{% if log_report %}
+<div class="card">
+  <div class="inventory-head">
+    <h2>Findings from logs</h2>
+    <p class="inventory-source">Read {{ log_report.created_at | age }}</p>
+  </div>
+  {% if log_report.truncated %}
+  <div class="alert alert-error">
+    <strong>The bundle ended early and was not read in full.</strong>
+    Findings below come only from the log files read before the break —
+    collect the bundle again to see the rest.
+  </div>
+  {% endif %}
+  <ul class="sev-summary">
+    {% for severity in severities %}
+    <li class="sev-count sev-{{ severity }}{{ ' is-zero' if not log_report.counts[severity] }}">
+      <span class="sev-number">{{ log_report.counts[severity] }}</span>
+      <span class="sev-label">{{ severity }}</span>
+    </li>
+    {% endfor %}
+  </ul>
+  {% if log_report.is_clean %}
+  <p class="note">No matching log findings were found.</p>
+  {% else %}
+  <ul class="findings tile-grid">
+    {% for finding in log_report.findings %}
+    <li class="card finding finding-{{ finding.severity }}">
+      <div class="finding-head">
+        <span class="sev-tag sev-{{ finding.severity }}">{{ finding.severity }}</span>
+        <h2 class="finding-title">{{ finding.title }}</h2>
+        {% if finding.count > 1 %}<span class="finding-count">{{ finding.count }}×</span>{% endif %}
+      </div>
+      <p class="finding-meta">{{ finding.source_title }}</p>
+      {% if finding.confirmed_by %}
+      <p class="finding-confirmed">Also seen in the {{ finding.confirmed_by }}</p>
+      {% endif %}
+      <pre class="finding-evidence">{{ finding.evidence }}</pre>
+      <p class="finding-action"><strong>What to do:</strong> {{ finding.action }}</p>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+  <h3>Log sources</h3>
+  <table class="report">
+    <thead><tr><th>Source</th><th>Result</th></tr></thead>
+    <tbody>
+      {% for source in log_report.sources %}
+      <tr><th>{{ source.title }}</th><td>{{ source.examined_text }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% if log_error %}
+<div class="alert alert-error">
+  <strong>Log analysis failed.</strong> {{ log_error }}
+  The selected bundle may be incomplete; collect it again before retrying.
+</div>
+{% endif %}
 
 {% if nic_error %}
 <div class="alert alert-error">
@@ -247,7 +249,7 @@
   {% if nic_report.is_clean %}
   <p class="note">No packet errors were found on any interface read.</p>
   {% else %}
-  <ul class="findings">
+  <ul class="findings tile-grid">
     {% for finding in nic_report.findings %}
     <li class="card finding finding-{{ finding.severity }}">
       <div class="finding-head">
@@ -419,7 +421,7 @@
   </p>
 </div>
 {% else %}
-<ul class="findings">
+<ul class="findings tile-grid">
   {% for finding in report.findings %}
   <li class="card finding finding-{{ finding.severity }}">
     <div class="finding-head">

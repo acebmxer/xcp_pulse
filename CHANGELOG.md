@@ -382,6 +382,27 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ### Changed
 
+- **Pages used a fixed 900px-wide column regardless of window size, and every
+  independent card on a page stacked one under the next even when there was
+  plenty of width to put them side by side** — on a wide monitor this meant
+  large empty margins either side of the content plus far more vertical
+  scrolling than the page's content actually needed. The shared page
+  container (`.wrap`) now runs up to 1600px wide, and a page's separate,
+  same-level cards or lists — the Findings page's three "run this" panels and
+  its finding lists, Collect's and Jobs' action panels and job history,
+  Support package's collection list, Redaction's rule list and its
+  preview/result pair, and the Change password / Two-factor pair on the
+  Account page — tile into columns on a wide window instead of stacking
+  regardless of the space available (new `.action-cards` and `.tile-grid`
+  utility classes). Cards or tables that need their own full width (job
+  detail cards' nested sub-lists, and every report table) were left stacked,
+  since narrowing them would just push a wide table into its own internal
+  scroll. The Findings page's three action cards were also reordered so all
+  three sit together above their results, instead of a result card
+  interrupting the run between the second and third. On the Dashboard, the
+  Inventory host row's middle columns were capped to a maximum width instead
+  of stretching to fill the wider container, which had been spreading a
+  host's name, address and version far apart with no content between them.
 - **A support package no longer leaves out a NIC statistics report it could
   have shipped.** The Support package job (`job_support_package.run`)
   assembles the redacted log bundle, findings, the redaction report and the

@@ -16,6 +16,7 @@
 <p class="alert" role="status">Two-factor authentication turned off.</p>
 {% endif %}
 
+<div class="action-cards">
 <div class="card">
   <h2>Change password</h2>
   <form method="post" action="/account/password" class="stack">
@@ -55,5 +56,6 @@
   as well as your password.</p>
   <a class="btn btn-primary" href="/account/totp/setup">Set up two-factor authentication</a>
   {% endif %}
+</div>
 </div>
 {% endblock %}

@@ -18,6 +18,7 @@
 {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
 {% if notice %}<div class="alert alert-ok">{{ notice }}</div>{% endif %}
 
+<div class="action-cards">
 <div class="card">
   <div class="job-actions">
     <div>
@@ -164,6 +165,7 @@
   </p>
   {% endif %}
 </div>
+</div>
 
 <h2 class="section-title">Stored diagnostics</h2>
 
@@ -174,7 +176,7 @@
   <p>Diagnostics runs appear here with their files, ready to download or delete.</p>
 </div>
 {% else %}
-<ul class="joblist">
+<ul class="joblist tile-grid">
   {% for job in diagnostics_jobs %}
   <li class="card job job-{{ job.state }}">
     <div class="job-head">
@@ -294,7 +296,7 @@
   <p>Collections appear here with their files, ready to download or delete.</p>
 </div>
 {% else %}
-<ul class="joblist">
+<ul class="joblist tile-grid">
   {% for job in jobs %}
   <li class="card job job-{{ job.state }}">
     <div class="job-head">

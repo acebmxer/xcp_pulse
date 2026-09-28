@@ -19,6 +19,7 @@
 </p>
 {% endif %}
 
+<div class="action-cards">
 <div class="card">
   <h2>Preview</h2>
   <p class="note">
@@ -44,6 +45,7 @@
   <pre class="mono redaction-result">{{ result }}</pre>
 </div>
 {% endif %}
+</div>
 
 <div class="card">
   <h2>Rules</h2>
@@ -53,7 +55,7 @@
   </p>
 
   <form method="post" action="/redaction/rules">
-    <ul class="rule-list">
+    <ul class="rule-list tile-grid">
       {% for rule in rules %}
       <li class="rule">
         <label class="check">

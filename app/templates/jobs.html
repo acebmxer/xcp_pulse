@@ -23,6 +23,7 @@
 {% if error %}<div class="alert alert-error">{{ error }}</div>{% endif %}
 {% if notice %}<div class="alert alert-ok">{{ notice }}</div>{% endif %}
 
+<div class="action-cards">
 <div class="card">
   <div class="job-actions">
     <div>
@@ -74,6 +75,7 @@
   </p>
   {% endif %}
 </div>
+</div>
 
 <h2 class="section-title">History</h2>
 
@@ -84,7 +86,7 @@
   <p>Jobs you start appear here, with their progress and what they produced.</p>
 </div>
 {% else %}
-<ul class="joblist">
+<ul class="joblist tile-grid">
   {% for job in jobs %}
   <li class="card job job-{{ job.state }}">
     <div class="job-head">

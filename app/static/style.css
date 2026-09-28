@@ -127,7 +127,7 @@ body {
 .wrap {
   flex: 1;
   width: 100%;
-  max-width: 900px;
+  max-width: 1600px;
   margin: 0 auto;
   padding: 2rem 1.5rem;
 }
@@ -173,6 +173,46 @@ body {
   min-width: 0;
   overflow: hidden;
 }
+
+/* Several independent cards — e.g. a page's separate action panels, or two
+   cards that are naturally a pair (Change password / Two-factor) — tile
+   side by side once the page is wide enough for more than one, instead of
+   stacking regardless of how much width is going unused. `align-items:
+   start` keeps each card its own height rather than stretching the shorter
+   one to match its tallest neighbour. */
+.action-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+  gap: 1.25rem;
+  align-items: start;
+  margin-top: 1.25rem;
+}
+
+.action-cards > .card { margin: 0; }
+
+.wrap > .action-cards + .card,
+.wrap > .card + .action-cards,
+.wrap > .action-cards + .action-cards { margin-top: 1.25rem; }
+
+/* Same idea for a list of same-shaped cards (findings, job runs, rules):
+   tile them instead of piling every one under the last. Only applied to a
+   list at the top level of a page — one already nested inside a narrower
+   card keeps stacking, since there isn't the width to tile it further. */
+.tile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 0.85rem;
+  align-items: start;
+}
+
+/* Each list this is applied to spaces its items with a stacked layout's own
+   margin/border-top — right for one column, doubled or stray once the gap
+   above is doing that job instead. Named per list rather than a bare
+   `.tile-grid > li` so this only wins where it is deliberately combined with
+   that list's own class, not by out-specificity-ing every list by accident. */
+.findings.tile-grid > li + li { margin-top: 0; }
+.joblist.tile-grid > .job { margin-bottom: 0; }
+.rule-list.tile-grid > .rule + .rule { margin-top: 0; padding-top: 0; border-top: none; }
 
 .card-login { width: 100%; }
 
@@ -309,10 +349,13 @@ button:focus-visible {
 .hosts { list-style: none; margin: 0; padding: 0; }
 
 /* Six columns on a wide screen; the media query below stacks them rather than
-   letting addresses and versions crush together on a phone. */
+   letting addresses and versions crush together on a phone. Capped rather
+   than `fr`-based, so a wide window doesn't stretch the gaps between name,
+   address and version into empty space — extra room past the cap collects
+   after the last column instead. */
 .host {
   display: grid;
-  grid-template-columns: auto minmax(8rem, 1.4fr) minmax(7rem, 1fr) minmax(7rem, 1fr) auto auto;
+  grid-template-columns: auto minmax(8rem, 16rem) minmax(7rem, 11rem) minmax(7rem, 11rem) auto auto;
   align-items: center;
   gap: 0.5rem 1rem;
   padding: 0.7rem 0;
@@ -1044,8 +1087,8 @@ input[type="date"] {
 
 /* ---- docs section ---- */
 
-/* Wider than .wrap's 900px: a sidebar plus readable prose needs the room a
-   single-column page doesn't. */
+/* Narrower than .wrap's 1600px on purpose: long lines of prose are hard to
+   read, so docs cap out well short of the general page width. */
 .docs-wrap { max-width: 1200px; }
 
 .docs-layout {
