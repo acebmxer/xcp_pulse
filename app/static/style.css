@@ -341,6 +341,7 @@ button:focus-visible {
 }
 
 .tag {
+  display: inline-block;
   margin-left: 0.4rem;
   padding: 0.05rem 0.4rem;
   border-radius: 999px;
@@ -348,6 +349,7 @@ button:focus-visible {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  white-space: nowrap;
   background: var(--accent);
   color: var(--accent-text);
   vertical-align: 1px;
@@ -496,13 +498,13 @@ code {
 
 .check {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.5rem;
   font-size: 0.9rem;
   margin-top: 0.5rem;
 }
 
-.check input { width: auto; margin: 0; }
+.check input { width: auto; margin: 0.15rem 0 0; }
 
 select {
   width: 100%;

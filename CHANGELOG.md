@@ -12,6 +12,16 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ### Fixed
 
+- **The NBD Connection badge and a disabled host checkbox's reason text
+  both wrapped badly on the Findings page.** The "NBD Connection"/"no NBD
+  Connection" pill in the Pool networks and Interfaces read tables could
+  break its own text onto two lines inside the rounded badge, and a host
+  checkbox whose label wraps (e.g. "xcp-ng-host3 — no SSH key configured")
+  had the checkbox vertically centered between the two lines instead of
+  aligned with the first one. `.tag` now sets `white-space: nowrap` so the
+  pill never splits its own text, and `.check` now aligns its checkbox to
+  the top of its label (`align-items: flex-start`) instead of centering it
+  against however many lines the label wraps to.
 - **A NIC statistics run threw away every interface it read the moment it
   confirmed nothing was wrong, so a clean report showed nothing but "No
   findings" — no interface names, no link state, no counter values — making
