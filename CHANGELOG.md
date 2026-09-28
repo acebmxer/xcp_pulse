@@ -382,6 +382,17 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
 
 ### Changed
 
+- **The page menu is now always on screen, down the left side, instead of
+  behind a "☰ Menu" dropdown in the top bar.** Every signed-in page carries
+  the same list of pages at the far left, styled like the User manual's own
+  page list, with the current page highlighted, and stays in view while the
+  page scrolls. Page content starts right beside it rather than centring in
+  the space left over, which on a wide window left a large gap between the
+  two. Settings (admins only) and Change password / 2FA sit below a
+  divider at the bottom of the list, as they did at the bottom of the
+  dropdown. The top bar keeps only the signed-in username and Log out. The
+  user guide's directions to "Change password / 2FA" and "Activity" now
+  point at the side menu.
 - **Pages used a fixed 900px-wide column regardless of window size, and every
   independent card on a page stacked one under the next even when there was
   plenty of width to put them side by side** — on a wide monitor this meant
@@ -403,6 +414,26 @@ XCP Pulse collects logs from XCP-ng hosts and Xen Orchestra through the
   Inventory host row's middle columns were capped to a maximum width instead
   of stretching to fill the wider container, which had been spreading a
   host's name, address and version far apart with no content between them.
+
+  Some pages still didn't match the rest after this, so they were brought
+  in line: links used the browser's default blue (purple once visited),
+  nearly unreadable on the dark theme, and now use the accent colour the
+  manual already did; URL and number fields (the Xen Orchestra address, SSH
+  port, and Collect's retention limits) had no styling at all and rendered
+  as bright white bars; a form's submit button was stretched across the
+  whole card on Settings, Users, Account and Redaction, and now keeps its
+  own width as it does elsewhere (Sign in stays full width); Support
+  package's "When more than one host is ticked" choice drew the browser's
+  default boxed border and now uses the same small heading as other form
+  labels; and Settings' connection status and form, and the Users page's
+  user list and Add a user form, now tile side by side like the Account
+  page's pair, with a Test connection result shown full width above them.
+  Settings' Test connection button also sat lower than Delete connection
+  beside it; the SSH host picker and its Test connection button stacked on
+  two lines with the Save SSH key form's first label pressed against them;
+  and host names on Support package and the Findings page's NIC statistics
+  card wrapped their address or "no SSH key configured" onto a second line
+  in a narrow grid cell. Each now sits on one line.
 - **A support package no longer leaves out a NIC statistics report it could
   have shipped.** The Support package job (`job_support_package.run`)
   assembles the redacted log bundle, findings, the redaction report and the

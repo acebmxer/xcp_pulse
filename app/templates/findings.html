@@ -121,7 +121,7 @@
   {% elif not nic_hosts %}
   <p class="note">No hosts are known yet. Run <a href="/jobs">Refresh inventory</a> first.</p>
   {% else %}
-  <ul class="category-grid">
+  <ul class="host-picks">
     {% for host in nic_hosts %}
     <li>
       <label class="check">

@@ -14,38 +14,54 @@
     <a class="brand" href="/">
       <span class="brand-mark">◈</span> XCP Pulse
     </a>
-    {% set role = current_role(request) %}
-    <nav class="topnav">
-      <details class="account-menu">
-        <summary class="navlink">☰ Menu ▾</summary>
-        <div class="account-menu-panel">
-          <a class="navlink" href="/">Dashboard</a>
-          <a class="navlink" href="/collect">Collect</a>
-          <a class="navlink" href="/findings">Findings</a>
-          <a class="navlink" href="/jobs">Jobs</a>
-          <a class="navlink" href="/activity">Activity</a>
-          <a class="navlink" href="/redaction">Redaction</a>
-          <a class="navlink" href="/update">Update</a>
-          <a class="navlink" href="/support-package">Support package</a>
-          <a class="navlink" href="/help">User manual</a>
-          <hr class="account-menu-divider">
-          {% if role == "admin" %}
-          <a class="navlink" href="/settings">Settings</a>
-          {% endif %}
-          <a class="navlink" href="/account">Change password / 2FA</a>
-        </div>
-      </details>
+    <div class="topnav">
       <span class="who">{{ username }}</span>
       <form method="post" action="/logout" class="inline">
         <button type="submit" class="btn btn-quiet">Log out</button>
       </form>
-    </nav>
+    </div>
   </header>
   {% endif %}
 
-  <main class="{% block main_class %}wrap{% endblock %}">
-    {% block content %}{% endblock %}
-  </main>
+  <div class="{% if username %}app-shell{% else %}app-plain{% endif %}">
+    {% if username %}
+    {% set role = current_role(request) %}
+    {# A link is the current page when the path is its own, or a page under
+       it (/help/<slug>, /settings/users, /account/totp/setup). "/" only ever
+       matches itself, or every page would light up Dashboard. #}
+    {% macro sidenav_link(href, label) %}
+      {% set path = request.url.path %}
+      {% set active = path == href or (href != "/" and path.startswith(href ~ "/")) %}
+      <li>
+        <a class="sidenav-link{% if active %} active{% endif %}"
+           {%- if active %} aria-current="page"{% endif %} href="{{ href }}">{{ label }}</a>
+      </li>
+    {% endmacro %}
+    <nav class="sidenav" aria-label="Main">
+      <ol class="sidenav-list">
+        {{ sidenav_link("/", "Dashboard") }}
+        {{ sidenav_link("/collect", "Collect") }}
+        {{ sidenav_link("/findings", "Findings") }}
+        {{ sidenav_link("/jobs", "Jobs") }}
+        {{ sidenav_link("/activity", "Activity") }}
+        {{ sidenav_link("/redaction", "Redaction") }}
+        {{ sidenav_link("/update", "Update") }}
+        {{ sidenav_link("/support-package", "Support package") }}
+        {{ sidenav_link("/help", "User manual") }}
+      </ol>
+      <ol class="sidenav-list sidenav-account">
+        {% if role == "admin" %}
+        {{ sidenav_link("/settings", "Settings") }}
+        {% endif %}
+        {{ sidenav_link("/account", "Change password / 2FA") }}
+      </ol>
+    </nav>
+    {% endif %}
+
+    <main class="{% block main_class %}wrap{% endblock %}">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
 
   <footer class="footer">
     <span>XCP Pulse v{{ app_version }}</span>

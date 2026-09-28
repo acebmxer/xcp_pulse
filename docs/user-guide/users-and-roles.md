@@ -35,7 +35,7 @@ when they've lost it.
 ## Changing your own password
 
 Any signed-in user, of any role, can change their own password from
-**Change password / 2FA**, in the **☰ Menu** dropdown in the top bar. This
+**Change password / 2FA**, at the bottom of the menu down the left side. This
 does require the current password.
 
 ## Two-factor authentication
@@ -46,7 +46,7 @@ from an authenticator app (Google Authenticator, Authy, 1Password, etc.) as
 well as your password — this is per-account, not something an admin turns on
 for everyone.
 
-1. Open **☰ Menu**, then **Change password / 2FA**.
+1. Open **Change password / 2FA** from the menu on the left.
 2. Under Two-factor authentication, press **Set up two-factor authentication**.
 3. Scan the QR code with your authenticator app, or type the code shown
    beneath it in by hand if you can't scan.
@@ -62,7 +62,7 @@ no code or password needed, the same recovery role a password reset plays.
 
 ## The activity log
 
-Admin and operator accounts can open **Activity**, in the **☰ Menu** dropdown
-next to **Jobs**, to see who did what and when — logins and logouts, settings
+Admin and operator accounts can open **Activity**, in the menu on the left
+under **Jobs**, to see who did what and when — logins and logouts, settings
 changed, jobs started or deleted, users added or changed. It's a record, not a
 settings page: nothing on it can be undone from there.
