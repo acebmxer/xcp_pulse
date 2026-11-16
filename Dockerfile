@@ -5,7 +5,7 @@
 # carries no pip, no setuptools and no wheel — a container that cannot install
 # packages cannot be made to install one, and pip's vendored bundle stops
 # appearing in vulnerability scans of the published image.
-FROM python:3.14-slim AS build
+FROM python:3.15-slim AS build
 
 # Pull in Debian's security point-release fixes for the base OS packages
 # (glibc, perl, util-linux, etc.) that python:3.14-slim ships. The app never
@@ -37,7 +37,7 @@ RUN pip install --no-cache-dir .
 RUN pip uninstall --yes pip setuptools wheel 2>/dev/null || true
 
 
-FROM python:3.14-slim
+FROM python:3.15-slim
 
 # Same Debian security point-release upgrade as the build stage — this is the
 # stage that actually ships, so this is the copy that matters for scans.
